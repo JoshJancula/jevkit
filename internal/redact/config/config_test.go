@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -380,6 +381,9 @@ func TestOversizeFile(t *testing.T) {
 }
 
 func TestUserFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are not enforced on Windows")
+	}
 	if os.Getuid() == 0 {
 		t.Log("running as root; mode checks still apply")
 	}
@@ -490,7 +494,7 @@ func TestSaltFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("salt mode %04o, want 0600", fi.Mode().Perm())
 	}
 	s2, err := LoadSalt(p)
@@ -502,11 +506,13 @@ func TestSaltFile(t *testing.T) {
 		t.Fatalf("salts should differ per install: %v", err)
 	}
 
-	if err := os.Chmod(p, 0o644); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(p, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err = LoadSalt(p)
+		_ = wantConfigErr(t, err, p, "")
 	}
-	_, err = LoadSalt(p)
-	_ = wantConfigErr(t, err, p, "")
 
 	bad := write(t, dir, "bad", "not-hex\n", 0o600)
 	_, err = LoadSalt(bad)
@@ -675,8 +681,13 @@ func TestReviewAndConfirmSettings(t *testing.T) {
 	_, err = load(t, long, "")
 	_ = wantConfigErr(t, err, long, "review_ttl")
 	// An untrusted project file cannot switch storage on or confirm off.
-	for _, k := range []string{"review: true", "confirm: false", "review_max: 5", "review_ttl: 1h"} {
-		p := write(t, dir, "p-"+k+"/.jevkit/redact.yaml", "version: 1\n"+k+"\n", 0o644)
+	for name, k := range map[string]string{
+		"review-true":   "review: true",
+		"confirm-false": "confirm: false",
+		"review-max":    "review_max: 5",
+		"review-ttl":    "review_ttl: 1h",
+	} {
+		p := write(t, dir, "p-"+name+"/.jevkit/redact.yaml", "version: 1\n"+k+"\n", 0o644)
 		_, err := load(t, "", p)
 		_ = wantConfigErr(t, err, p, strings.Split(k, ":")[0])
 	}

@@ -146,12 +146,13 @@ func TestGenericLargeWindowedGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantStr := strings.ReplaceAll(string(want), "\r\n", "\n")
 	got := Compact(fx.Command, fx.Stdout, fx.Stderr, fx.Exit, Options{ThresholdBytes: 200})
 	if !got.Compacted || got.Status != StatusCompacted || got.Family != FamilyGenericLarge {
 		t.Fatalf("family=%q status=%q compacted=%v", got.Family, got.Status, got.Compacted)
 	}
-	if got.Stdout != string(want) {
-		t.Fatalf("stdout mismatch\n--- got ---\n%s\n--- want ---\n%s", got.Stdout, want)
+	if got.Stdout != wantStr {
+		t.Fatalf("stdout mismatch\n--- got ---\n%s\n--- want ---\n%s", got.Stdout, wantStr)
 	}
 	if got.Stderr != "" {
 		t.Fatalf("stderr=%q", got.Stderr)

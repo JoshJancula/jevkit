@@ -89,7 +89,9 @@ func TestCommittedPackagesMatchGenerator(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if string(wantBytes) != string(gotBytes) {
+			wantNorm := strings.ReplaceAll(string(wantBytes), "\r\n", "\n")
+			gotNorm := strings.ReplaceAll(string(gotBytes), "\r\n", "\n")
+			if wantNorm != gotNorm {
 				return &mismatchError{host: host, rel: rel}
 			}
 			return nil
