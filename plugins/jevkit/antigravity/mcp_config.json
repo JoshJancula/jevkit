@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "jevkit": {
+      "args": [
+        "mcp",
+        "start"
+      ],
+      "command": "jevkit"
+    }
+  }
+}

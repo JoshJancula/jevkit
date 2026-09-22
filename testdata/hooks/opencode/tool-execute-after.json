@@ -1,0 +1,4 @@
+{
+  "input": {"tool": "bash", "sessionID": "ses_sanitized", "callID": "call_sanitized_0001", "args": {"command": "go test ./..."}},
+  "output": {"title": "go test ./...", "output": "ok  example/pkg\n", "metadata": {}}
+}

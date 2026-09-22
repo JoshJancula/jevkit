@@ -1,0 +1,4 @@
+{
+  "toolCall": {"name": "run_command", "args": {"CommandLine": "go test ./..."}},
+  "workspacePaths": ["/redacted/project"]
+}

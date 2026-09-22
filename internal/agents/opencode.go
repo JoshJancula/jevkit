@@ -1,0 +1,162 @@
+package agents
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+)
+
+// OpenCode adapter name as used on the CLI: `jevkit hook opencode ...`.
+const OpenCodeName = "opencode"
+
+// OpenCodePluginFile is the staged plugin basename under .opencode/plugins/.
+const OpenCodePluginFile = "jevkit-runtime-hooks.ts"
+
+// OpenCodePluginMarker is the idempotency / ownership token embedded in the
+// staged TypeScript plugin. Installer matching is substring-based.
+const OpenCodePluginMarker = "JEVKIT_OPENCODE_PLUGIN"
+
+// OpenCodeHookMarker is the CLI token the TypeScript plugin shells out with
+// (`jevkit hook opencode pre-tool|post-tool`).
+const OpenCodeHookMarker = "hook opencode"
+
+var opencodeEmptyPassthrough = []byte(`{}`)
+
+// OpenCode is the OpenCode adapter.
+//
+// Not a settings-file stdin hook: Install stages a TypeScript plugin under
+// .opencode/plugins/ that shells out to `jevkit hook opencode ...`. The Go
+// handlers below are what that plugin invokes.
+//
+// Spike (docs/AGENT-CAPABILITIES.md, ralph SPIKE-output-mutation.md):
+// tool.execute.before can mutate output.args.command (rewrite path).
+// tool.execute.after output mutation is unproven on OpenCode 1.14.35 — do not
+// rely on it; compaction comes from the `jevkit exec --` wrapper rewrite.
+type OpenCode struct {
+	// Binary is the jevkit executable name/path used in rewrites and the
+	// staged plugin default. Empty means "jevkit".
+	Binary string
+}
+
+func init() {
+	Register(NewOpenCode())
+}
+
+// NewOpenCode returns an OpenCode adapter.
+func NewOpenCode() *OpenCode {
+	return &OpenCode{}
+}
+
+func (o *OpenCode) Name() string { return OpenCodeName }
+
+func (o *OpenCode) Capabilities() Capabilities {
+	return Capabilities{
+		PreTool:        true,
+		PreToolRewrite: true,
+		// PostTool is true so the plugin can shell out for telemetry; the
+		// framework AppendHook records the invocation. OutputReplace is false:
+		// model-visible after-hook mutation is unproven (SPIKE).
+		PostTool:      true,
+		OutputReplace: false,
+	}
+}
+
+func (o *OpenCode) Passthrough(event Event) []byte {
+	return append([]byte(nil), opencodeEmptyPassthrough...)
+}
+
+// HandlePreTool rewrites bash/shell/command_execution commands in the OpenCode
+// plugin fixture shape ({input, output}) to `jevkit exec -- <cmd>`. Non-shell
+// tools and already-rewritten commands fail open with `{}`.
+func (o *OpenCode) HandlePreTool(ctx context.Context, req Request) (Response, error) {
+	passthrough := Response{Body: o.Passthrough(EventPreTool)}
+
+	var payload opencodeHookPayload
+	if err := json.Unmarshal(req.Raw, &payload); err != nil {
+		return passthrough, nil
+	}
+	if !isOpenCodeShellTool(payload.Input.Tool) {
+		return passthrough, nil
+	}
+	command := strings.TrimSpace(payload.Output.Args.Command)
+	if command == "" {
+		// Some callers put args on input; accept either.
+		command = strings.TrimSpace(payload.Input.Args.Command)
+	}
+	if command == "" {
+		return passthrough, nil
+	}
+
+	rewritten := rewriteOpenCodeCommand(o.binary(), command)
+	body, err := json.Marshal(opencodePreResponse{Command: rewritten})
+	if err != nil {
+		return passthrough, nil
+	}
+	return Response{Body: body}, nil
+}
+
+// HandlePostTool is telemetry-only. The framework records the invocation when
+// the plugin shells out; we never mutate output (SPIKE: unproven).
+func (o *OpenCode) HandlePostTool(ctx context.Context, req Request) (Response, error) {
+	return Response{Body: o.Passthrough(EventPostTool)}, nil
+}
+
+func (o *OpenCode) HandleStop(ctx context.Context, req Request) (Response, error) {
+	return Response{Body: o.Passthrough(EventStop)}, nil
+}
+
+func (o *OpenCode) binary() string {
+	if o != nil && strings.TrimSpace(o.Binary) != "" {
+		return strings.TrimSpace(o.Binary)
+	}
+	return "jevkit"
+}
+
+// opencodeHookPayload is the JSON encoding of OpenCode plugin hook arguments
+// (testdata/hooks/opencode/tool-execute-*.json).
+type opencodeHookPayload struct {
+	Input struct {
+		Tool      string `json:"tool"`
+		SessionID string `json:"sessionID"`
+		CallID    string `json:"callID"`
+		Args      struct {
+			Command string `json:"command"`
+		} `json:"args"`
+	} `json:"input"`
+	Output struct {
+		Args struct {
+			Command string `json:"command"`
+		} `json:"args"`
+		Title    string          `json:"title"`
+		Output   string          `json:"output"`
+		Metadata json.RawMessage `json:"metadata"`
+	} `json:"output"`
+}
+
+type opencodePreResponse struct {
+	Command string `json:"command"`
+}
+
+func isOpenCodeShellTool(tool string) bool {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "bash", "shell", "command_execution":
+		return true
+	default:
+		return false
+	}
+}
+
+func rewriteOpenCodeCommand(binary, command string) string {
+	if alreadyOpenCodeJevkitExec(command, binary) {
+		return command
+	}
+	return binary + " exec -- " + command
+}
+
+func alreadyOpenCodeJevkitExec(command, binary string) bool {
+	if strings.Contains(command, binary+" exec -- ") {
+		return true
+	}
+	return strings.Contains(command, "jevkit exec -- ") ||
+		strings.Contains(command, "jevkit.exe exec -- ")
+}

@@ -1,0 +1,8 @@
+{
+  "bootstrap": "shared/jevkit-plugin-bootstrap.sh",
+  "command": "jevkit",
+  "id": "jevkit",
+  "plugin": "plugins/jevkit-runtime-hooks.ts",
+  "runtime": "opencode",
+  "version": "dev"
+}

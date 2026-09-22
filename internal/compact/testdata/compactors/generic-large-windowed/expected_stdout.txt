@@ -1,0 +1,41 @@
+output (exit 1): 84 line(s), 10363 byte(s) for: custom-build-tool --verbose
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=1
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=2
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=3
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=4
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=5
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=6
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=7
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=8
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=9
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=10
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=11
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=12
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=13
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=14
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=15
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=16
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=17
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=18
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=19
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=20
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=21
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=22
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=23
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=24
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=25
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=26
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=27
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=28
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=29
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=30
+... (49 line(s) omitted) ...
+important line(s) extracted from omitted region:
+middle filler before error
+ERROR: module xyz failed to compile
+middle filler after error
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=77
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=78
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=79
+detail chunk padding lorem ipsum dolor sit amet consectetur xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx seq=80
+FINAL SUMMARY: build complete with warnings

@@ -1,0 +1,21 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "relevant_lines": {
+      "choice": "L000",
+      "probabilities": {
+        "L000": 0.92,
+        "L001": 0.04,
+        "L002": 0.04
+      },
+      "confidence": 0.92
+    },
+    "has_failure": {
+      "noul": 0.88
+    }
+  },
+  "usage": {
+    "input_tokens": 256,
+    "output_tokens": 32
+  }
+}

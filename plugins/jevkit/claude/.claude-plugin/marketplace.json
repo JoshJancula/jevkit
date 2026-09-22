@@ -1,0 +1,15 @@
+{
+  "description": "Repository-hosted jevkit hooks and MCP integration.",
+  "name": "jevkit-plugins",
+  "owner": {
+    "name": "jevkit contributors"
+  },
+  "plugins": [
+    {
+      "description": "Jev compaction hooks and MCP tools for Claude Code.",
+      "name": "jevkit",
+      "source": ".",
+      "version": "dev"
+    }
+  ]
+}

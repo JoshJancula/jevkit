@@ -1,0 +1,3 @@
+src/foo.py:10:match one
+src/foo.py:20:match two
+src/bar.py:1:other

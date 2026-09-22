@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "afterShellExecution",
+  "command": "go test ./...",
+  "output": "ok  example/pkg",
+  "duration": 1180,
+  "workspace_roots": ["/redacted/project"]
+}

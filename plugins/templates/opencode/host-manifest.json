@@ -1,0 +1,8 @@
+{
+  "id": "{{PLUGIN_ID}}",
+  "runtime": "{{RUNTIME}}",
+  "version": "{{PLUGIN_VERSION}}",
+  "bootstrap": "shared/jevkit-plugin-bootstrap.sh",
+  "command": "jevkit",
+  "plugin": "plugins/jevkit-runtime-hooks.ts"
+}

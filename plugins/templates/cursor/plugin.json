@@ -1,0 +1,11 @@
+{
+  "name": "{{PLUGIN_ID}}",
+  "displayName": "jevkit",
+  "version": "{{PLUGIN_VERSION}}",
+  "description": "Jev compaction hooks and MCP tools for Cursor.",
+  "author": {
+    "name": "jevkit maintainers"
+  },
+  "license": "MIT",
+  "keywords": ["jevkit", "jev", "compaction", "mcp"]
+}

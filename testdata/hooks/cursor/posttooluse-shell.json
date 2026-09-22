@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "postToolUse",
+  "tool_name": "Shell",
+  "tool_input": {"command": "go test ./..."},
+  "tool_output": {"stdout": "ok  example/pkg", "stderr": ""},
+  "workspace_roots": ["/redacted/project"],
+  "cwd": "/redacted/project"
+}

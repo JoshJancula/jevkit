@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jevkit.invalid/schema/plugin-cursor-hooks-v1.json",
+  "title": "Cursor hooks.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "hooks"],
+  "properties": {
+    "version": { "const": 1 },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["command"],
+          "properties": {
+            "command": {
+              "type": "string",
+              "pattern": "jevkit"
+            },
+            "matcher": { "type": "string" },
+            "timeout": { "type": "integer" },
+            "loop_limit": { "type": "integer" }
+          }
+        }
+      }
+    }
+  }
+}

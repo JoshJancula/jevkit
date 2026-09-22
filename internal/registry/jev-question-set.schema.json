@@ -1,0 +1,104 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "registryVersion",
+    "questionSets"
+  ],
+  "properties": {
+    "registryVersion": {
+      "type": "string"
+    },
+    "questionSets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "surface",
+          "description",
+          "questions",
+          "policy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "surface": {
+            "type": "string",
+            "enum": [
+              "compaction",
+              "mcp",
+              "graph"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "questions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "instructions"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "noul",
+                    "choice",
+                    "score"
+                  ]
+                },
+                "instructions": {
+                  "type": "string"
+                },
+                "criteria": {}
+              }
+            }
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "primaryQuestion",
+              "actThreshold",
+              "escalateThreshold",
+              "fallback"
+            ],
+            "properties": {
+              "primaryQuestion": {
+                "type": "string"
+              },
+              "actThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "escalateThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "fallback": {
+                "type": "string"
+              }
+            }
+          },
+          "calibration": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

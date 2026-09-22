@@ -1,0 +1,4 @@
+{
+  "input": {"tool": "bash", "sessionID": "ses_sanitized", "callID": "call_sanitized_0001"},
+  "output": {"args": {"command": "go test ./..."}}
+}

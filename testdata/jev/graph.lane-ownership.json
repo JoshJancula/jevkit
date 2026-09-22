@@ -1,0 +1,17 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "owner": {
+      "choice": "lane-a",
+      "probabilities": {
+        "lane-a": 0.91,
+        "lane-b": 0.09
+      },
+      "confidence": 0.91
+    }
+  },
+  "usage": {
+    "input_tokens": 120,
+    "output_tokens": 20
+  }
+}

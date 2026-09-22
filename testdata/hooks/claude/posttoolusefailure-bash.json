@@ -1,0 +1,10 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "/redacted/transcript.jsonl",
+  "cwd": "/redacted/project",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {"command": "go test ./..."},
+  "error": "Exit code 1\nFAIL example/pkg",
+  "tool_use_id": "toolu_sanitized_0002"
+}

@@ -1,0 +1,102 @@
+{
+  "registryVersion": "1",
+  "questionSets": {
+    "compaction.line-relevance": {
+      "id": "compaction.line-relevance",
+      "version": 1,
+      "surface": "compaction",
+      "description": "Select which compacted output lines a developer needs to diagnose what happened. Option keys for relevant_lines are line IDs of the form L000 generated at call time, capped at 255 per request; each option description is null because the tagged line text is already in state. Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "relevant_lines": {
+          "type": "choice",
+          "instructions": "Which line of the output would a developer need in order to diagnose what happened?",
+          "criteria": {}
+        },
+        "has_failure": {
+          "type": "noul",
+          "instructions": "Does the output contain a diagnosable failure?"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "relevant_lines",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "_generic_size_fallback"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "graph.router-confidence": {
+      "id": "graph.router-confidence",
+      "version": 1,
+      "surface": "graph",
+      "description": "Route a request to an allowed graph target when confidence is high enough. Option keys for target are populated at call time from the router node's allowedTargets. Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "target": {
+          "type": "choice",
+          "instructions": "Which allowed target should receive this request?",
+          "criteria": {}
+        },
+        "sufficiently_specified": {
+          "type": "noul",
+          "instructions": "Is the request specific enough to route without further investigation?"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "target",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "router defaultTarget"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "graph.failure-class": {
+      "id": "graph.failure-class",
+      "version": 1,
+      "surface": "graph",
+      "description": "Classify a graph-stage failure into one of the known GRAPH_FAILURE_KNOWN_CLASSES. Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "failure_class": {
+          "type": "choice",
+          "instructions": "Which known failure class best describes this graph-stage failure?",
+          "criteria": {
+            "transient-runtime": "Transient runtime interruption such as timeout, rate limit, network, or session drop.",
+            "agent-correctable": "Agent-correctable completion failure such as missing artifacts or verification failure.",
+            "operator-permission": "Operator permission or approval is required before the run can continue.",
+            "plan-contract": "Plan or graph contract violation such as undeclared path or write-scope mismatch.",
+            "terminal-configuration": "Terminal configuration error such as auth, model, schema, or MCP init failure.",
+            "integrity": "Integrity or sandbox violation such as symlink escape or control-path breach.",
+            "cancelled": "Run was cancelled, interrupted, or stopped by signal.",
+            "unknown": "Unclassified failure when no structured or text evidence maps to a known class."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "failure_class",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "graph_failure_match_text"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "graph.lane-ownership": {
+      "id": "graph.lane-ownership",
+      "version": 1,
+      "surface": "graph",
+      "description": "Assign ownership of a repair finding to a candidate repair lane. Option keys for owner are populated at call time from candidate repair lane IDs. Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "owner": {
+          "type": "choice",
+          "instructions": "Which candidate repair lane owns this finding?",
+          "criteria": {}
+        }
+      },
+      "policy": {
+        "primaryQuestion": "owner",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "leave finding ambiguous"
+      },
+      "calibration": "placeholder - uncalibrated"
+    }
+  }
+}

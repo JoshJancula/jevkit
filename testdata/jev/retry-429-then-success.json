@@ -1,0 +1,58 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "relevant_lines": {
+      "choice": "L000",
+      "probabilities": {
+        "L000": 0.87,
+        "L001": 0.09,
+        "L002": 0.04
+      },
+      "confidence": 0.87
+    }
+  },
+  "usage": {
+    "input_tokens": 140,
+    "output_tokens": 20
+  },
+  "sequence": [
+    {
+      "status": 429,
+      "model": "jev-1.13.0",
+      "answers": {
+        "relevant_lines": {
+          "choice": "L000",
+          "probabilities": {
+            "L000": 0.87,
+            "L001": 0.09,
+            "L002": 0.04
+          },
+          "confidence": 0.87
+        }
+      },
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    {
+      "status": 200,
+      "model": "jev-1.13.0",
+      "answers": {
+        "relevant_lines": {
+          "choice": "L000",
+          "probabilities": {
+            "L000": 0.87,
+            "L001": 0.09,
+            "L002": 0.04
+          },
+          "confidence": 0.87
+        }
+      },
+      "usage": {
+        "input_tokens": 140,
+        "output_tokens": 20
+      }
+    }
+  ]
+}

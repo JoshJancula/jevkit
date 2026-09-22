@@ -1,0 +1,9 @@
+diff --git a/a.txt b/a.txt
+index 111..222 100644
+--- a/a.txt
++++ b/a.txt
+@@ -1 +1 @@
+-old
++new
+ a.txt | 2 +1-1
+ 1 file changed, 1 insertion(+), 1 deletion(-)

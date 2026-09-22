@@ -1,0 +1,12 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "/redacted/transcript.jsonl",
+  "cwd": "/redacted/project",
+  "model": "sanitized-model",
+  "permission_mode": "default",
+  "turn_id": "turn_sanitized_0001",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {"command": "go test ./..."},
+  "tool_use_id": "call_sanitized_0001"
+}

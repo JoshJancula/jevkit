@@ -1,0 +1,17 @@
+{
+  "status": 401,
+  "model": "jev-1.13.0",
+  "answers": {
+    "relevant_lines": {
+      "choice": "L000",
+      "probabilities": {
+        "L000": 1.0
+      },
+      "confidence": 0.0
+    }
+  },
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "author": {
+    "name": "jevkit maintainers"
+  },
+  "description": "Jev compaction hooks and MCP tools for Claude Code.",
+  "name": "jevkit",
+  "version": "dev"
+}

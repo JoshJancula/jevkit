@@ -1,0 +1,14 @@
+{
+  "generatedPaths": [
+    "shared/jevkit-plugin-bootstrap.sh",
+    "shared/jevkit-run.sh",
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "hooks/hooks.json",
+    ".mcp.json",
+    "host-manifest.json"
+  ],
+  "pluginVersion": "dev",
+  "schemaVersion": 1,
+  "sourceDescriptor": "plugins/templates/claude"
+}

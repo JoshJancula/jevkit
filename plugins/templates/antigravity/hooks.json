@@ -1,0 +1,15 @@
+{
+  "jevkit": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "command": "shared/jevkit-run.sh hook antigravity pre-tool",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

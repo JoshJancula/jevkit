@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jevkit.invalid/schema/plugin-host-manifest-v1.json",
+  "title": "jevkit host-manifest.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "runtime", "version", "bootstrap", "command"],
+  "properties": {
+    "id": { "type": "string", "const": "jevkit" },
+    "runtime": {
+      "type": "string",
+      "enum": ["claude", "cursor", "antigravity", "opencode"]
+    },
+    "version": { "type": "string", "minLength": 1 },
+    "bootstrap": { "type": "string", "minLength": 1 },
+    "command": { "type": "string", "const": "jevkit" },
+    "plugin": { "type": "string", "minLength": 1 }
+  }
+}

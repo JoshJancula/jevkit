@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jevkit.invalid/schema/plugin-antigravity-hooks-v1.json",
+  "title": "Antigravity hooks.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jevkit"],
+  "properties": {
+    "jevkit": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "matcher": { "type": "string" },
+            "command": { "type": "string", "pattern": "jevkit" },
+            "timeout": { "type": "integer" },
+            "hooks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "pattern": "jevkit"
+                  },
+                  "timeout": { "type": "integer" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

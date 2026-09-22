@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jevkit.invalid/schema/plugin-claude-hooks-v1.json",
+  "title": "Claude Code plugin hooks.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hooks"],
+  "properties": {
+    "hooks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["matcher", "hooks"],
+          "properties": {
+            "matcher": { "type": "string" },
+            "hooks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["type", "command"],
+                "properties": {
+                  "type": { "const": "command" },
+                  "command": {
+                    "type": "string",
+                    "pattern": "jevkit"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

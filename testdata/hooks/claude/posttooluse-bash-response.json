@@ -1,0 +1,6 @@
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "updatedToolOutput": {"stdout": "ok  example/pkg (compacted)", "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false}
+  }
+}

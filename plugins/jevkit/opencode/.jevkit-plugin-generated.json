@@ -1,0 +1,11 @@
+{
+  "generatedPaths": [
+    "shared/jevkit-plugin-bootstrap.sh",
+    "shared/jevkit-run.sh",
+    "host-manifest.json",
+    "plugins/jevkit-runtime-hooks.ts"
+  ],
+  "pluginVersion": "dev",
+  "schemaVersion": 1,
+  "sourceDescriptor": "plugins/templates/opencode"
+}

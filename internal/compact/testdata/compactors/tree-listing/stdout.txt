@@ -1,0 +1,42 @@
+.
+|-- src/
+|   |-- components/
+|   |   |-- Button.js
+|   |   |-- Header.js
+|   |   `-- Footer.js
+|   |-- utils/
+|   |   |-- helpers.js
+|   |   |-- constants.js
+|   |   `-- validators.js
+|   `-- index.js
+|-- tests/
+|   |-- unit/
+|   |   |-- components.test.js
+|   |   |-- utils.test.js
+|   |   `-- integration.test.js
+|   `-- fixtures/
+|       `-- sample.json
+|-- docs/
+|   |-- README.md
+|   |-- API.md
+|   `-- CONTRIBUTING.md
+|-- config/
+|   |-- webpack.js
+|   |-- babel.js
+|   `-- tsconfig.json
+|-- .gitignore
+|-- package.json
+|-- LICENSE
+|-- node_modules/
+|   |-- dep1/
+|   |-- dep2/
+|   |-- dep3/
+|   |-- dep4/
+|   |-- dep5/
+|   |-- dep6/
+|   |-- dep7/
+|   |-- dep8/
+|   |-- dep9/
+|   `-- dep10/
+
+30 directories, 25 files

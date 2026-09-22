@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jevkit.invalid/schema/plugin-claude-plugin-v1.json",
+  "title": "Claude Code .claude-plugin/plugin.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "version", "author"],
+  "properties": {
+    "name": { "type": "string", "const": "jevkit" },
+    "description": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

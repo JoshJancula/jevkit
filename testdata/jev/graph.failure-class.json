@@ -1,0 +1,23 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "failure_class": {
+      "choice": "transient-runtime",
+      "probabilities": {
+        "transient-runtime": 0.91,
+        "agent-correctable": 0.04,
+        "operator-permission": 0.02,
+        "plan-contract": 0.01,
+        "terminal-configuration": 0.01,
+        "integrity": 0.005,
+        "cancelled": 0.005,
+        "unknown": 0.0
+      },
+      "confidence": 0.91
+    }
+  },
+  "usage": {
+    "input_tokens": 128,
+    "output_tokens": 24
+  }
+}

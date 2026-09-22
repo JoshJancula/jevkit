@@ -1,0 +1,1 @@
+{"decision": "allow", "overwrite": {"CommandLine": "jevkit exec -- go test ./..."}}
