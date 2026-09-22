@@ -198,7 +198,7 @@ func appendClaudeBashHook(groups []any, command string) []any {
 }
 
 func isManagedClaudeCommand(command string) bool {
-	return strings.Contains(command, ClaudeHookMarker)
+	return strings.Contains(command, ClaudeHookMarker) || strings.Contains(command, legacyClaudeHookMarker)
 }
 
 func ensureClaudeBackup(settingsPath string, existing []byte) error {

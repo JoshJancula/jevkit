@@ -26,6 +26,8 @@ subcommands:
   test [--diff] [file|-]                redact a file or stdin locally (no network)
   add --pattern|--literal|--env|--never-send <value>   [--project]
                                         add an entry, keeping comments
+  remove --rule|--literal|--env|--never-send <value>  [--project]
+                                        remove one entry after full validation
   check                                 validate, lint and run embedded tests
   audit [--since <when>] [--format json]
                                         summarise what was sent (counts only)
@@ -50,6 +52,8 @@ func (a *App) redact(args []string) int {
 		return a.redactTest(rest)
 	case "add":
 		return a.redactAdd(rest)
+	case "remove":
+		return a.redactRemove(rest)
 	case "check":
 		return a.redactCheck(rest)
 	case "audit":

@@ -18,7 +18,7 @@ func TestAntigravityLookupRegistered(t *testing.T) {
 		t.Fatalf("antigravity not registered: %+v", got)
 	}
 	caps := got.Capabilities()
-	if !caps.PreTool || !caps.PreToolRewrite {
+	if caps.PreTool || caps.PreToolRewrite || !caps.PostTool {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
 	if caps.OutputReplace {
@@ -26,16 +26,11 @@ func TestAntigravityLookupRegistered(t *testing.T) {
 	}
 }
 
-func TestAntigravityPreToolRewritesRunCommandToJevkitExec(t *testing.T) {
+func TestAntigravityPreToolDoesNotRewriteRunCommand(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "antigravity", "pretooluse-run-command.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "antigravity", "pretooluse-run-command-response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	a := agents.NewAntigravity()
 	resp, err := a.HandlePreTool(context.Background(), agents.Request{
 		Raw:   json.RawMessage(raw),
@@ -45,27 +40,20 @@ func TestAntigravityPreToolRewritesRunCommandToJevkitExec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got, want map[string]any
+	var got map[string]any
 	if err := json.Unmarshal(resp.Body, &got); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if err := json.Unmarshal(wantRaw, &want); err != nil {
-		t.Fatal(err)
-	}
 	gotCmd := nestedString(got, "overwrite", "CommandLine")
-	wantCmd := nestedString(want, "overwrite", "CommandLine")
-	if gotCmd != wantCmd {
-		t.Fatalf("CommandLine\n got %q\nwant %q", gotCmd, wantCmd)
-	}
 	if got["decision"] != "allow" {
 		t.Fatalf("decision %v", got["decision"])
 	}
-	if !strings.HasPrefix(gotCmd, "jevkit exec -- ") {
-		t.Fatalf("expected jevkit exec rewrite, got %q", gotCmd)
+	if gotCmd != "" {
+		t.Fatalf("pre-tool must not rewrite, got %q", gotCmd)
 	}
 }
 
-func TestAntigravityPreToolIdempotentAlreadyRewritten(t *testing.T) {
+func TestAntigravityPreToolDoesNotMutateExistingCommand(t *testing.T) {
 	payload := map[string]any{
 		"toolCall": map[string]any{
 			"name": "run_command",
@@ -87,11 +75,8 @@ func TestAntigravityPreToolIdempotentAlreadyRewritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := nestedString(got, "overwrite", "CommandLine")
-	if cmd != "jevkit exec -- go test ./..." {
-		t.Fatalf("double-wrapped: %q", cmd)
-	}
-	if strings.Count(cmd, "jevkit exec --") != 1 {
-		t.Fatalf("expected single wrap: %q", cmd)
+	if cmd != "" {
+		t.Fatalf("pre-tool must not mutate: %q", cmd)
 	}
 }
 
@@ -159,15 +144,15 @@ func TestAntigravityInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	markerCount := strings.Count(string(data), agents.AntigravityPreToolMarker)
+	markerCount := strings.Count(string(data), agents.AntigravityPostToolMarker)
 	if markerCount != 1 {
-		t.Fatalf("expected one pre-tool entry, found %d in:\n%s", markerCount, data)
+		t.Fatalf("expected one post-tool entry, found %d in:\n%s", markerCount, data)
 	}
 	if !strings.Contains(string(data), `"`+agents.AntigravityHooksGroup+`"`) {
 		t.Fatalf("missing jevkit group: %s", data)
 	}
-	if !strings.Contains(string(data), `"PreToolUse"`) {
-		t.Fatalf("missing PreToolUse: %s", data)
+	if !strings.Contains(string(data), `"PostToolUse"`) {
+		t.Fatalf("missing PostToolUse: %s", data)
 	}
 	if !strings.Contains(string(data), `"matcher": "run_command"`) {
 		t.Fatalf("missing run_command matcher: %s", data)
@@ -175,8 +160,8 @@ func TestAntigravityInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if !strings.Contains(string(data), `"./my-stop.sh"`) {
 		t.Fatalf("lost unrelated ralph-native stop hook: %s", data)
 	}
-	if !strings.Contains(string(data), "/opt/jevkit "+agents.AntigravityPreToolMarker) {
-		t.Fatalf("missing pre command: %s", data)
+	if !strings.Contains(string(data), "/opt/jevkit "+agents.AntigravityPostToolMarker) {
+		t.Fatalf("missing post command: %s", data)
 	}
 
 	if err := a.Uninstall(opts); err != nil {
@@ -234,7 +219,7 @@ func TestAntigravityInstallUserScopeAndAbsentRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(data), agents.AntigravityPreToolMarker) != 1 {
+	if strings.Count(string(data), agents.AntigravityPostToolMarker) != 1 {
 		t.Fatalf("not idempotent: %s", data)
 	}
 	if err := a.Uninstall(opts); err != nil {

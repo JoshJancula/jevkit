@@ -9,18 +9,21 @@ import (
 	"github.com/OWNER/jevkit/internal/compact"
 )
 
-// Cursor adapter name as used on the CLI: `jevkit hook cursor ...`.
+// Cursor adapter name used by installed runtime integrations.
 const CursorName = "cursor"
 
 // CursorHookMarker is the idempotency substring for managed entries in
 // .cursor/hooks.json. Installer matching is substring-based so a binary-path
 // change still replaces the prior entry instead of duplicating.
-const CursorHookMarker = "hook cursor"
+const CursorHookMarker = "_runtime dispatch --protocol 1 cursor"
+const legacyCursorHookMarker = "hook cursor"
 
 // CursorPreToolMarker / CursorPostToolMarker are the full event tokens.
 const (
+	// CursorPreToolMarker remains only for recognizing legacy config during an
+	// upgrade; new installations never emit it.
 	CursorPreToolMarker  = "hook cursor pre-tool"
-	CursorPostToolMarker = "hook cursor post-tool"
+	CursorPostToolMarker = "_runtime dispatch --protocol 1 cursor post-tool"
 )
 
 // Matcher strings mirrored from ralph bundle/.cursor/hooks.json.
@@ -55,6 +58,7 @@ type Cursor struct {
 	Asker compact.Asker
 	// StateDir is forwarded to compact shadow logging.
 	StateDir string
+	Policy   *compact.Policy
 }
 
 func init() {
@@ -70,10 +74,8 @@ func (c *Cursor) Name() string { return CursorName }
 
 func (c *Cursor) Capabilities() Capabilities {
 	return Capabilities{
-		PreTool:        true,
-		PreToolRewrite: true,
-		PostTool:       true,
-		OutputReplace:  true, // native + MCP; Shell post is telemetry-only
+		PostTool:      true,
+		OutputReplace: true, // native + MCP; Shell post is telemetry-only
 	}
 }
 
@@ -86,48 +88,14 @@ func (c *Cursor) Passthrough(event Event) []byte {
 	}
 }
 
-// HandlePreTool rewrites Shell commands to `jevkit exec -- <cmd>` so the
-// wrapper sees the real exit code and can compact. Non-Shell tools and
-// already-rewritten commands fail open with permission allow.
+// HandlePreTool deliberately does not rewrite commands.
 func (c *Cursor) HandlePreTool(ctx context.Context, req Request) (Response, error) {
-	passthrough := Response{Body: c.Passthrough(EventPreTool)}
-
-	var payload cursorPrePayload
-	if err := json.Unmarshal(req.Raw, &payload); err != nil {
-		return passthrough, nil
-	}
-	event := payload.HookEventName
-	if event == "" {
-		event = payload.HookEventNameCamel
-	}
-	if event != "" && !strings.EqualFold(event, "preToolUse") && event != "PreToolUse" {
-		return passthrough, nil
-	}
-	if payload.ToolName != "Shell" {
-		return passthrough, nil
-	}
-	command := strings.TrimSpace(payload.ToolInput.Command)
-	if command == "" {
-		return passthrough, nil
-	}
-
-	rewritten := rewriteCursorShellCommand(c.binary(), command)
-	body, err := json.Marshal(cursorPreResponse{
-		Permission: "allow",
-		UpdatedInput: cursorUpdatedInput{
-			Command: rewritten,
-		},
-	})
-	if err != nil {
-		return passthrough, nil
-	}
-	return Response{Body: body}, nil
+	return Response{Body: c.Passthrough(EventPreTool)}, nil
 }
 
-// HandlePostTool handles:
-//   - Shell: telemetry only (framework records the invocation); no output replace
-//   - native Read/Grep/Glob/SemanticSearch: updated_tool_output when compacting
-//   - MCP:*: updated_mcp_tool_output when compacting
+// HandlePostTool handles Shell and native tools as telemetry only. Cursor's
+// documented replacement field is updated_mcp_tool_output, so only MCP tool
+// results may be compacted here.
 //
 // Everything else fails open with `{}`.
 func (c *Cursor) HandlePostTool(ctx context.Context, req Request) (Response, error) {
@@ -161,8 +129,6 @@ func (c *Cursor) HandlePostTool(ctx context.Context, req Request) (Response, err
 	}
 
 	switch {
-	case isCursorNativeResultTool(tool):
-		return c.compactNativeResult(passthrough, payload)
 	case isCursorMCPTool(tool):
 		return c.compactMCPResult(passthrough, payload)
 	default:
@@ -172,26 +138,6 @@ func (c *Cursor) HandlePostTool(ctx context.Context, req Request) (Response, err
 
 func (c *Cursor) HandleStop(ctx context.Context, req Request) (Response, error) {
 	return Response{Body: c.Passthrough(EventStop)}, nil
-}
-
-func (c *Cursor) compactNativeResult(passthrough Response, payload cursorPostPayload) (Response, error) {
-	text, output, ok := extractCursorToolOutput(payload.ToolOutput)
-	if !ok {
-		return passthrough, nil
-	}
-	compacted, ok := c.compactText(payload.ToolName, text)
-	if !ok {
-		return passthrough, nil
-	}
-	updated, err := replaceCursorToolOutputText(output, compacted)
-	if err != nil {
-		return passthrough, nil
-	}
-	body, err := json.Marshal(map[string]any{"updated_tool_output": updated})
-	if err != nil {
-		return passthrough, nil
-	}
-	return Response{Body: body}, nil
 }
 
 func (c *Cursor) compactMCPResult(passthrough Response, payload cursorPostPayload) (Response, error) {
@@ -219,6 +165,8 @@ func (c *Cursor) compactText(toolName, text string) (string, bool) {
 		Enabled:        true,
 		ThresholdBytes: c.ThresholdBytes,
 		StateDir:       c.StateDir,
+		CanReplace:     true,
+		Policy:         c.Policy,
 	}
 	_, result := compact.JevCompact(toolName, text, "", 0, c.Asker, opts)
 	if !result.Compacted {
@@ -258,58 +206,12 @@ func (c *Cursor) shadow() bool {
 	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
 }
 
-type cursorPrePayload struct {
-	HookEventName      string `json:"hook_event_name"`
-	HookEventNameCamel string `json:"hookEventName"`
-	ToolName           string `json:"tool_name"`
-	ToolInput          struct {
-		Command string `json:"command"`
-	} `json:"tool_input"`
-}
-
-type cursorPreResponse struct {
-	Permission   string             `json:"permission"`
-	UpdatedInput cursorUpdatedInput `json:"updated_input"`
-}
-
-type cursorUpdatedInput struct {
-	Command string `json:"command"`
-}
-
 type cursorPostPayload struct {
 	HookEventName      string          `json:"hook_event_name"`
 	HookEventNameCamel string          `json:"hookEventName"`
 	ToolName           string          `json:"tool_name"`
 	ToolInput          json.RawMessage `json:"tool_input"`
 	ToolOutput         json.RawMessage `json:"tool_output"`
-}
-
-func rewriteCursorShellCommand(binary, command string) string {
-	if alreadyCursorJevkitExec(command, binary) {
-		return command
-	}
-	return binary + " exec -- " + command
-}
-
-func alreadyCursorJevkitExec(command, binary string) bool {
-	if strings.Contains(command, binary+" exec -- ") {
-		return true
-	}
-	// Absolute or alternate install names still count as wrapped.
-	return strings.Contains(command, "jevkit exec -- ") ||
-		strings.Contains(command, "jevkit.exe exec -- ")
-}
-
-func isCursorNativeResultTool(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "read", "readtoolcall",
-		"grep", "greptoolcall",
-		"glob", "globtoolcall",
-		"semanticsearch":
-		return true
-	default:
-		return false
-	}
 }
 
 func isCursorMCPTool(name string) bool {

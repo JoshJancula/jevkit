@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"sync"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/OWNER/jevkit/internal/jev"
 	"github.com/OWNER/jevkit/internal/keystore"
 	jevmcp "github.com/OWNER/jevkit/internal/mcp"
+	"github.com/OWNER/jevkit/internal/redact"
 	"github.com/OWNER/jevkit/internal/redact/config"
 	"github.com/OWNER/jevkit/internal/registry"
 )
@@ -19,8 +21,9 @@ func (a *App) mcpCmd() *cobra.Command {
 	return a.group("mcp", "run and configure the Jev MCP server", a.mcpStatusCmd(), a.mcpConfigCmd(), &cobra.Command{
 		Use:   "start",
 		Short: "serve the Jev decision tools over stdio (JSON-RPC)",
-		Long: `Serve jev_classify_request, jev_classify_failure, jev_rank_relevance and
-jev_ask as an MCP server on stdin/stdout. All logging goes to stderr.
+		Long: `Serve jev_classify_request, jev_classify_failure, jev_rank_relevance,
+jev_developer_assess and jev_ask as an MCP server on stdin/stdout. All
+logging goes to stderr.
 
 The server resolves the API key itself (env, credential command, keychain or
 file); client configs never carry it. Without a key, tools return a
@@ -91,24 +94,37 @@ func (a *App) mcpServer() (*jevmcp.Server, error) {
 		client = c
 	}
 
+	loadRedactor := func() (*redact.Redactor, error) {
+		rc, err := config.Load(a.loadOptions())
+		if err != nil {
+			return nil, err
+		}
+		if k, err := resolve(context.Background()); err == nil {
+			rc.Options.Key = k
+		}
+		return rc.Redactor()
+	}
+
 	return jevmcp.New(jevmcp.Config{
 		Decider: &registry.Decider{Registry: reg, StateDir: a.stateHome(), Getenv: a.getenv},
 		Client:  client,
-		Redact: func(text string) (string, error) {
-			rc, err := config.Load(a.loadOptions())
+		Redact: func(text string) (string, []redact.Hit, error) {
+			r, err := loadRedactor()
 			if err != nil {
-				return "", err
-			}
-			if k, err := resolve(context.Background()); err == nil {
-				rc.Options.Key = k
-			}
-			r, err := rc.Redactor()
-			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			res, err := r.Apply(text)
-			return res.Text, err
+			return res.Text, res.Hits, err
 		},
+		RedactJSON: func(raw json.RawMessage) (json.RawMessage, []redact.Hit, error) {
+			r, err := loadRedactor()
+			if err != nil {
+				return nil, nil, err
+			}
+			out, hits, err := r.ApplyJSON(raw)
+			return out, hits, err
+		},
+		AuditDir: a.stateHome(),
 		Unavailable: func(ctx context.Context) string {
 			switch {
 			case br.IsOpen():

@@ -36,6 +36,8 @@ func makeRankedResponse(choice string, noul float64) *jev.Response {
 		Answers: map[string]jev.Answer{
 			"relevant_lines": jev.ChoiceAnswer{Choice: choice, Probabilities: map[string]float64{choice: 0.92}, Confidence: 0.92},
 			"has_failure":    jev.NoulAnswer{Noul: noul},
+			"outcome":        jev.ChoiceAnswer{Choice: "failure", Probabilities: map[string]float64{"failure": 0.92}, Confidence: 0.92},
+			"disposition":    jev.ChoiceAnswer{Choice: "ranked-diagnostic", Probabilities: map[string]float64{"ranked-diagnostic": 0.92}, Confidence: 0.92},
 		},
 	}
 }
@@ -145,14 +147,14 @@ func TestJevCompactSafetyGateAborts(t *testing.T) {
 	// unknown-tag abort path.
 	asker := &fakeAsker{resp: makeRankedResponse("L999", 0.0)}
 	res, result := JevCompact("custom-build-tool --verbose", stdout, "", 1, asker, JevOptions{Enabled: true, ThresholdBytes: 200})
-	if !result.Compacted {
-		t.Fatal("deterministic fallback should still be compacted")
+	if result.Compacted {
+		t.Fatal("invalid ranked response must preserve original output")
 	}
 	if res.Used {
 		t.Fatal("safety gate should abort, used=false")
 	}
-	if !strings.Contains(res.Body, "output (exit 1)") {
-		t.Fatal("expected deterministic body")
+	if res.Body != stdout {
+		t.Fatal("safety gate must preserve original body")
 	}
 }
 
@@ -160,14 +162,14 @@ func TestJevCompactTransportErrorFallsBack(t *testing.T) {
 	stdout := makeLargeOutput(100)
 	asker := &fakeAsker{err: errors.New("jev down")}
 	res, result := JevCompact("custom-build-tool --verbose", stdout, "", 1, asker, JevOptions{Enabled: true, ThresholdBytes: 200})
-	if !result.Compacted {
-		t.Fatalf("expected deterministic fallback, got %v", result.Status)
+	if result.Compacted {
+		t.Fatalf("transport failure must preserve original, got %v", result.Status)
 	}
 	if res.Used || result.Stderr != "" {
 		t.Fatalf("transport error must not use jev: used=%v stderr=%q", res.Used, result.Stderr)
 	}
-	if !strings.Contains(res.Body, "output (exit 1)") {
-		t.Fatal("expected deterministic body")
+	if res.Body != stdout {
+		t.Fatal("invalid response must preserve original body")
 	}
 }
 
@@ -184,8 +186,8 @@ func TestJevCompactPreserveLineGate(t *testing.T) {
 	if res.Used {
 		t.Fatal("expected preserve-line/unknown-tag abort")
 	}
-	if !strings.Contains(res.Body, "output (exit 1)") {
-		t.Fatal("expected deterministic fallback body")
+	if res.Body != stdout {
+		t.Fatal("preserve gate must retain original body")
 	}
 }
 
@@ -212,9 +214,8 @@ func TestJevCompactShadowModeLeavesOutputUnchanged(t *testing.T) {
 	if res.Used || result.Compacted != baseCompacted(result) {
 		t.Fatalf("shadow mode must not change output: used=%v compacted=%v", res.Used, result.Compacted)
 	}
-	// Deterministic body is unchanged.
-	if !strings.Contains(res.Body, "output (exit 1)") || strings.Contains(res.Body, "ranked selection below") {
-		t.Fatal("shadow mode returned ranked output")
+	if res.Body != stdout {
+		t.Fatal("shadow mode must preserve original output")
 	}
 
 	path := filepath.Join(stateDir, "jevkit", "jev-compact.jsonl")
@@ -245,11 +246,44 @@ func TestJevCompactThresholdRespected(t *testing.T) {
 	}
 }
 
+func TestJevCompactLowConfidenceAndFullDispositionPreserveOriginal(t *testing.T) {
+	stdout := makeLargeOutput(100)
+	for _, response := range []*jev.Response{
+		{Answers: map[string]jev.Answer{
+			"outcome":     jev.ChoiceAnswer{Choice: "failure", Confidence: 0.4},
+			"disposition": jev.ChoiceAnswer{Choice: "ranked-diagnostic", Confidence: 0.4},
+		}},
+		{Answers: map[string]jev.Answer{
+			"outcome":     jev.ChoiceAnswer{Choice: "failure", Confidence: 0.99},
+			"disposition": jev.ChoiceAnswer{Choice: "full", Confidence: 0.99},
+		}},
+	} {
+		res, got := JevCompact("go test ./...", stdout, "", 1, &fakeAsker{resp: response}, JevOptions{Enabled: true, ThresholdBytes: 200})
+		if got.Compacted || res.Body != stdout {
+			t.Fatalf("uncertain/full disposition changed output: %+v", got)
+		}
+	}
+}
+
+func TestDispositionEvidenceIsBoundedAndRedacted(t *testing.T) {
+	secret := "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	stdout := makeLargeOutput(100) + "token=" + secret + "\n"
+	asker := &fakeAsker{resp: makeRankedResponse("L000", 0.9)}
+	_, _ = JevCompact("go test ./...", stdout, "", 1, asker, JevOptions{Enabled: true, ThresholdBytes: 200})
+	if len(asker.reqs) == 0 {
+		t.Fatal("expected disposition request")
+	}
+	state := asker.reqs[0].State
+	if strings.Contains(state, secret) || len(state) > 40*1024 {
+		t.Fatalf("unsafe disposition evidence: len=%d", len(state))
+	}
+}
+
 func TestJevCompactNoAsker(t *testing.T) {
 	stdout := makeLargeOutputWithRepeats(100)
 	res, result := JevCompact("custom-build-tool --verbose", stdout, "", 1, nil, JevOptions{Enabled: true, ThresholdBytes: 200})
-	if !result.Compacted || res.Used {
-		t.Fatalf("nil asker must fall back to deterministic: %+v used=%v", result, res.Used)
+	if result.Compacted || res.Used || res.Body != stdout {
+		t.Fatalf("nil asker must preserve original: %+v used=%v", result, res.Used)
 	}
 }
 
@@ -276,8 +310,8 @@ func TestJevCompactWindowCap255(t *testing.T) {
 	if !ok {
 		t.Fatal("relevant_lines not choice")
 	}
-	if len(cq.Options) > 255 {
-		t.Fatalf("options %d exceed 255 cap", len(cq.Options))
+	if len(cq.Criteria) > 255 {
+		t.Fatalf("options %d exceed 255 cap", len(cq.Criteria))
 	}
 	// Line 299 (tag L254 with 0-index) or the last line in the window must survive.
 	if !strings.Contains(res.Body, "ERROR: line 299") && !strings.Contains(res.Body, "ERROR: line 254") {

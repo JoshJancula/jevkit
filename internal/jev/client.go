@@ -123,17 +123,11 @@ func (c *Client) fail(reason string, err error) *Error {
 
 // prepare validates the request and returns the wire body (no questionSetId).
 func prepare(req Request) ([]byte, error) {
-	if req.Questions == nil {
-		return nil, errors.New("no questions")
+	if err := req.Validate(); err != nil {
+		return nil, err
 	}
 	longest := 0
-	for name, q := range req.Questions {
-		if q == nil {
-			return nil, fmt.Errorf("question %q is nil", name)
-		}
-		if err := q.validate(); err != nil {
-			return nil, fmt.Errorf("question %q: %w", name, err)
-		}
+	for _, q := range req.Questions {
 		b, err := json.Marshal(q)
 		if err != nil {
 			return nil, err

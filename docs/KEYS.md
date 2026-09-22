@@ -57,23 +57,12 @@ Pipe instead:
 printf '%s' "$TYPESAFE_API_KEY" | jevkit key set
 ```
 
-## Migrate from ralph
-
-If you already configured ralph’s jev integration:
-
-```bash
-jevkit migrate-from-ralph
-jevkit migrate-from-ralph --force
-```
-
-This copies ralph’s credential command (`~/.config/ralph/jev-credentials.json`, or `$RALPH_CONFIG_HOME` / `$XDG_CONFIG_HOME/ralph`) and the `ralph.jev` keychain entry (or ralph’s `0600` key file) into jevkit. Ralph’s copy is left untouched. Without `--force`, the command refuses to overwrite an existing jevkit key.
-
 ## Usage of the key
 
 Once resolved, the same store feeds:
 
 - `jevkit key test`
-- `jevkit exec` / hooks when `JEVKIT_COMPACT=1`
+- installed runtime integrations when `JEVKIT_COMPACT=1`
 - `jevkit mcp start` (lazy resolve; tools return `available: false` if missing)
 
 Check the local picture without sending the key anywhere:

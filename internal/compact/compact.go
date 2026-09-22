@@ -17,6 +17,9 @@ type Options struct {
 	// ThresholdBytes is the combined stdout+stderr size at or below which
 	// output is returned unchanged. Zero or negative selects the default.
 	ThresholdBytes int
+	// Policy can further restrict or tune eligibility. It cannot override hard
+	// source/binary protections, which are checked first.
+	Policy *Policy
 }
 
 // Result is the outcome of Compact.
@@ -68,6 +71,14 @@ func Compact(command, stdout, stderr string, exitStatus int, opts Options) Resul
 	}
 	if IsSourceFamily(family) {
 		return unchanged(stdout, stderr, exitStatus, family)
+	}
+	if rule := opts.Policy.Match(command, combined); rule != nil {
+		if rule.Action == ActionNever {
+			return unchanged(stdout, stderr, exitStatus, "")
+		}
+		if rule.Threshold > 0 {
+			opts.ThresholdBytes = rule.Threshold
+		}
 	}
 	if len(combined) <= opts.threshold() || !allowsGenericFallback(command) {
 		return unchanged(stdout, stderr, exitStatus, "")

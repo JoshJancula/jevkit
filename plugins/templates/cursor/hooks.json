@@ -1,29 +1,23 @@
 {
   "version": 1,
   "hooks": {
-    "preToolUse": [
-      {
-        "command": "shared/jevkit-run.sh hook cursor pre-tool",
-        "matcher": "Shell"
-      }
-    ],
     "postToolUse": [
       {
-        "command": "shared/jevkit-run.sh hook cursor post-tool",
+        "command": "shared/jevkit-run.sh _runtime dispatch --protocol 1 cursor post-tool",
         "matcher": "Shell"
       },
       {
-        "command": "shared/jevkit-run.sh hook cursor post-tool",
+        "command": "shared/jevkit-run.sh _runtime dispatch --protocol 1 cursor post-tool",
         "matcher": "Read|read|readToolCall|Grep|grep|grepToolCall|Glob|glob|globToolCall|SemanticSearch|semanticSearch"
       },
       {
-        "command": "shared/jevkit-run.sh hook cursor post-tool",
+        "command": "shared/jevkit-run.sh _runtime dispatch --protocol 1 cursor post-tool",
         "matcher": "MCP:*"
       }
     ],
     "afterShellExecution": [
       {
-        "command": "shared/jevkit-run.sh hook cursor post-tool"
+        "command": "shared/jevkit-run.sh _runtime dispatch --protocol 1 cursor post-tool"
       }
     ]
   }

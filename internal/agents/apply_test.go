@@ -297,3 +297,50 @@ func TestFakeAdapterInstallUninstallByteExact(t *testing.T) {
 		t.Fatalf("want %q got %q", original, got)
 	}
 }
+
+func TestInstallComponentsAreSelectiveAndReversible(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, ".claude", "settings.json")
+	mcp := filepath.Join(dir, ".mcp.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	originalHooks := []byte("{\"permissions\":{}}\n")
+	originalMCP := []byte("{\"mcpServers\":{}}\n")
+	if err := os.WriteFile(settings, originalHooks, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mcp, originalMCP, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := agents.InstallOptions{WorkDir: dir, Scope: "project", Binary: "jevkit"}
+	a := agents.NewClaude()
+	if _, err := agents.InstallAgentComponents(a, opts, agents.Components{MCP: true}); err != nil {
+		t.Fatal(err)
+	}
+	gotHooks, _ := os.ReadFile(settings)
+	if !bytes.Equal(gotHooks, originalHooks) {
+		t.Fatalf("MCP-only changed hooks: %s", gotHooks)
+	}
+	if _, err := agents.UninstallAgentComponents(a, opts, agents.Components{MCP: true}); err != nil {
+		t.Fatal(err)
+	}
+	gotMCP, _ := os.ReadFile(mcp)
+	if !bytes.Equal(gotMCP, originalMCP) {
+		t.Fatalf("MCP-only uninstall did not restore bytes: %s", gotMCP)
+	}
+	if _, err := agents.InstallAgentComponents(a, opts, agents.Components{Hooks: true}); err != nil {
+		t.Fatal(err)
+	}
+	gotMCP, _ = os.ReadFile(mcp)
+	if !bytes.Equal(gotMCP, originalMCP) {
+		t.Fatalf("hooks-only changed MCP: %s", gotMCP)
+	}
+	if _, err := agents.UninstallAgentComponents(a, opts, agents.Components{Hooks: true}); err != nil {
+		t.Fatal(err)
+	}
+	gotHooks, _ = os.ReadFile(settings)
+	if !bytes.Equal(gotHooks, originalHooks) {
+		t.Fatalf("hooks-only uninstall did not restore bytes: %s", gotHooks)
+	}
+}

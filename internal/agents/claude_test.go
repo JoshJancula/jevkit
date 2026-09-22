@@ -71,12 +71,8 @@ func TestClaudePostToolCompactedAboveThreshold(t *testing.T) {
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if out.HookSpecificOutput.HookEventName != "PostToolUse" {
-		t.Fatalf("hookEventName %q", out.HookSpecificOutput.HookEventName)
-	}
-	compacted := out.HookSpecificOutput.UpdatedToolOutput.Stdout
-	if compacted == "" || len(compacted) >= len(largeCompactableOutput(80)) {
-		t.Fatalf("expected compacted stdout, len=%d body=%s", len(compacted), resp.Body)
+	if string(resp.Body) != "{}" {
+		t.Fatalf("missing Jev classifier must preserve output, body=%s", resp.Body)
 	}
 }
 

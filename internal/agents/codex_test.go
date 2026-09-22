@@ -20,7 +20,7 @@ func TestCodexLookupRegistered(t *testing.T) {
 		t.Fatalf("codex not registered: %+v", got)
 	}
 	caps := got.Capabilities()
-	if !caps.PreTool || !caps.PreToolRewrite || !caps.PostTool {
+	if caps.PreTool || caps.PreToolRewrite || !caps.PostTool {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
 	if caps.OutputReplace {
@@ -28,16 +28,11 @@ func TestCodexLookupRegistered(t *testing.T) {
 	}
 }
 
-func TestCodexPreToolRewritesBashToJevkitExec(t *testing.T) {
+func TestCodexPreToolDoesNotRewriteBash(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "codex", "pretooluse-bash.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "codex", "pretooluse-bash-response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	c := agents.NewCodex()
 	resp, err := c.HandlePreTool(context.Background(), agents.Request{
 		Raw:   json.RawMessage(raw),
@@ -47,18 +42,11 @@ func TestCodexPreToolRewritesBashToJevkitExec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got, want map[string]any
+	var got map[string]any
 	if err := json.Unmarshal(resp.Body, &got); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if err := json.Unmarshal(wantRaw, &want); err != nil {
-		t.Fatal(err)
-	}
 	gotCmd := nestedString(got, "hookSpecificOutput", "updatedInput", "command")
-	wantCmd := nestedString(want, "hookSpecificOutput", "updatedInput", "command")
-	if gotCmd != wantCmd {
-		t.Fatalf("command\n got %q\nwant %q", gotCmd, wantCmd)
-	}
 	hso, _ := got["hookSpecificOutput"].(map[string]any)
 	if hso["permissionDecision"] != "allow" {
 		t.Fatalf("permissionDecision %v", hso["permissionDecision"])
@@ -66,12 +54,12 @@ func TestCodexPreToolRewritesBashToJevkitExec(t *testing.T) {
 	if hso["hookEventName"] != "PreToolUse" {
 		t.Fatalf("hookEventName %v", hso["hookEventName"])
 	}
-	if !strings.HasPrefix(gotCmd, "jevkit exec -- ") {
-		t.Fatalf("expected jevkit exec rewrite, got %q", gotCmd)
+	if gotCmd != "" {
+		t.Fatalf("pre-tool must not rewrite, got %q", gotCmd)
 	}
 }
 
-func TestCodexPreToolRewritesCommandExecution(t *testing.T) {
+func TestCodexPreToolDoesNotRewriteCommandExecution(t *testing.T) {
 	payload := map[string]any{
 		"hook_event_name": "PreToolUse",
 		"tool_name":       "command_execution",
@@ -91,12 +79,12 @@ func TestCodexPreToolRewritesCommandExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := nestedString(got, "hookSpecificOutput", "updatedInput", "command")
-	if cmd != "jevkit exec -- npm test" {
+	if cmd != "" {
 		t.Fatalf("command_execution rewrite: %q", cmd)
 	}
 }
 
-func TestCodexPreToolIdempotentAlreadyRewritten(t *testing.T) {
+func TestCodexPreToolDoesNotMutateExistingCommand(t *testing.T) {
 	payload := map[string]any{
 		"hook_event_name": "PreToolUse",
 		"tool_name":       "Bash",
@@ -116,11 +104,8 @@ func TestCodexPreToolIdempotentAlreadyRewritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := nestedString(got, "hookSpecificOutput", "updatedInput", "command")
-	if cmd != "jevkit exec -- go test ./..." {
-		t.Fatalf("double-wrapped: %q", cmd)
-	}
-	if strings.Count(cmd, "jevkit exec --") != 1 {
-		t.Fatalf("expected single wrap: %q", cmd)
+	if cmd != "" {
+		t.Fatalf("pre-tool must not mutate: %q", cmd)
 	}
 }
 
@@ -227,12 +212,7 @@ func TestCodexInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preCount := strings.Count(string(data), agents.CodexPreToolMarker)
 	postCount := strings.Count(string(data), agents.CodexPostToolMarker)
-	// Bash + command_execution for each event.
-	if preCount != 2 {
-		t.Fatalf("expected two pre-tool entries, found %d in:\n%s", preCount, data)
-	}
 	if postCount != 2 {
 		t.Fatalf("expected two post-tool entries, found %d in:\n%s", postCount, data)
 	}
@@ -248,8 +228,8 @@ func TestCodexInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if !strings.Contains(string(data), `"./my-stop.sh"`) {
 		t.Fatalf("lost unrelated Stop hook: %s", data)
 	}
-	if !strings.Contains(string(data), "/opt/jevkit "+agents.CodexPreToolMarker) {
-		t.Fatalf("missing pre command: %s", data)
+	if strings.Contains(string(data), agents.CodexPreToolMarker) {
+		t.Fatalf("legacy pre command must not be installed: %s", data)
 	}
 	if !strings.Contains(string(data), `"type": "command"`) {
 		t.Fatalf("missing type command: %s", data)
@@ -310,7 +290,7 @@ func TestCodexInstallUserScopeAndAbsentRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(data), agents.CodexPreToolMarker) != 2 {
+	if strings.Count(string(data), agents.CodexPostToolMarker) != 2 {
 		t.Fatalf("not idempotent: %s", data)
 	}
 	if err := c.Uninstall(opts); err != nil {

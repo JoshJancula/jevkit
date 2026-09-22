@@ -18,7 +18,6 @@ var userDocPaths = []string{
 	"../../docs/AGENTS.md",
 	"../../docs/KEYS.md",
 	"../../docs/REDACTION.md",
-	"../../docs/AGENT-CAPABILITIES.md",
 	"../../CONTRIBUTING.md",
 }
 

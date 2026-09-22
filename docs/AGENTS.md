@@ -39,44 +39,19 @@ Each package registers hooks/MCP that call the `jevkit` binary and ships `shared
 
 ## Capability matrix
 
-| Agent | CLI name | Config / registration | Compaction path | Output replace |
-| --- | --- | --- | --- | --- |
-| Claude Code | `claude` | `.claude/settings.json` hooks | PostToolUse Bash → compact | Yes (`updatedToolOutput`), success only |
-| Cursor | `cursor` | `.cursor/hooks.json` | PreToolUse Shell → `jevkit exec`; post-tool for native/MCP | Shell: no; Read/Grep/Glob/MCP: yes |
-| Antigravity | `antigravity` | `.agents/hooks.json` | PreToolUse `run_command` → `jevkit exec` | No |
-| OpenCode | `opencode` | `.opencode/plugins/*.ts` | `tool.execute.before` → `jevkit exec` | Unproven |
-| Codex | `codex` | `.codex/hooks.json` | PreToolUse Bash / `command_execution` → `jevkit exec` | Unproven |
+| Agent | Install surface | Post-tool evidence | Model-visible result policy |
+| --- | --- | --- | --- |
+| Claude Code | Plugin hooks or `.claude/settings.json` | Success and failure are distinct events; successful Bash payloads carry the output shape. | May replace only a validated tool-result shape with `updatedToolOutput`; otherwise preserve it. |
+| Cursor | Plugin hooks or `.cursor/hooks.json` | Successful tool payload contains JSON-stringified output; failures are a separate event. | May replace **MCP** results with `updated_mcp_tool_output`; shell and native-tool output are telemetry/context only. |
+| Codex | Plugin hooks or `.codex/hooks.json` | PostToolUse observes supported local-tool results and event outcome. | No generic result replacement. Bounded feedback/context and telemetry only. |
+| OpenCode | OpenCode plugin | `tool.execute.after` observes completed/error status and result. | Telemetry only until a pinned plugin API proves safe result replacement. |
+| Antigravity | `.agents/hooks.json` | PostToolUse supplies an error field but no replaceable output. | Telemetry only. |
 
-**Why `jevkit exec`?** No agent supplies a reliable exit code in PostToolUse. The wrapper runs the command itself, sees the exit status, compacts, and prints the result—so failure-aware ranking and preserve-line checks work everywhere PreToolUse rewrite is available.
+This matrix was audited against the vendor hook references on 2026-09-22. It is deliberately conservative: a pre-tool input rewrite does **not** prove that a runtime can compact or replace a result after execution. Sanitized fixtures and adapter tests enforce the stated boundary.
 
-Spike-level payload notes and fixtures: [AGENT-CAPABILITIES.md](AGENT-CAPABILITIES.md).
+## Runtime integration
 
-## Hook CLI
-
-Install writes commands of the form `jevkit hook <agent> <event>`. Events:
-
-| Event | Meaning |
-| --- | --- |
-| `pre-tool` | Rewrite / allow a tool call |
-| `post-tool` | Compact or observe tool output |
-| `stop` | Stop / end-of-turn hooks |
-
-Adapters always **fail open**: garbage input, panics, timeouts, and protocol-version mismatches exit 0 with a valid allow/empty response so the agent is never blocked.
-
-Manual dry-run (stdin JSON → stdout JSON):
-
-```bash
-jevkit hook claude post-tool < payload.json
-jevkit hook cursor pre-tool < payload.json
-```
-
-## Exec wrapper
-
-```bash
-jevkit exec -- make test
-```
-
-Runs the command, then optionally compacts combined stdout/stderr. Gated by environment (below). Source-output families such as `git diff`, `rg`, `ls`, and `find` hard-passthrough.
+`jevkit install <agent>` installs the default **plugin bundle** (hooks plus MCP). Use `--components hooks` or `--components mcp` when you need only one integration surface. Installed assets call a private, versioned dispatcher and always fail open; `hook` and `exec` are intentionally not public CLI commands.
 
 ## MCP server
 
@@ -93,9 +68,14 @@ jevkit mcp start
 | `jev_classify_request` | Classify a request |
 | `jev_classify_failure` | Classify a failure |
 | `jev_rank_relevance` | Rank line relevance |
-| `jev_ask` | Ask a registered question set |
+| `jev_developer_assess` | Dispatch one of five built-in `developer.*` decision-support assessments |
+| `jev_ask` | Unregistered escape hatch: arbitrary state and named questions, not a registry set |
 
 The server resolves the API key itself; client configs never embed it. Without a key (or with an open circuit breaker), tools return a successful envelope with `available: false` so agents fall back natively.
+
+`jev_ask` accepts a `state` value and a named `questions` map (each `{type, instructions, criteria}`), both of which may be plain strings or literal JSON (an object or array) for structured content; it applies the same JSON-aware redaction and size limits as the curated tools, marks every call `unregistered: true`, and records a privacy-safe local audit line (timestamp, caller, question ids/types, byte counts, redaction rule counts — never payload text) to `<state>/jevkit/jev-ask-audit.jsonl`. Its `options` field (a bare array of Choice labels) is a **deprecated** compatibility alias for null-valued `criteria` entries; do not combine it with `criteria`, and prefer `criteria` in new integrations — `options` is removed in the next breaking release. For large context, load and redact content from a file rather than pasting it inline, the same way `jevkit ask request --file <path|->` does for a human operator.
+
+`jev_developer_assess` dispatches to a small, versioned, opt-in set of registry-backed `developer.*` question sets built for coding-agent decision support, not autonomous execution: `developer.change-risk` (Score, low-to-critical), `developer.failure-triage` (Choice: regression, dependency-toolchain, configuration-environment, test-defect-flake, unknown), `developer.test-priority` (Choice: block, targeted-tests, full-suite, no-additional-tests), `developer.review-disposition` (Choice: block, needs-review, informational, no-finding), and `developer.release-readiness` (Noul with explicit true/false criteria). Its `state` argument is a structured object drawn from a shared field set (`diffSummary`, `affectedAreas`, `testOutput`, `environment`, `constraints`); each assessment requires its own subset and rejects unknown keys. Every call applies the same JSON-aware redaction and size limits as the curated tools, then returns the typed answer plus the registry act/gather/fallback decision, confidence, and registry version, logged to `decisions.jsonl` exactly like `jev_classify_request`. No `developer.*` answer is ever turned into an automatic code change, command, merge, deploy, or secret exposure — it is data for the caller to act on. Thresholds are uncalibrated placeholders: use `JEVKIT_SHADOW=1` to log would-have decisions before trusting `act`. For custom, one-off, or project-local questions outside this curated set, use `jev_ask` instead — a project-local addition should never bypass `jev_ask`'s redaction to reach the wire, since that is the only way a locally-defined question keeps the built-in safety guarantees.
 
 `jevkit install` registers the MCP entry for each agent; `jevkit mcp config --merge <file>` can merge the same entry into an existing client config.
 
@@ -103,7 +83,7 @@ The server resolves the API key itself; client configs never embed it. Without a
 
 | Variable | Effect |
 | --- | --- |
-| `JEVKIT_COMPACT=1` | Enable compaction in `exec` and post-tool adapters |
+| `JEVKIT_COMPACT=1` | Enable conservative post-tool compaction where the runtime can replace the result |
 | `JEVKIT_COMPACT_SHADOW=1` (or `true`) | Measure would-have savings; do not replace agent-visible output |
 | `JEVKIT_SHADOW=1` | MCP/registry decisions: log Jev answers, return fallback to callers |
 | `JEVKIT_HOOK_TIMEOUT_MS` | Override hook dispatch timeout (milliseconds) |

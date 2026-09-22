@@ -45,8 +45,7 @@ type App struct {
 	// Keystore resolves and stores the API key; nil builds one from
 	// ConfigDir, WorkDir and Environ.
 	Keystore *keystore.Store
-	// Keyring is the OS keychain read by migrate-from-ralph; nil means the
-	// real one.
+	// Keyring is the OS keychain backend; nil means the real one.
 	Keyring keystore.Keyring
 	// NewJev builds the client `key test` uses; nil builds the real one.
 	NewJev func(cfg jev.Config, key func() (string, error)) Asker

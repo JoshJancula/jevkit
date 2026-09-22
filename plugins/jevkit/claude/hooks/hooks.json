@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/shared/jevkit-run.sh\" hook claude post-tool",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/shared/jevkit-run.sh\" _runtime dispatch --protocol 1 claude post-tool",
             "type": "command"
           }
         ],

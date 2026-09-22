@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,50 +16,60 @@ func (a *App) installCmd() *cobra.Command {
 	var scope string
 	var dryRun bool
 	var binary string
+	var componentsRaw string
 	c := &cobra.Command{
 		Use:   "install <agent|all>",
-		Short: "install jevkit hooks and MCP into a coding agent",
-		Long: `Merge jevkit hook config and register the MCP server for one agent
+		Short: "install a jevkit runtime bundle into a coding agent",
+		Long: `Install selected jevkit integration components for one agent
 (claude, cursor, codex, opencode, antigravity) or every agent detected on PATH
-(all). Edits are idempotent and marker-based. A first install keeps a
+(all). The default plugin bundle includes hooks and MCP. Use --components mcp
+or --components hooks when you only want one of them. Edits are idempotent and marker-based. A first install keeps a
 .jevkit-original backup so uninstall can restore byte-exact originals.
 Use --dry-run to print a unified diff without writing.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return codeErr(a.runInstall(args[0], scope, binary, dryRun, false))
+			return codeErr(a.runInstall(args[0], scope, binary, componentsRaw, dryRun, false))
 		},
 	}
 	f := c.Flags()
 	f.StringVar(&scope, "scope", "project", `install scope: "project" or "user"`)
 	f.BoolVar(&dryRun, "dry-run", false, "print planned diffs without writing")
 	f.StringVar(&binary, "binary", "", "jevkit binary path written into hooks (default: this executable or \"jevkit\")")
+	f.StringVar(&componentsRaw, "components", "plugin", "components: plugin (hooks + MCP), mcp, hooks; comma-separated")
 	return c
 }
 
 func (a *App) uninstallCmd() *cobra.Command {
 	var scope string
 	var dryRun bool
+	var componentsRaw string
 	c := &cobra.Command{
 		Use:   "uninstall <agent|all>",
-		Short: "remove jevkit hooks and MCP from a coding agent",
+		Short: "remove selected jevkit components from a coding agent",
 		Long: `Restore agent config from the .jevkit-original backup taken on first
 install (or strip managed entries when no backup exists). Use --dry-run to
 preview without writing.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return codeErr(a.runInstall(args[0], scope, "", dryRun, true))
+			return codeErr(a.runInstall(args[0], scope, "", componentsRaw, dryRun, true))
 		},
 	}
 	f := c.Flags()
 	f.StringVar(&scope, "scope", "project", `uninstall scope: "project" or "user"`)
 	f.BoolVar(&dryRun, "dry-run", false, "print planned diffs without writing")
+	f.StringVar(&componentsRaw, "components", "plugin", "components: plugin (hooks + MCP), mcp, hooks; comma-separated")
 	return c
 }
 
-func (a *App) runInstall(target, scope, binary string, dryRun, uninstall bool) int {
+func (a *App) runInstall(target, scope, binary, componentsRaw string, dryRun, uninstall bool) int {
 	scope = strings.ToLower(strings.TrimSpace(scope))
 	if scope != "project" && scope != "user" {
 		a.errf("jevkit: --scope must be \"project\" or \"user\"\n")
+		return exitUsage
+	}
+	components, err := parseComponents(componentsRaw)
+	if err != nil {
+		a.errf("jevkit: %v\n", err)
 		return exitUsage
 	}
 	list, err := agents.SelectAgents(target, a.lookPath(), target == "all")
@@ -91,9 +102,9 @@ func (a *App) runInstall(target, scope, binary string, dryRun, uninstall bool) i
 		var rep agents.ApplyReport
 		var err error
 		if uninstall {
-			rep, err = agents.UninstallAgent(agent, opts)
+			rep, err = agents.UninstallAgentComponents(agent, opts, components)
 		} else {
-			rep, err = agents.InstallAgent(agent, opts)
+			rep, err = agents.InstallAgentComponents(agent, opts, components)
 		}
 		if err != nil {
 			a.errf("jevkit: %s %s: %v\n", verb, agent.Name(), err)
@@ -119,6 +130,32 @@ func (a *App) runInstall(target, scope, binary string, dryRun, uninstall bool) i
 		return exitFail
 	}
 	return exitOK
+}
+
+func parseComponents(raw string) (agents.Components, error) {
+	var out agents.Components
+	seen := map[string]bool{}
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" || seen[value] {
+			return agents.Components{}, fmt.Errorf("--components must be a comma-separated list of plugin, mcp, hooks")
+		}
+		seen[value] = true
+		switch value {
+		case "plugin":
+			out = agents.DefaultComponents()
+		case "mcp":
+			out.MCP = true
+		case "hooks":
+			out.Hooks = true
+		default:
+			return agents.Components{}, fmt.Errorf("unknown component %q (want plugin, mcp, hooks)", value)
+		}
+	}
+	if !out.Hooks && !out.MCP {
+		return agents.Components{}, fmt.Errorf("--components must select plugin, mcp, or hooks")
+	}
+	return out, nil
 }
 
 func (a *App) lookPath() func(string) (string, error) {

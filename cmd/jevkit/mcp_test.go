@@ -90,7 +90,7 @@ func TestMCPStartServesToolsOverStdio(t *testing.T) {
 	noSecret(t, "mcp start", out, errs)
 	r := replies(t, out)
 	tools := r[2]["result"].(map[string]any)
-	if _, ok := tools["nextCursor"]; ok || len(tools["tools"].([]any)) != 4 {
+	if _, ok := tools["nextCursor"]; ok || len(tools["tools"].([]any)) != 5 {
 		t.Errorf("tools/list = %v", tools)
 	}
 	sc := r[3]["result"].(map[string]any)["structuredContent"].(map[string]any)

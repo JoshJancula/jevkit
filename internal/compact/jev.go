@@ -12,6 +12,7 @@ import (
 
 	"github.com/OWNER/jevkit/internal/filelock"
 	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/OWNER/jevkit/internal/redact"
 )
 
 // Asker is the slice of the jev client the compactor uses.
@@ -35,6 +36,14 @@ type JevOptions struct {
 	// StateDir is the directory where shadow-mode writes jev-compact.jsonl.
 	// Empty disables shadow logging.
 	StateDir string
+	// AuthoritativeExit says exit status came from the runtime rather than an
+	// inferred successful post-tool event.
+	AuthoritativeExit bool
+	// CanReplace gates any model-visible output mutation. Callers that cannot
+	// replace their host result may still run telemetry but get original output.
+	CanReplace bool
+	// Policy applies declarative local eligibility restrictions.
+	Policy *Policy
 }
 
 const (
@@ -82,39 +91,63 @@ func JevCompact(command, stdout, stderr string, exitStatus int, asker Asker, opt
 	if !opts.Enabled {
 		return JevResult{Body: joinStreams(stdout, stderr), Used: false}, unchanged(stdout, stderr, exitStatus, "")
 	}
-
-	// Start with the deterministic path.
-	base := Compact(command, stdout, stderr, exitStatus, Options{ThresholdBytes: opts.threshold()})
+	original := joinStreams(stdout, stderr)
+	// Compact performs the hard binary/source/short-output guards. It is used
+	// only to determine eligibility here; it is never a fallback that can
+	// change output when Jev is unavailable, uncertain, or invalid.
+	base := Compact(command, stdout, stderr, exitStatus, Options{ThresholdBytes: opts.threshold(), Policy: opts.Policy})
 	if !base.Compacted || asker == nil {
-		return JevResult{Body: joinStreams(base.Stdout, base.Stderr), Used: false}, base
+		return JevResult{Body: original}, unchanged(stdout, stderr, exitStatus, base.Family)
 	}
 
-	// Keep the deterministic result as the fail-open fallback.
-	body := joinStreams(base.Stdout, base.Stderr)
+	disposition, outcome, confidence, err := classifyDisposition(command, original, exitStatus, asker, opts)
+	if err != nil || confidence < 0.85 || outcome == "unknown" || disposition == "full" {
+		return JevResult{Body: original, Err: err}, unchanged(stdout, stderr, exitStatus, base.Family)
+	}
+	if opts.AuthoritativeExit && exitStatus != 0 && outcome != "failure" {
+		return JevResult{Body: original}, unchanged(stdout, stderr, exitStatus, base.Family)
+	}
+	if opts.AuthoritativeExit && exitStatus == 0 && outcome != "success" {
+		return JevResult{Body: original}, unchanged(stdout, stderr, exitStatus, base.Family)
+	}
+	if disposition == "deterministic-compact" {
+		if opts.Shadow {
+			recordShadowDisposition(opts.StateDir, "deterministic-compact", outcome, confidence, len(original), len(joinStreams(base.Stdout, base.Stderr)))
+			return JevResult{Body: original}, unchanged(stdout, stderr, exitStatus, base.Family)
+		}
+		return JevResult{Body: joinStreams(base.Stdout, base.Stderr), Used: true}, base
+	}
+	if disposition != "ranked-diagnostic" {
+		return JevResult{Body: original}, unchanged(stdout, stderr, exitStatus, base.Family)
+	}
+
+	// Keep the original as the fail-open fallback. Ranked diagnostics are only
+	// allowed after the disposition above explicitly selected this path.
+	body := original
 
 	// The deterministic body is a lossy head/tail window, so it cannot be
 	// used as the source for ranking. Rank the collapsed original stream and
 	// retain body as the fail-open fallback.
-	ranked, err := compactRanked(command, joinStreams(stdout, stderr), exitStatus, asker, opts)
+	ranked, err := compactRanked(command, original, exitStatus, asker, opts)
 	if err != nil {
-		return JevResult{Body: body, Used: false, Err: err}, base
+		return JevResult{Body: body, Used: false, Err: err}, unchanged(stdout, stderr, exitStatus, base.Family)
 	}
 
 	// Safety gate: ranked output must be strictly smaller than the input it
 	// summarises; otherwise fall back to the deterministic result.
-	combined := joinStreams(stdout, stderr)
+	combined := original
 	if len(ranked) >= len(combined) {
-		return JevResult{Body: body, Used: false}, base
+		return JevResult{Body: body, Used: false}, unchanged(stdout, stderr, exitStatus, base.Family)
 	}
 
 	// Shadow mode records the savings and returns the deterministic result.
 	if opts.Shadow {
-		recordShadow(opts.StateDir, len(combined), len(ranked))
-		return JevResult{Body: body, Used: false}, base
+		recordShadowDisposition(opts.StateDir, "ranked-diagnostic", outcome, confidence, len(combined), len(ranked))
+		return JevResult{Body: body, Used: false}, unchanged(stdout, stderr, exitStatus, base.Family)
 	}
 
 	if !preserveGate(combined, ranked) {
-		return JevResult{Body: body, Used: false}, base
+		return JevResult{Body: body, Used: false}, unchanged(stdout, stderr, exitStatus, base.Family)
 	}
 
 	return JevResult{Body: ranked, Used: true}, Result{
@@ -122,6 +155,64 @@ func JevCompact(command, stdout, stderr string, exitStatus int, asker Asker, opt
 		Compacted: true, StdoutCompacted: ranked != stdout, StderrCompacted: false,
 		Family: FamilyGenericLarge, Status: StatusCompacted, ExitStatus: exitStatus,
 	}
+}
+
+// classifyDisposition uses Jev strictly as a closed-set classifier. The
+// bounded evidence is redacted before transport; no free-form summary is ever
+// requested or accepted.
+func classifyDisposition(command, original string, exit int, asker Asker, opts JevOptions) (disposition, outcome string, confidence float64, err error) {
+	r, err := redact.New(redact.Options{})
+	if err != nil {
+		return "", "", 0, err
+	}
+	redacted, err := r.Apply(boundedEvidence(original, opts.maxLines()))
+	if err != nil {
+		return "", "", 0, err
+	}
+	state := fmt.Sprintf("command: %s\nexit_status: %d\nauthoritative_exit: %t\noutput:\n%s", strings.TrimSpace(command), exit, opts.AuthoritativeExit, redacted.Text)
+	resp, err := asker.Ask(context.Background(), jev.Request{
+		QuestionSetID: "compaction.disposition.v1",
+		State:         state,
+		Questions: map[string]jev.Question{
+			"outcome":     jev.ChoiceQuestion{Instructions: "Classify the observed tool outcome only.", Criteria: map[string]json.RawMessage{"success": jev.Null(), "failure": jev.Null(), "unknown": jev.Null()}},
+			"disposition": jev.ChoiceQuestion{Instructions: "Choose how to retain existing evidence; never summarize or invent text.", Criteria: map[string]json.RawMessage{"full": jev.Null(), "deterministic-compact": jev.Null(), "ranked-diagnostic": jev.Null()}},
+		},
+	})
+	if err != nil || resp == nil {
+		if err == nil {
+			err = fmt.Errorf("invalid jev response")
+		}
+		return "", "", 0, err
+	}
+	d, derr := extractChoice(resp.Answers["disposition"])
+	o, oerr := extractChoice(resp.Answers["outcome"])
+	if derr != nil || oerr != nil || !validDisposition(d) || !validOutcome(o) {
+		return "", "", 0, fmt.Errorf("invalid disposition response")
+	}
+	dc := resp.Answers["disposition"].(jev.ChoiceAnswer).Confidence
+	oc := resp.Answers["outcome"].(jev.ChoiceAnswer).Confidence
+	return d, o, minFloat(dc, oc), nil
+}
+
+func boundedEvidence(text string, maxLines int) string {
+	lines := splitLines(text)
+	if len(lines) <= maxLines {
+		return text
+	}
+	head := maxLines / 2
+	tail := maxLines - head
+	return strings.Join(append(append([]string{}, lines[:head]...), append([]string{fmt.Sprintf("... (%d line(s) omitted) ...", len(lines)-maxLines)}, lines[len(lines)-tail:]...)...), "\n")
+}
+
+func validDisposition(v string) bool {
+	return v == "full" || v == "deterministic-compact" || v == "ranked-diagnostic"
+}
+func validOutcome(v string) bool { return v == "success" || v == "failure" || v == "unknown" }
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // compactRanked tags the surviving lines of the collapsed-but-not-windowed
@@ -148,7 +239,7 @@ func compactRanked(command, original string, exit int, asker Asker, opts JevOpti
 		resp, err := asker.Ask(context.Background(), jev.Request{
 			QuestionSetID: "compaction.line-relevance", State: state,
 			Questions: map[string]jev.Question{
-				"relevant_lines": jev.ChoiceQuestion{Instructions: "Which line of the output would a developer need in order to diagnose what happened?", Options: optionMap(tagMap)},
+				"relevant_lines": jev.ChoiceQuestion{Instructions: "Which line of the output would a developer need in order to diagnose what happened?", Criteria: optionMap(tagMap)},
 				"has_failure":    jev.NoulQuestion{Instructions: "Does the output contain a diagnosable failure?"},
 			},
 		})
@@ -209,10 +300,10 @@ func tagWindow(lines []string, offset int) ([]string, map[string]int) {
 	return out, idx
 }
 
-func optionMap(tagMap map[string]int) map[string]*string {
-	opts := make(map[string]*string, len(tagMap))
+func optionMap(tagMap map[string]int) map[string]json.RawMessage {
+	opts := make(map[string]json.RawMessage, len(tagMap))
 	for k := range tagMap {
-		opts[k] = nil
+		opts[k] = jev.Null()
 	}
 	return opts
 }
@@ -305,15 +396,20 @@ func preserveGate(original, ranked string) bool {
 }
 
 // recordShadow appends a single-line JSON record with the would-have savings.
-func recordShadow(stateDir string, before, after int) {
+// recordShadowDisposition stores decision metadata only. It deliberately
+// never records command text, output, or redaction payloads.
+func recordShadowDisposition(stateDir, disposition, outcome string, confidence float64, before, after int) {
 	if stateDir == "" {
 		return
 	}
 	rec := map[string]any{
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"before":    before,
-		"after":     after,
-		"saved":     before - after,
+		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		"disposition": disposition,
+		"outcome":     outcome,
+		"confidence":  confidence,
+		"before":      before,
+		"after":       after,
+		"saved":       before - after,
 	}
 	line, _ := json.Marshal(rec)
 	path := filepath.Join(stateDir, "jevkit", "jev-compact.jsonl")

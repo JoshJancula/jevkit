@@ -14,8 +14,7 @@ const ProtocolVersion = 1
 // every tool call, so adapters must stay well under this.
 const DefaultTimeout = 5 * time.Second
 
-// Event is a normalized hook event name used on the CLI
-// (`jevkit hook <agent> pre-tool|post-tool|stop`).
+// Event is a normalized runtime event used by installed integrations.
 type Event string
 
 const (
@@ -88,6 +87,16 @@ type InstallOptions struct {
 	// installer, MCP configs). Called on dry-run and on write.
 	Preview func(FilePreview)
 }
+
+// Components selects independently installable integration pieces. Plugin is
+// a user-facing bundle alias that resolves to hooks plus MCP; it is not passed
+// to individual adapters.
+type Components struct {
+	Hooks bool
+	MCP   bool
+}
+
+func DefaultComponents() Components { return Components{Hooks: true, MCP: true} }
 
 // Agent is one coding-agent adapter.
 type Agent interface {

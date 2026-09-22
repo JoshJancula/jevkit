@@ -1,10 +1,10 @@
 {
   "jevkit": {
-    "PreToolUse": [
+    "PostToolUse": [
       {
         "hooks": [
           {
-            "command": "shared/jevkit-run.sh hook antigravity pre-tool",
+            "command": "shared/jevkit-run.sh _runtime dispatch --protocol 1 antigravity post-tool",
             "timeout": 30
           }
         ],

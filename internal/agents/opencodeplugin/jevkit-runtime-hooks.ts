@@ -1,10 +1,9 @@
 // JEVKIT_OPENCODE_PLUGIN — staged by `jevkit install opencode`. Do not edit in-place;
 // change the embedded source under internal/agents/opencodeplugin/ and reinstall.
 //
-// Model-visible tool.execute.after output mutation is unproven on OpenCode
-// (see ralph bundle/.opencode/plugins/SPIKE-output-mutation.md). Compaction
-// relies on rewriting bash/shell commands to `jevkit exec -- ...` in
-// tool.execute.before so the wrapper sees the real exit code.
+// Model-visible tool.execute.after output mutation is unproven on OpenCode.
+// This plugin therefore records privacy-safe telemetry and never rewrites a
+// host command or output.
 
 const INSTALLED_BINARY = /*JEVKIT_BINARY*/"jevkit"/*JEVKIT_BINARY*/;
 
@@ -114,35 +113,6 @@ function parseCommandResponse(stdout: string): string | null {
   return null;
 }
 
-export async function handleToolExecuteBefore(
-  input: BeforeInput,
-  output: BeforeOutput,
-  deps: { runProcess?: RunProcess; binary?: string; env?: NodeJS.ProcessEnv } = {},
-): Promise<void> {
-  if (!isShellTool(input.tool)) return;
-  const args = output.args;
-  if (args == null || typeof args !== "object") return;
-  const command = typeof args.command === "string" ? args.command : "";
-  if (!command.trim()) return;
-
-  const binary = deps.binary || resolveJevkitBinary(deps.env);
-  const run = deps.runProcess || defaultRunProcess;
-  const payload = JSON.stringify({ input, output });
-  let result: { stdout: string; exitCode: number };
-  try {
-    result = await run([binary, "hook", "opencode", "pre-tool"], {
-      stdin: payload,
-    });
-  } catch {
-    return;
-  }
-  if (result.exitCode !== 0) return;
-  const rewritten = parseCommandResponse(result.stdout);
-  if (rewritten) {
-    args.command = rewritten;
-  }
-}
-
 export async function handleToolExecuteAfter(
   input: AfterInput,
   output: AfterOutput,
@@ -154,7 +124,7 @@ export async function handleToolExecuteAfter(
   const run = deps.runProcess || defaultRunProcess;
   const payload = JSON.stringify({ input, output });
   try {
-    await run([binary, "hook", "opencode", "post-tool"], { stdin: payload });
+    await run([binary, "_runtime", "dispatch", "--protocol", "1", "opencode", "post-tool"], { stdin: payload });
   } catch {
     /* fail open */
   }
@@ -163,9 +133,6 @@ export async function handleToolExecuteAfter(
 /** OpenCode auto-discovers exported async plugin factories from this file. */
 export const JevkitRuntimeHooks = async (_ctx?: { directory?: string }) => {
   return {
-    "tool.execute.before": async (input: BeforeInput, output: BeforeOutput) => {
-      await handleToolExecuteBefore(input, output);
-    },
     "tool.execute.after": async (input: AfterInput, output: AfterOutput) => {
       await handleToolExecuteAfter(input, output);
     },

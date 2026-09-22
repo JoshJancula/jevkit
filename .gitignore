@@ -5,5 +5,5 @@ bin/
 dist/
 coverage.out
 .DS_Store
-.ralph-workspace/
 node_modules/
+.ralph-workspace

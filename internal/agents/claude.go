@@ -9,14 +9,15 @@ import (
 	"github.com/OWNER/jevkit/internal/compact"
 )
 
-// Claude adapter name as used on the CLI: `jevkit hook claude ...`.
+// Claude adapter name used by installed runtime integrations.
 const ClaudeName = "claude"
 
 // Managed hook command token used as an idempotency marker inside
 // .claude/settings.json. Installer matching is substring-based on this token
 // so a binary-path change still replaces the prior entry instead of duplicating.
-// Full command is `<binary> hook claude post-tool`.
-const ClaudeHookMarker = "hook claude post-tool"
+// Full command is `<binary> _runtime dispatch --protocol 1 claude post-tool`.
+const ClaudeHookMarker = "_runtime dispatch --protocol 1 claude post-tool"
+const legacyClaudeHookMarker = "hook claude post-tool"
 
 // claudePostPassthrough is the fail-open PostToolUse body (do nothing).
 var claudePostPassthrough = []byte("{}")
@@ -38,6 +39,7 @@ type Claude struct {
 	// StateDir is forwarded to compact shadow logging (unused when shadow
 	// passthrough skips compaction).
 	StateDir string
+	Policy   *compact.Policy
 }
 
 func init() {
@@ -102,9 +104,12 @@ func (c *Claude) HandlePostTool(ctx context.Context, req Request) (Response, err
 	const exitStatus = 0
 
 	opts := compact.JevOptions{
-		Enabled:        true,
-		ThresholdBytes: c.ThresholdBytes,
-		StateDir:       c.StateDir,
+		Enabled:           true,
+		ThresholdBytes:    c.ThresholdBytes,
+		StateDir:          c.StateDir,
+		AuthoritativeExit: true,
+		CanReplace:        true,
+		Policy:            c.Policy,
 	}
 	_, result := compact.JevCompact(command, stdout, stderr, exitStatus, c.Asker, opts)
 	if !result.Compacted {

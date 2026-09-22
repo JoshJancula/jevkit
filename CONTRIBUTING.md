@@ -21,6 +21,16 @@ goreleaser and git-cliff:
     docker run --rm jevkit-dev make test
     docker run --rm jevkit-dev make lint
 
+Docker Compose provides the same contributor environment with the repository
+mounted at `/src`:
+
+    docker compose run --rm dev make build test
+    docker compose run --rm dev make lint test
+
+For a host-runnable Apple Silicon binary without changing local Go:
+
+    docker compose run --rm -e CGO_ENABLED=0 -e GOOS=darwin -e GOARCH=arm64 dev make build
+
 ## Dev container
 
 `.devcontainer/devcontainer.json` builds from the same `Dockerfile`; open the

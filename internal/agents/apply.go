@@ -13,32 +13,51 @@ type ApplyReport struct {
 
 // InstallAgent runs hook Install then MCP registration for one adapter.
 func InstallAgent(a Agent, opts InstallOptions) (ApplyReport, error) {
+	return InstallAgentComponents(a, opts, DefaultComponents())
+}
+
+// InstallAgentComponents installs only the selected, independently reversible
+// integration components.
+func InstallAgentComponents(a Agent, opts InstallOptions, components Components) (ApplyReport, error) {
 	if a == nil {
 		return ApplyReport{}, fmt.Errorf("nil agent")
 	}
 	rep := ApplyReport{Agent: a.Name()}
 	opts = withPreviewCollector(opts, &rep.Previews)
-	if err := a.Install(opts); err != nil {
-		return rep, err
+	if components.Hooks {
+		if err := a.Install(opts); err != nil {
+			return rep, err
+		}
 	}
-	if err := InstallMCP(a.Name(), opts); err != nil {
-		return rep, err
+	if components.MCP {
+		if err := InstallMCP(a.Name(), opts); err != nil {
+			return rep, err
+		}
 	}
 	return rep, nil
 }
 
 // UninstallAgent removes MCP registration then restores hook config.
 func UninstallAgent(a Agent, opts InstallOptions) (ApplyReport, error) {
+	return UninstallAgentComponents(a, opts, DefaultComponents())
+}
+
+// UninstallAgentComponents removes only components selected by the caller.
+func UninstallAgentComponents(a Agent, opts InstallOptions, components Components) (ApplyReport, error) {
 	if a == nil {
 		return ApplyReport{}, fmt.Errorf("nil agent")
 	}
 	rep := ApplyReport{Agent: a.Name()}
 	opts = withPreviewCollector(opts, &rep.Previews)
-	if err := UninstallMCP(a.Name(), opts); err != nil {
-		return rep, err
+	if components.MCP {
+		if err := UninstallMCP(a.Name(), opts); err != nil {
+			return rep, err
+		}
 	}
-	if err := a.Uninstall(opts); err != nil {
-		return rep, err
+	if components.Hooks {
+		if err := a.Uninstall(opts); err != nil {
+			return rep, err
+		}
 	}
 	return rep, nil
 }

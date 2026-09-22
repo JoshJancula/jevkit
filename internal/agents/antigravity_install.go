@@ -94,7 +94,7 @@ func antigravityHooksPath(opts InstallOptions) (string, error) {
 }
 
 func antigravityHookCommand(binary string) string {
-	return binary + " " + AntigravityPreToolMarker
+	return binary + " " + AntigravityPostToolMarker
 }
 
 func mergeAntigravityHooks(existing []byte, binary string) ([]byte, error) {
@@ -116,7 +116,7 @@ func mergeAntigravityHooks(existing []byte, binary string) ([]byte, error) {
 
 	cmd := antigravityHookCommand(binary)
 	doc[AntigravityHooksGroup] = map[string]any{
-		"PreToolUse": []any{
+		"PostToolUse": []any{
 			map[string]any{
 				"matcher": antigravityRunCommandMatcher,
 				"hooks": []any{
@@ -202,7 +202,7 @@ func stripManagedAntigravityHookGroups(groups []any) []any {
 }
 
 func isManagedAntigravityCommand(command string) bool {
-	return strings.Contains(command, AntigravityHookMarker)
+	return strings.Contains(command, AntigravityHookMarker) || strings.Contains(command, legacyAntigravityHookMarker)
 }
 
 func ensureAntigravityBackup(hooksPath string, existing []byte) error {

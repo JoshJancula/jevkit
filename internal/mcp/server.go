@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/OWNER/jevkit/internal/redact"
 	"github.com/OWNER/jevkit/internal/registry"
 )
 
@@ -25,11 +27,22 @@ type Config struct {
 	Decider *registry.Decider
 	// Client asks Jev. It resolves the API key itself.
 	Client Asker
-	// Redact scrubs state text before it is sent; an error rejects the call.
-	Redact func(string) (string, error)
+	// Redact scrubs plain state/instructions text before it is sent; an
+	// error rejects the call. It reports which rules fired (never the
+	// matched text) so callers can record redaction counts.
+	Redact func(string) (string, []redact.Hit, error)
+	// RedactJSON scrubs structured (object or array) JSON text before it is
+	// sent, preserving shape: jev_ask's structured state, instructions and
+	// criteria. An error rejects the call.
+	RedactJSON func(raw json.RawMessage) (json.RawMessage, []redact.Hit, error)
 	// Unavailable returns "" when Jev can be used, else a short reason
 	// (no key, breaker open). It must not return or log the key.
 	Unavailable func(ctx context.Context) string
+	// AuditDir, when set, receives one privacy-safe jev_ask audit line per
+	// call (timestamp, caller, question ids/types, byte and redaction-hit
+	// counts; never payload text) under <AuditDir>/jevkit/jev-ask-audit.jsonl.
+	// Empty disables auditing.
+	AuditDir string
 	// Log receives all logging (stderr in production); nil discards it.
 	Log io.Writer
 	// Version is reported as the server version.
@@ -59,6 +72,8 @@ func New(cfg Config) (*Server, error) {
 		return nil, errors.New("mcp: a client is required")
 	case cfg.Redact == nil:
 		return nil, errors.New("mcp: a redactor is required")
+	case cfg.RedactJSON == nil:
+		return nil, errors.New("mcp: a JSON redactor is required")
 	case cfg.Unavailable == nil:
 		return nil, errors.New("mcp: an availability check is required")
 	}
@@ -84,6 +99,11 @@ func New(cfg Config) (*Server, error) {
 		h    sdk.ToolHandler
 	}
 	entries := []entry{{s.askTool(), s.handleAsk}}
+	devTool, err := s.developerAssessTool()
+	if err != nil {
+		return nil, err
+	}
+	entries = append(entries, entry{devTool, s.handleDeveloperAssess})
 	for _, c := range curated {
 		t, err := s.curatedTool(c.tool, c.set, c.blurb)
 		if err != nil {

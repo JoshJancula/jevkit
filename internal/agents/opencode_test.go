@@ -20,7 +20,7 @@ func TestOpenCodeLookupRegistered(t *testing.T) {
 		t.Fatalf("opencode not registered: %+v", got)
 	}
 	caps := got.Capabilities()
-	if !caps.PreTool || !caps.PreToolRewrite || !caps.PostTool {
+	if caps.PreTool || caps.PreToolRewrite || !caps.PostTool {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
 	if caps.OutputReplace {
@@ -28,16 +28,11 @@ func TestOpenCodeLookupRegistered(t *testing.T) {
 	}
 }
 
-func TestOpenCodePreToolRewritesBashToJevkitExec(t *testing.T) {
+func TestOpenCodePreToolDoesNotRewriteBash(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "opencode", "tool-execute-before.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "opencode", "tool-execute-before-response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	o := agents.NewOpenCode()
 	resp, err := o.HandlePreTool(context.Background(), agents.Request{
 		Raw:   json.RawMessage(raw),
@@ -47,24 +42,17 @@ func TestOpenCodePreToolRewritesBashToJevkitExec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got, want map[string]any
+	var got map[string]any
 	if err := json.Unmarshal(resp.Body, &got); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if err := json.Unmarshal(wantRaw, &want); err != nil {
-		t.Fatal(err)
-	}
 	gotCmd, _ := got["command"].(string)
-	wantCmd, _ := want["command"].(string)
-	if gotCmd != wantCmd {
-		t.Fatalf("command\n got %q\nwant %q", gotCmd, wantCmd)
-	}
-	if !strings.HasPrefix(gotCmd, "jevkit exec -- ") {
-		t.Fatalf("expected jevkit exec rewrite, got %q", gotCmd)
+	if gotCmd != "" {
+		t.Fatalf("pre-tool must not rewrite, got %q", gotCmd)
 	}
 }
 
-func TestOpenCodePreToolIdempotentAlreadyRewritten(t *testing.T) {
+func TestOpenCodePreToolDoesNotMutateExistingCommand(t *testing.T) {
 	payload := map[string]any{
 		"input":  map[string]any{"tool": "bash", "sessionID": "s", "callID": "c"},
 		"output": map[string]any{"args": map[string]any{"command": "jevkit exec -- go test ./..."}},
@@ -83,11 +71,8 @@ func TestOpenCodePreToolIdempotentAlreadyRewritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd, _ := got["command"].(string)
-	if cmd != "jevkit exec -- go test ./..." {
-		t.Fatalf("double-wrapped: %q", cmd)
-	}
-	if strings.Count(cmd, "jevkit exec --") != 1 {
-		t.Fatalf("expected single wrap: %q", cmd)
+	if cmd != "" {
+		t.Fatalf("pre-tool must not mutate: %q", cmd)
 	}
 }
 

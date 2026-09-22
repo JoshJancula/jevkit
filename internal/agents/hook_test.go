@@ -27,8 +27,8 @@ type fakeAgent struct {
 	uninstallErr error
 }
 
-func (f *fakeAgent) Name() string                       { return f.name }
-func (f *fakeAgent) Capabilities() agents.Capabilities  { return f.caps }
+func (f *fakeAgent) Name() string                          { return f.name }
+func (f *fakeAgent) Capabilities() agents.Capabilities     { return f.caps }
 func (f *fakeAgent) Install(agents.InstallOptions) error   { return f.installErr }
 func (f *fakeAgent) Uninstall(agents.InstallOptions) error { return f.uninstallErr }
 
