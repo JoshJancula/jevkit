@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -167,8 +168,10 @@ func TestMCPConfigMergeIsIdempotent(t *testing.T) {
 		t.Error("existing server was lost")
 	}
 	noSecret(t, "merged file", string(second))
-	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
-		t.Errorf("mode = %v, want preserved 0600", fi.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+			t.Errorf("mode = %v, want preserved 0600", fi.Mode().Perm())
+		}
 	}
 }
 
