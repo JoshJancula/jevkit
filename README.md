@@ -122,3 +122,7 @@ make plugins  # regenerate plugins/jevkit/<host>/
 ```
 
 Module path currently uses a placeholder owner (`github.com/OWNER/jevkit`) until the publish owner is confirmed.
+
+## License
+
+jevkit is released under the [MIT License](LICENSE).

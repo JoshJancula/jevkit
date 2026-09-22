@@ -59,6 +59,8 @@ type fakeJev struct {
 	calls int
 	keys  []string
 	err   error
+	resp  *jev.Response
+	req   jev.Request
 }
 
 func (f *fakeJev) factory(t *testing.T) func(jev.Config, func() (string, error)) Asker {
@@ -72,10 +74,14 @@ func (f *fakeJev) factory(t *testing.T) func(jev.Config, func() (string, error))
 	}
 }
 
-func (f *fakeJev) Ask(context.Context, jev.Request) (*jev.Response, error) {
+func (f *fakeJev) Ask(_ context.Context, req jev.Request) (*jev.Response, error) {
 	f.calls++
+	f.req = req
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.resp != nil {
+		return f.resp, nil
 	}
 	return &jev.Response{}, nil
 }
@@ -247,6 +253,36 @@ func TestKeyTest(t *testing.T) {
 		code, _, errs := run(a, "", "key", "test")
 		if code != exitFail || fj.calls != 0 {
 			t.Errorf("exit %d calls %d: %s", code, fj.calls, errs)
+		}
+	})
+}
+
+func TestAsk(t *testing.T) {
+	t.Run("noul redacts and prints JSON", func(t *testing.T) {
+		a, _, fj := cliApp(t)
+		mustRun(t, a, secretKey+"\n", 0, "key", "set")
+		fj.resp = &jev.Response{Answers: map[string]jev.Answer{"answer": jev.NoulAnswer{Noul: 0.75}}}
+		out, errOut := mustRun(t, a, "", 0, "ask", "noul", "--state", "token="+secretKey, "--question", "Is this safe?", "--format", "json")
+		if !strings.Contains(out, `"noul":0.75`) || errOut != "" {
+			t.Fatalf("out=%q err=%q", out, errOut)
+		}
+		if strings.Contains(fj.req.State, secretKey) || !strings.Contains(fj.req.State, "[REDACTED]") {
+			t.Fatalf("unredacted state: %q", fj.req.State)
+		}
+	})
+	t.Run("choice validates options and prints answer", func(t *testing.T) {
+		a, _, fj := cliApp(t)
+		mustRun(t, a, secretKey+"\n", 0, "key", "set")
+		fj.resp = &jev.Response{Answers: map[string]jev.Answer{"answer": jev.ChoiceAnswer{Choice: "pass", Confidence: 0.9}}}
+		out, _ := mustRun(t, a, "", 0, "ask", "choice", "--state", "grade this", "--question", "result?", "--option", "pass", "--option", "fail")
+		if !strings.Contains(out, "choice: pass") {
+			t.Fatalf("out=%q", out)
+		}
+		if _, ok := fj.req.Questions["answer"].(jev.ChoiceQuestion); !ok {
+			t.Fatalf("wrong question: %#v", fj.req.Questions)
+		}
+		if code, _, _ := run(a, "", "ask", "choice", "--state", "x", "--question", "q"); code != exitUsage {
+			t.Fatalf("missing options exit=%d", code)
 		}
 	})
 }

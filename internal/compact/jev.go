@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -232,16 +231,6 @@ func extractChoice(ans jev.Answer) (string, error) {
 	return ca.Choice, nil
 }
 
-var lineTagRE = regexp.MustCompile(`^L\d{3} `)
-
-// stripTag removes the L000.. prefix from a tagged line.
-func stripTag(line string) string {
-	if lineTagRE.MatchString(line) {
-		return line[4:]
-	}
-	return line
-}
-
 // buildState prepares the text jev ranks. It includes the head, tagged
 // middle and tail plus command and exit code for failure-aware ranking.
 func buildState(command string, exit int, head, tagged, tail []string) string {
@@ -259,19 +248,6 @@ func buildState(command string, exit int, head, tagged, tail []string) string {
 	parts = append(parts, "TAIL:")
 	parts = append(parts, tail...)
 	return strings.Join(parts, "\n")
-}
-
-// hasElidedMiddle reports whether the deterministic body actually elided any
-// lines in the middle region. The deterministic assembler puts an omission
-// marker between head and tail whenever work exceeds headLines+tailLines, even
-// if no repeated runs were collapsed; we accept that as an elided middle.
-func hasElidedMiddle(body string) bool {
-	for _, l := range splitLines(body) {
-		if strings.Contains(l, "line(s) omitted") {
-			return true
-		}
-	}
-	return false
 }
 
 // assembleRanked builds the final body: head, the chosen line (with local

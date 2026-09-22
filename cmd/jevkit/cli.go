@@ -78,6 +78,7 @@ func (a *App) rootCmd() *cobra.Command {
 		a.versionCmd(),
 		a.migrateCmd(),
 		a.mcpCmd(),
+		a.askCmd(),
 		a.redactCmd(),
 		a.execCmd(),
 		a.hookCmd(),
