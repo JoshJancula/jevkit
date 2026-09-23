@@ -1,7 +1,0 @@
-{
-  "bootstrap": "shared/jevkit-plugin-bootstrap.sh",
-  "command": "jevkit",
-  "id": "jevkit",
-  "runtime": "cursor",
-  "version": "dev"
-}

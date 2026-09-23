@@ -8,9 +8,7 @@ From a project directory (default `--scope project`):
 
 ```bash
 jevkit install claude
-jevkit install cursor
 jevkit install opencode
-jevkit install antigravity
 jevkit install codex
 jevkit install all
 ```
@@ -19,7 +17,7 @@ Useful flags:
 
 ```bash
 jevkit install claude --dry-run
-jevkit install cursor --scope user
+jevkit install codex --scope user
 jevkit install claude --binary /usr/local/bin/jevkit
 jevkit uninstall claude
 jevkit doctor
@@ -29,7 +27,7 @@ Install is idempotent and marker-based. The first write keeps a `.jevkit-origina
 
 ## Plugin packages
 
-Distributable packages live under `plugins/jevkit/<host>/` (Claude Code, Cursor, Antigravity, OpenCode). Regenerate from templates with:
+Distributable packages live under `plugins/jevkit/<host>/` (Claude Code and OpenCode). Regenerate from templates with:
 
 ```bash
 make plugins
@@ -42,12 +40,10 @@ Each package registers hooks/MCP that call the `jevkit` binary and ships `shared
 | Agent | Install surface | Post-tool evidence | Model-visible result policy |
 | --- | --- | --- | --- |
 | Claude Code | Plugin hooks or `.claude/settings.json` | Success and failure are distinct events; successful Bash payloads carry the output shape. | May replace only a validated tool-result shape with `updatedToolOutput`; otherwise preserve it. |
-| Cursor | Plugin hooks or `.cursor/hooks.json` | Successful tool payload contains JSON-stringified output; failures are a separate event. | May replace **MCP** results with `updated_mcp_tool_output`; shell and native-tool output are telemetry/context only. |
-| Codex | Plugin hooks or `.codex/hooks.json` | PostToolUse observes supported local-tool results and event outcome. | No generic result replacement. Bounded feedback/context and telemetry only. |
-| OpenCode | OpenCode plugin | `tool.execute.after` observes completed/error status and result. | Telemetry only until a pinned plugin API proves safe result replacement. |
-| Antigravity | `.agents/hooks.json` | PostToolUse supplies an error field but no replaceable output. | Telemetry only. |
+| Codex | `.codex/hooks.json` | PostToolUse observes Bash output after both successful and non-zero commands, but has no documented exit-status field. | May replace an eligible, high-confidence result through `continue:false` feedback; otherwise preserve it. |
+| OpenCode | OpenCode plugin | `tool.execute.after` observes completed/error status and result. | May replace an eligible, high-confidence shell result with the locally assembled compacted output; otherwise preserve it. |
 
-This matrix was audited against the vendor hook references on 2026-09-22. It is deliberately conservative: a pre-tool input rewrite does **not** prove that a runtime can compact or replace a result after execution. Sanitized fixtures and adapter tests enforce the stated boundary.
+This matrix was audited against the vendor hook references on 2026-09-23. It is deliberately conservative: a pre-tool input rewrite does **not** prove that a runtime can compact or replace a result after execution. Sanitized fixtures and adapter tests enforce the stated boundary.
 
 ## Runtime integration
 

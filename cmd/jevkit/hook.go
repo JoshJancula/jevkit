@@ -100,6 +100,14 @@ func (a *App) runtimeAgent(ctx context.Context, name string) agents.Agent {
 		clone := *typed
 		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
 		return &clone
+	case *agents.Codex:
+		clone := *typed
+		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
+		return &clone
+	case *agents.OpenCode:
+		clone := *typed
+		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
+		return &clone
 	default:
 		return base
 	}

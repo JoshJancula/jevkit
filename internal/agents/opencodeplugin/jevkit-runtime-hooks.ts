@@ -1,9 +1,8 @@
 // JEVKIT_OPENCODE_PLUGIN — staged by `jevkit install opencode`. Do not edit in-place;
 // change the embedded source under internal/agents/opencodeplugin/ and reinstall.
 //
-// Model-visible tool.execute.after output mutation is unproven on OpenCode.
-// This plugin therefore records privacy-safe telemetry and never rewrites a
-// host command or output.
+// The post-tool hook replaces output only when the local Jevkit dispatcher
+// returns a validated compacted result. Every other case leaves it unchanged.
 
 const INSTALLED_BINARY = /*JEVKIT_BINARY*/"jevkit"/*JEVKIT_BINARY*/;
 
@@ -96,16 +95,16 @@ export async function defaultRunProcess(
   });
 }
 
-function parseCommandResponse(stdout: string): string | null {
+function parseCompactedOutput(stdout: string): string | null {
   const line = String(stdout || "")
     .trim()
     .split("\n")
     .pop();
   if (!line) return null;
   try {
-    const parsed = JSON.parse(line) as { command?: unknown };
-    if (typeof parsed.command === "string" && parsed.command.trim()) {
-      return parsed.command;
+    const parsed = JSON.parse(line) as { output?: unknown };
+    if (typeof parsed.output === "string" && parsed.output.trim()) {
+      return parsed.output;
     }
   } catch {
     /* fail open */
@@ -118,13 +117,14 @@ export async function handleToolExecuteAfter(
   output: AfterOutput,
   deps: { runProcess?: RunProcess; binary?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<void> {
-  // Telemetry only: shell out so Go records the hook invocation. Do not mutate
-  // output.output — SPIKE leaves model-visible mutation unproven.
+  if (!isShellTool(input.tool)) return;
   const binary = deps.binary || resolveJevkitBinary(deps.env);
   const run = deps.runProcess || defaultRunProcess;
   const payload = JSON.stringify({ input, output });
   try {
-    await run([binary, "_runtime", "dispatch", "--protocol", "1", "opencode", "post-tool"], { stdin: payload });
+    const result = await run([binary, "_runtime", "dispatch", "--protocol", "1", "opencode", "post-tool"], { stdin: payload });
+    const compacted = parseCompactedOutput(result.stdout);
+    if (result.exitCode === 0 && compacted) output.output = compacted;
   } catch {
     /* fail open */
   }

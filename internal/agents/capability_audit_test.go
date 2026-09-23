@@ -10,11 +10,9 @@ import (
 
 func TestRuntimeCapabilityAuditCoversEveryAdapter(t *testing.T) {
 	want := map[string]agents.ReplacementScope{
-		agents.ClaudeName:      agents.ReplacementToolShapes,
-		agents.CursorName:      agents.ReplacementMCPOnly,
-		agents.CodexName:       agents.ReplacementNone,
-		agents.OpenCodeName:    agents.ReplacementNone,
-		agents.AntigravityName: agents.ReplacementNone,
+		agents.ClaudeName:   agents.ReplacementToolShapes,
+		agents.CodexName:    agents.ReplacementToolShapes,
+		agents.OpenCodeName: agents.ReplacementToolShapes,
 	}
 	for name, replacement := range want {
 		profile, ok := agents.RuntimeCapabilities(name)
@@ -36,8 +34,8 @@ func TestRuntimeCapabilityAuditIsDocumented(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, needle := range []string{
-		"| Claude Code |", "| Cursor |", "| Codex |", "| OpenCode |", "| Antigravity |",
-		"validated tool-result shape", "MCP** results", "No generic result replacement", "Telemetry only",
+		"| Claude Code |", "| Codex |", "| OpenCode |",
+		"validated tool-result shape", "continue:false", "locally assembled compacted output",
 	} {
 		if !strings.Contains(string(doc), needle) {
 			t.Errorf("capability matrix missing %q", needle)
@@ -48,10 +46,8 @@ func TestRuntimeCapabilityAuditIsDocumented(t *testing.T) {
 func TestRuntimeCapabilityAuditMatchesAdapterClaims(t *testing.T) {
 	for _, name := range []string{
 		agents.ClaudeName,
-		agents.CursorName,
 		agents.CodexName,
 		agents.OpenCodeName,
-		agents.AntigravityName,
 	} {
 		adapter := agents.Lookup(name)
 		profile, ok := agents.RuntimeCapabilities(name)

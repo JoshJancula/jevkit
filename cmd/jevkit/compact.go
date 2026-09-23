@@ -39,7 +39,7 @@ func (a *App) compactInitCmd() *cobra.Command {
 func (a *App) compactListCmd() *cobra.Command {
 	var project bool
 	c := &cobra.Command{Use: "list", Short: "list configured compaction rules", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
-		p, err := compact.LoadPolicy(a.compactionPolicyPath("", project), project)
+		p, err := loadOrNewPolicy(a.compactionPolicyPath("", project), project)
 		if err != nil {
 			return failf("%v", err)
 		}

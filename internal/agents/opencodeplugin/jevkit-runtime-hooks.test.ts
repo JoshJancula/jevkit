@@ -31,15 +31,12 @@ describe("isShellTool", () => {
 });
 
 describe("handleToolExecuteAfter", () => {
-  it("shells out for telemetry and does not mutate output", async () => {
+  it("replaces output when jevkit returns a compacted result", async () => {
     const calls: { argv: string[]; stdin?: string }[] = [];
     const runProcess: RunProcess = async (argv, options) => {
       calls.push({ argv, stdin: options?.stdin });
       return {
-        stdout: JSON.stringify({
-          title: "mutated",
-          output: "SHOULD_NOT_APPLY",
-        }),
+        stdout: JSON.stringify({ output: "COMPACTED" }),
         exitCode: 0,
       };
     };
@@ -60,7 +57,7 @@ describe("handleToolExecuteAfter", () => {
     );
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].argv, ["jevkit", "_runtime", "dispatch", "--protocol", "1", "opencode", "post-tool"]);
-    assert.equal(output.output, "ok  example/pkg\n");
+    assert.equal(output.output, "COMPACTED");
     assert.equal(output.title, "go test ./...");
   });
 });

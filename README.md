@@ -26,7 +26,7 @@ jevkit doctor
 
 # Wire hooks + MCP into an agent in this repo (or use --scope user)
 jevkit install claude
-# or: cursor | opencode | antigravity | codex | all
+# or: codex | opencode | all
 
 # Enable compaction for the wrapper / hooks (off by default)
 export JEVKIT_COMPACT=1
@@ -108,17 +108,9 @@ the file's contents are never echoed back unredacted. Output names every
 answer; `--format json` includes the model, token usage, each answer's type,
 confidence, probabilities and (for Score) legend.
 
-## Per-agent compaction mechanism
+## Agent integrations
 
-`jevkit install <agent>` installs the default plugin bundle (runtime hooks plus MCP). Use `--components hooks` or `--components mcp` to install only one part. Runtime integrations observe post-tool events directly; they do not rewrite the agent's command line.
-
-| Agent | Install name | Primary mechanism | Model-visible output replace |
-| --- | --- | --- | --- |
-| Claude Code | `claude` | PostToolUse `updatedToolOutput` (success / Bash only) | Yes |
-| Cursor | `cursor` | Post-tool MCP result replacement; native/shell telemetry | MCP only |
-| Antigravity | `antigravity` | Post-tool telemetry | No |
-| OpenCode | `opencode` | Plugin post-tool telemetry | No |
-| Codex | `codex` | Post-tool telemetry/context | No |
+`jevkit install <agent>` installs the default plugin bundle (runtime hooks plus MCP). Use `--components hooks` or `--components mcp` to install only one part. Claude Code, Codex, and OpenCode can replace eligible, high-confidence post-tool output with Jevkit’s locally assembled compacted result.
 
 Details for installation, hooks, and MCP configuration: [docs/AGENTS.md](docs/AGENTS.md).
 

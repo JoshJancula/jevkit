@@ -118,3 +118,15 @@ func TestInstallUnknownAgent(t *testing.T) {
 		t.Fatalf("exit %d errs %q", code, errs)
 	}
 }
+
+func TestInstallRejectsUnsupportedHookAgents(t *testing.T) {
+	for _, name := range []string{"cursor", "antigravity"} {
+		t.Run(name, func(t *testing.T) {
+			a, _, _ := cliApp(t)
+			code, _, errs := run(a, "", "install", name)
+			if code != exitUsage || !strings.Contains(errs, "no longer supported") {
+				t.Fatalf("exit %d errs %q", code, errs)
+			}
+		})
+	}
+}

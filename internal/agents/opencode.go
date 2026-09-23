@@ -2,7 +2,11 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
+
+	"github.com/OWNER/jevkit/internal/compact"
 )
 
 // OpenCode adapter name used by the installed plugin.
@@ -25,15 +29,15 @@ var opencodeEmptyPassthrough = []byte(`{}`)
 // Not a settings-file stdin hook: Install stages a TypeScript plugin under
 // .opencode/plugins/ that shells out to `jevkit hook opencode ...`. The Go
 // handlers below are what that plugin invokes.
-//
-// Spike (docs/AGENT-CAPABILITIES.md, ralph SPIKE-output-mutation.md):
-// tool.execute.before can mutate output.args.command (rewrite path).
-// tool.execute.after output mutation is unproven on OpenCode 1.14.35 — do not
-// rely on it; compaction comes from the `jevkit exec --` wrapper rewrite.
 type OpenCode struct {
 	// Binary is the jevkit executable name/path used in rewrites and the
 	// staged plugin default. Empty means "jevkit".
-	Binary string
+	Binary         string
+	Getenv         func(string) string
+	ThresholdBytes int
+	Asker          compact.Asker
+	StateDir       string
+	Policy         *compact.Policy
 }
 
 func init() {
@@ -49,11 +53,8 @@ func (o *OpenCode) Name() string { return OpenCodeName }
 
 func (o *OpenCode) Capabilities() Capabilities {
 	return Capabilities{
-		// PostTool is true so the plugin can shell out for telemetry; the
-		// framework AppendHook records the invocation. OutputReplace is false:
-		// model-visible after-hook mutation is unproven (SPIKE).
 		PostTool:      true,
-		OutputReplace: false,
+		OutputReplace: true,
 	}
 }
 
@@ -66,10 +67,44 @@ func (o *OpenCode) HandlePreTool(ctx context.Context, req Request) (Response, er
 	return Response{Body: o.Passthrough(EventPreTool)}, nil
 }
 
-// HandlePostTool is telemetry-only. The framework records the invocation when
-// the plugin shells out; we never mutate output (SPIKE: unproven).
 func (o *OpenCode) HandlePostTool(ctx context.Context, req Request) (Response, error) {
-	return Response{Body: o.Passthrough(EventPostTool)}, nil
+	pass := Response{Body: o.Passthrough(EventPostTool)}
+	if !o.compactEnabled() || o.shadow() {
+		return pass, nil
+	}
+	var payload openCodePostPayload
+	if json.Unmarshal(req.Raw, &payload) != nil || !isShellTool(payload.Input.Tool) {
+		return pass, nil
+	}
+	_, result := compact.JevCompact(payload.Input.Args.Command, payload.Output.Output, "", 0, o.Asker, compact.JevOptions{Enabled: true, ThresholdBytes: o.ThresholdBytes, StateDir: o.StateDir, CanReplace: true, Policy: o.Policy})
+	if !result.Compacted || result.Stdout == "" {
+		return pass, nil
+	}
+	body, err := json.Marshal(map[string]string{"output": result.Stdout})
+	if err != nil {
+		return pass, nil
+	}
+	return Response{Body: body}, nil
+}
+
+type openCodePostPayload struct {
+	Input struct {
+		Tool string `json:"tool"`
+		Args struct {
+			Command string `json:"command"`
+		} `json:"args"`
+	} `json:"input"`
+	Output struct {
+		Output string `json:"output"`
+	} `json:"output"`
+}
+
+func isShellTool(tool string) bool {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "bash", "shell", "command_execution":
+		return true
+	}
+	return false
 }
 
 func (o *OpenCode) HandleStop(ctx context.Context, req Request) (Response, error) {
@@ -81,4 +116,19 @@ func (o *OpenCode) binary() string {
 		return strings.TrimSpace(o.Binary)
 	}
 	return "jevkit"
+}
+
+func (o *OpenCode) getenv(key string) string {
+	if o != nil && o.Getenv != nil {
+		return o.Getenv(key)
+	}
+	return os.Getenv(key)
+}
+func (o *OpenCode) compactEnabled() bool {
+	v := o.getenv("JEVKIT_COMPACT")
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+}
+func (o *OpenCode) shadow() bool {
+	v := o.getenv("JEVKIT_COMPACT_SHADOW")
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
 }

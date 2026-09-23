@@ -11,8 +11,13 @@ import (
 	"testing"
 
 	"github.com/OWNER/jevkit/internal/agents"
+	"github.com/OWNER/jevkit/internal/jev"
 	"github.com/OWNER/jevkit/internal/usage"
 )
+
+type codexAsker struct{ response *jev.Response }
+
+func (a codexAsker) Ask(context.Context, jev.Request) (*jev.Response, error) { return a.response, nil }
 
 func TestCodexLookupRegistered(t *testing.T) {
 	got := agents.Lookup(agents.CodexName)
@@ -23,8 +28,8 @@ func TestCodexLookupRegistered(t *testing.T) {
 	if caps.PreTool || caps.PreToolRewrite || !caps.PostTool {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
-	if caps.OutputReplace {
-		t.Fatalf("codex PostToolUse replace is unproven: %+v", caps)
+	if !caps.OutputReplace {
+		t.Fatalf("codex PostToolUse replacement must be enabled: %+v", caps)
 	}
 }
 
@@ -137,15 +142,34 @@ func TestCodexPreToolNonShellPassthrough(t *testing.T) {
 	}
 }
 
-func TestCodexPostToolTelemetryOnlyNoMutation(t *testing.T) {
+func TestCodexPostToolCompactsWithReplacementFeedback(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "codex", "posttooluse-bash.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["tool_response"] = map[string]any{
+		"stdout": strings.Repeat("Downloading dependency package\n", 100),
+		"stderr": "",
+	}
+	raw, err = json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var mu sync.Mutex
 	var recs []usage.HookInvocation
-	c := agents.NewCodex()
+	c := &agents.Codex{
+		Getenv:         envMap{"JEVKIT_COMPACT": "1"}.Getenv,
+		ThresholdBytes: 200,
+		Asker: codexAsker{response: &jev.Response{Answers: map[string]jev.Answer{
+			"disposition": jev.ChoiceAnswer{Choice: "deterministic-compact", Confidence: 0.99},
+			"outcome":     jev.ChoiceAnswer{Choice: "success", Confidence: 0.99},
+		}}},
+	}
 	code := agents.Run(context.Background(), c, agents.EventPostTool, bytes.NewReader(raw), &bytes.Buffer{}, agents.Options{
 		StateDir: t.TempDir(),
 		AppendHook: func(_ string, rec usage.HookInvocation) error {
@@ -178,8 +202,30 @@ func TestCodexPostToolTelemetryOnlyNoMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var replacement struct {
+		Continue   bool   `json:"continue"`
+		StopReason string `json:"stopReason"`
+	}
+	if err := json.Unmarshal(resp.Body, &replacement); err != nil {
+		t.Fatal(err)
+	}
+	if replacement.Continue || !strings.Contains(replacement.StopReason, "output (exit 0)") {
+		t.Fatalf("replacement = %s", resp.Body)
+	}
+}
+
+func TestCodexPostToolFailsOpenWithoutJev(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "codex", "posttooluse-bash.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &agents.Codex{Getenv: envMap{"JEVKIT_COMPACT": "1"}.Getenv}
+	resp, err := c.HandlePostTool(context.Background(), agents.Request{Raw: raw, Event: agents.EventPostTool})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(bytes.TrimSpace(resp.Body)) != `{}` {
-		t.Fatalf("post-tool must be telemetry-only {}, got %s", resp.Body)
+		t.Fatalf("no Jev client must preserve output, got %s", resp.Body)
 	}
 }
 

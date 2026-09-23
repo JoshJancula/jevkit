@@ -20,8 +20,8 @@ func (a *App) installCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "install <agent|all>",
 		Short: "install a jevkit runtime bundle into a coding agent",
-		Long: `Install selected jevkit integration components for one agent
-(claude, cursor, codex, opencode, antigravity) or every agent detected on PATH
+		Long: `Install selected jevkit integration components for one supported agent
+(claude, codex, opencode) or every supported agent detected on PATH
 (all). The default plugin bundle includes hooks and MCP. Use --components mcp
 or --components hooks when you only want one of them. Edits are idempotent and marker-based. A first install keeps a
 .jevkit-original backup so uninstall can restore byte-exact originals.
@@ -62,6 +62,7 @@ preview without writing.`,
 }
 
 func (a *App) runInstall(target, scope, binary, componentsRaw string, dryRun, uninstall bool) int {
+	target = strings.ToLower(strings.TrimSpace(target))
 	scope = strings.ToLower(strings.TrimSpace(scope))
 	if scope != "project" && scope != "user" {
 		a.errf("jevkit: --scope must be \"project\" or \"user\"\n")
@@ -72,10 +73,21 @@ func (a *App) runInstall(target, scope, binary, componentsRaw string, dryRun, un
 		a.errf("jevkit: %v\n", err)
 		return exitUsage
 	}
+	if !uninstall && (target == agents.CursorName || target == agents.AntigravityName || target == "agy" || target == "cursor-agent") {
+		a.errf("jevkit: %s hooks are no longer supported; use `jevkit uninstall %s` to remove a prior installation\n", target, target)
+		return exitUsage
+	}
 	list, err := agents.SelectAgents(target, a.lookPath(), target == "all")
 	if err != nil {
 		a.errf("jevkit: %v\n", err)
 		return exitFail
+	}
+	if !uninstall {
+		list = agents.SupportedInstallAgents(list)
+		if len(list) == 0 {
+			a.errf("jevkit: no supported agents detected on PATH; pass claude, codex, or opencode\n")
+			return exitFail
+		}
 	}
 	opts := agents.InstallOptions{
 		WorkDir:   a.WorkDir,

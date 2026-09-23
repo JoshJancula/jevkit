@@ -24,6 +24,16 @@ func TestCompactPolicyCommands(t *testing.T) {
 	}
 }
 
+func TestCompactListWithoutPolicy(t *testing.T) {
+	a := newApp(t)
+	for _, args := range [][]string{{"compact", "list"}, {"compact", "list", "--project"}} {
+		code, out, _ := run(a, "", args...)
+		if code != exitOK || out != "no compaction rules\n" {
+			t.Fatalf("%v: code=%d output=%q", args, code, out)
+		}
+	}
+}
+
 func TestCompactRuleLifecycle(t *testing.T) {
 	a := newApp(t)
 	code, _, _ := run(a, "", "compact", "init")
