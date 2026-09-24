@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -38,7 +39,7 @@ func (a *App) compactInitCmd() *cobra.Command {
 
 func (a *App) compactListCmd() *cobra.Command {
 	var project bool
-	c := &cobra.Command{Use: "list", Short: "list configured compaction rules", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+	c := &cobra.Command{Use: "list", Short: "list configured compaction rules", Example: "  jevkit compact list\n  jevkit compact list --project", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
 		p, err := loadOrNewPolicy(a.compactionPolicyPath("", project), project)
 		if err != nil {
 			return failf("%v", err)
@@ -47,9 +48,22 @@ func (a *App) compactListCmd() *cobra.Command {
 			a.outf("no compaction rules\n")
 			return nil
 		}
+		rows := make([][]string, 0, len(p.Rules))
 		for _, r := range p.Rules {
-			a.outf("%s\t%s\tcommand=%q\toutput=%q\tthreshold=%d\n", r.ID, r.Action, r.Command, r.Output, r.Threshold)
+			command, output, threshold := "—", "—", "default"
+			if r.Command != "" {
+				command = r.Command
+			}
+			if r.Output != "" {
+				output = r.Output
+			}
+			if r.Threshold > 0 {
+				threshold = fmt.Sprintf("%d bytes", r.Threshold)
+			}
+			rows = append(rows, []string{r.ID, r.Action, command, output, threshold})
 		}
+		a.heading("Compaction rules")
+		a.table([]string{"ID", "ACTION", "COMMAND MATCHER", "OUTPUT MATCHER", "THRESHOLD"}, rows)
 		return nil
 	}}
 	c.Flags().BoolVar(&project, "project", false, "use project policy")
@@ -60,7 +74,7 @@ func (a *App) compactAddCmd() *cobra.Command {
 	var project bool
 	var id, action, command, output string
 	var threshold int
-	c := &cobra.Command{Use: "add", Short: "add a declarative compaction rule", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+	c := &cobra.Command{Use: "add", Short: "add a declarative compaction rule", Example: "  jevkit compact add --id preserve-build --action never-compact --command '^npm run build'", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
 		if id == "" || action == "" || (command == "" && output == "") {
 			return usagef("--id, --action, and --command or --output are required")
 		}
@@ -162,7 +176,7 @@ func (a *App) compactValidateCmd() *cobra.Command {
 func (a *App) compactExplainCmd() *cobra.Command {
 	var path, command, output string
 	var project bool
-	c := &cobra.Command{Use: "explain", Short: "show which policy rule would apply", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+	c := &cobra.Command{Use: "explain", Short: "show which policy rule would apply", Example: "  jevkit compact explain --command 'npm run build'\n  git diff | jevkit compact explain --command 'git diff' --output -", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
 		if command == "" {
 			return usagef("--command is required")
 		}

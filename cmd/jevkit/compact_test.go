@@ -45,7 +45,7 @@ func TestCompactRuleLifecycle(t *testing.T) {
 		t.Fatalf("add: %d %q", code, out)
 	}
 	code, out, _ = run(a, "", "compact", "list")
-	if code != exitOK || !strings.Contains(out, "build\tnever-compact") {
+	if code != exitOK || !strings.Contains(out, "Compaction rules") || !strings.Contains(out, "│ build ") || !strings.Contains(out, "│ never-compact ") {
 		t.Fatalf("list: %d %q", code, out)
 	}
 	code, out, _ = run(a, "", "compact", "remove", "build")

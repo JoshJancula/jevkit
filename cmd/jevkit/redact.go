@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -8,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/OWNER/jevkit/internal/redact"
 	"github.com/OWNER/jevkit/internal/redact/config"
@@ -17,55 +17,84 @@ import (
 // maxTestInput bounds what `redact test` reads.
 const maxTestInput = 8 << 20
 
-const redactUsage = `usage: jevkit redact <subcommand>
+const redactUsage = `Inspect and tune what jevkit removes before data leaves your machine.
 
-subcommands:
-  init [--project] [--force]            write a commented starter redact.yaml
-  list                                  list rules: id, class, source, state
-  explain <rule-id>                     show a rule's pattern and how to tune it
-  test [--diff] [file|-]                redact a file or stdin locally (no network)
-  add --pattern|--literal|--env|--never-send <value>   [--project]
-                                        add an entry, keeping comments
-  remove --rule|--literal|--env|--never-send <value>  [--project]
-                                        remove one entry after full validation
-  check                                 validate, lint and run embedded tests
-  audit [--since <when>] [--format json]
-                                        summarise what was sent (counts only)
-  last [n]                              show the exact payloads of the last n sends
-                                        (needs review mode)
+Usage:
+  jevkit redact <command>
+
+Commands:
+  init [--project] [--force]              Create a commented redact.yaml starter.
+  list                                    List rules, source layers, and state.
+  explain <rule-id>                       Show a rule's pattern and tuning options.
+  test [--diff] [file|-]                  Redact a file or stdin locally (no network).
+  add --pattern|--literal|--env|--never-send <value> [--project]
+                                          Add an entry while retaining comments.
+  remove --rule|--literal|--env|--never-send <value> [--project]
+                                          Remove one entry after full validation.
+  check                                   Validate, lint, and run embedded tests.
+  audit [--since <when>] [--format json] Summarize sent-data counts only.
+  last [n]                                Show stored payloads (review mode required).
+
+Examples:
+  jevkit redact list
+  printf 'token=example' | jevkit redact test -
+  jevkit redact add --literal 'internal-project-name'
 `
 
 func (a *App) redact(args []string) int {
 	if len(args) == 0 {
-		a.errf("%s", redactUsage)
+		a.errf("%s", a.helpText(a.Stderr, redactUsage))
 		return exitUsage
 	}
-	rest := args[1:]
-	switch args[0] {
-	case "init":
-		return a.redactInit(rest)
-	case "list":
-		return a.redactList(rest)
-	case "explain":
-		return a.redactExplain(rest)
-	case "test":
-		return a.redactTest(rest)
-	case "add":
-		return a.redactAdd(rest)
-	case "remove":
-		return a.redactRemove(rest)
-	case "check":
-		return a.redactCheck(rest)
-	case "audit":
-		return a.redactAudit(rest)
-	case "last":
-		return a.redactLast(rest)
-	case "help", "-h", "--help":
-		a.outf("%s", redactUsage)
+	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		a.outf("%s", a.helpText(a.Stdout, redactUsage))
 		return exitOK
 	}
-	a.errf("jevkit redact: unknown subcommand %q\n\n%s", args[0], redactUsage)
-	return exitUsage
+	handlers := map[string]func([]string) int{
+		"init": a.redactInit, "list": a.redactList, "explain": a.redactExplain,
+		"test": a.redactTest, "add": a.redactAdd, "remove": a.redactRemove,
+		"check": a.redactCheck, "audit": a.redactAudit, "last": a.redactLast,
+	}
+	handler, ok := handlers[args[0]]
+	if !ok {
+		a.errf("jevkit redact: unknown subcommand %q\n\n%s", args[0], a.helpText(a.Stderr, redactUsage))
+		return exitUsage
+	}
+	if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
+		return a.redactSubHelp(args[0], handler)
+	}
+	return handler(args[1:])
+}
+
+var redactHelp = map[string]struct{ usage, summary string }{
+	"init":    {"jevkit redact init [--project] [--force]", "Create a commented redaction config."},
+	"list":    {"jevkit redact list", "Show rules, their source, and whether they are enabled."},
+	"explain": {"jevkit redact explain <rule-id>", "Show a rule's pattern and tuning options."},
+	"test":    {"jevkit redact test [--diff] [file|-]", "Redact a file or stdin locally."},
+	"add":     {"jevkit redact add --pattern|--literal|--env|--never-send <value> [--project]", "Add a rule while retaining config comments."},
+	"remove":  {"jevkit redact remove --rule|--literal|--env|--never-send <value> [--project]", "Remove a rule after validation."},
+	"check":   {"jevkit redact check", "Validate and lint the redaction config."},
+	"audit":   {"jevkit redact audit [--since <when>] [--format json]", "Summarize sent-data counts."},
+	"last":    {"jevkit redact last [n]", "Show stored payloads when review mode is enabled."},
+}
+
+func (a *App) redactSubHelp(name string, handler func([]string) int) int {
+	var captured bytes.Buffer
+	previous := a.Stderr
+	a.Stderr = &captured
+	code := handler([]string{"--help"})
+	a.Stderr = previous
+	if code != exitOK {
+		a.errf("%s", captured.String())
+		return code
+	}
+	info := redactHelp[name]
+	a.outf("%s\n\n%s\n  %s\n", info.summary, a.styled(a.Stdout, ansiCyan, "Usage:"), info.usage)
+	_, flags, _ := strings.Cut(captured.String(), "\n")
+	if strings.TrimSpace(flags) != "" {
+		a.outf("\n%s\n%s", a.styled(a.Stdout, ansiCyan, "Flags:"), flags)
+	}
+	return exitOK
 }
 
 func (a *App) redactInit(args []string) int {
@@ -134,19 +163,19 @@ func (a *App) redactList(args []string) int {
 		return exitFail
 	}
 	disabled := cfg.Options.DisableSoft
-	tw := tabwriter.NewWriter(a.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tCLASS\tSOURCE\tSTATE")
+	rows := make([][]string, 0, len(redact.Rules())+len(cfg.Options.Custom))
 	for _, r := range redact.Rules() {
 		state := "enabled"
 		if slices.Contains(disabled, r.ID) {
 			state = "disabled"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\tbuiltin\t%s\n", r.ID, r.Class, state)
+		rows = append(rows, []string{r.ID, fmt.Sprint(r.Class), "builtin", state})
 	}
 	for _, c := range cfg.Options.Custom {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\tenabled\n", c.ID, redact.Hard, a.layerName(cfg.RuleSource[c.ID]))
+		rows = append(rows, []string{c.ID, fmt.Sprint(redact.Hard), a.layerName(cfg.RuleSource[c.ID]), "enabled"})
 	}
-	_ = tw.Flush()
+	a.heading("Rules")
+	a.table([]string{"ID", "CLASS", "SOURCE", "STATE"}, rows)
 	mode := "standard"
 	if cfg.Options.Strict {
 		mode = "strict"
@@ -279,11 +308,11 @@ func (a *App) redactTest(args []string) int {
 		a.errf("no rules matched\n")
 		return exitOK
 	}
-	tw := tabwriter.NewWriter(a.Stderr, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "RULE\tHITS")
+	rows := make([][]string, 0, len(res.Hits))
 	for _, h := range res.Hits {
-		_, _ = fmt.Fprintf(tw, "%s\t%d\n", h.RuleID, h.Count)
+		rows = append(rows, []string{h.RuleID, fmt.Sprintf("%d", h.Count)})
 	}
-	_ = tw.Flush()
+	a.errf("Redaction matches\n")
+	writeTable(a.Stderr, []string{"RULE", "HITS"}, rows)
 	return exitOK
 }

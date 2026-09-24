@@ -106,7 +106,7 @@ func (a *App) askTypeCmd(kind string) *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&state, "state", "", "context to evaluate, as a plain string (redacted before send)")
-	c.Flags().StringVar(&stateJSON, "state-json", "", "context to evaluate, as literal JSON text: a quoted string, object or array (redacted before send)")
+	c.Flags().StringVar(&stateJSON, "state-json", "", "JSON context: string, object or array (redacted before send)")
 	c.Flags().StringVar(&stateFile, "state-file", "", "path to a file holding the --state value, or - for stdin")
 	c.Flags().StringVar(&question, "question", "", "question instructions, as a plain string (redacted before send)")
 	c.Flags().StringVar(&instructionsJSON, "instructions-json", "", "question instructions, as literal JSON text (redacted before send)")
@@ -114,18 +114,18 @@ func (a *App) askTypeCmd(kind string) *cobra.Command {
 	c.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	switch kind {
 	case "choice":
-		c.Flags().StringVar(&options, "options", "", "comma-separated allowed answers; shorthand for null-valued criteria (redacted before send)")
+		c.Flags().StringVar(&options, "options", "", "comma-separated answers; shorthand for null criteria (redacted before send)")
 		c.Flags().StringVar(&criteriaJSON, "criteria-json", "",
-			`detailed choice criteria as a JSON object, e.g. {"billing":"...","technical":"...","sales":"..."} (redacted before send)`)
+			"choice rubrics as a JSON object (redacted before send)")
 		c.Flags().StringVar(&criteriaFile, "criteria-file", "", "path to a file holding the --criteria-json value, or - for stdin")
 	case "score":
-		c.Flags().StringVar(&levels, "levels", "", "comma-separated ordered score levels (2-10), low to high; shorthand for string criteria (redacted before send)")
-		c.Flags().StringVar(&criteriaJSON, "criteria-json", "", "detailed ordered score criteria as a JSON array of 2-10 string/object/array levels, low to high (redacted before send)")
+		c.Flags().StringVar(&levels, "levels", "", "2-10 comma-separated levels, low to high (redacted before send)")
+		c.Flags().StringVar(&criteriaJSON, "criteria-json", "", "2-10 ordered score rubrics as a JSON array (redacted before send)")
 		c.Flags().StringVar(&criteriaFile, "criteria-file", "", "path to a file holding the --criteria-json value, or - for stdin")
 	case "noul":
 		c.Flags().StringVar(&yesCriteria, "true-criteria", "", "optional description of a true answer (redacted before send)")
 		c.Flags().StringVar(&noCriteria, "false-criteria", "", "optional description of a false answer (redacted before send)")
-		c.Flags().StringVar(&criteriaJSON, "criteria-json", "", `detailed noul criteria as a JSON object with optional "true"/"false" keys (redacted before send)`)
+		c.Flags().StringVar(&criteriaJSON, "criteria-json", "", `JSON object with optional "true"/"false" rubrics (redacted before send)`)
 		c.Flags().StringVar(&criteriaFile, "criteria-file", "", "path to a file holding the --criteria-json value, or - for stdin")
 	}
 	return c
@@ -138,24 +138,26 @@ func askExample(kind string) string {
   jevkit ask choice --state "Tests: 42 passed, 0 failed" --question "What is the result?" --options "pass,fail"
 
   # Detailed criteria: a JSON object describing each option (labels alone are not always self-explanatory).
-  jevkit ask choice --state "Customer says the invoice total looks wrong" --question "Route to which team?" \
-    --criteria-json '{"billing":"Payment, invoice or refund issues","technical":"Product defects or errors","sales":"Pricing or new purchase questions"}'
+  jevkit ask choice --state "Invoice total looks wrong" --question "Route to which team?" \
+    --criteria-json '{"billing":"Invoice issues","technical":"Product errors","sales":"New purchases"}'
 
   # Emit a machine-readable answer for scripts.
   jevkit ask choice --state "HTTP status: 503" --question "Classify this outcome" --options "retry,fail" --format json`
 	case "score":
 		return `  # Concise shorthand: ordered levels, low to high.
-  jevkit ask score --state "The change touches authentication and billing" --question "How risky is this change?" --levels "low,medium,high"
+  jevkit ask score --state "Change touches billing" --question "Risk?" --levels "low,medium,high"
 
   # Detailed criteria: a JSON array of rubric objects, still ordered low to high.
-  jevkit ask score --state "PR diff: +812/-40 across 30 files" --question "How risky is this change?" \
-    --criteria-json '[{"label":"low","rubric":"Docs or tests only"},{"label":"medium","rubric":"Application code, no auth or billing"},{"label":"high","rubric":"Touches auth, billing or migrations"}]'`
+  jevkit ask score --state "PR changes billing code" --question "Risk?" \
+    --criteria-json '[{"label":"low","rubric":"Docs only"},{"label":"high","rubric":"Billing code"}]'`
 	default:
 		return `  # Concise shorthand: describe a true and/or false answer in plain text.
-  jevkit ask noul --state "The build completed successfully" --question "Did the build succeed?" --true-criteria "Build completed" --false-criteria "Build did not complete"
+  jevkit ask noul --state "Build completed" --question "Did it succeed?" \
+    --true-criteria "Build completed" --false-criteria "Build failed"
 
   # Detailed criteria: a JSON object, useful when a value needs structure instead of prose.
-  jevkit ask noul --state "No tests failed" --question "Is this safe to deploy?" --criteria-json '{"true":{"rubric":"No failures and no flaky retries"}}'
+  jevkit ask noul --state "No tests failed" --question "Safe to deploy?" \
+    --criteria-json '{"true":{"rubric":"No failures or flaky retries"}}'
 
   # Emit a machine-readable answer for scripts.
   jevkit ask noul --state "No tests failed" --question "Is this safe to deploy?" --format json`

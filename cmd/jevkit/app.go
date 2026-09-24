@@ -16,6 +16,8 @@ import (
 	"github.com/OWNER/jevkit/internal/keystore"
 	"github.com/OWNER/jevkit/internal/redact/audit"
 	"github.com/OWNER/jevkit/internal/redact/config"
+	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
+	"github.com/OWNER/jevkit/internal/sdlc/worker"
 )
 
 // Exit codes.
@@ -65,6 +67,16 @@ type App struct {
 	// ReadSecret reads a key with echo off. ok is false when stdin is not a
 	// terminal; nil means the real terminal check on os.Stdin.
 	ReadSecret func() (secret []byte, ok bool, err error)
+	// NewRunID generates an sdlc run id; nil means a random one.
+	NewRunID func() string
+	// SdlcReach supplies fake runtime adapters in tests; nil probes CLI binaries.
+	SdlcReach func() enrollment.Reach
+	// SdlcExecutor replaces CLI invocation in tests and host integrations.
+	SdlcExecutor worker.Executor
+	// Confirm prompts prompt and reports whether the user agreed; nil means
+	// non-interactive (no TTY to confirm on), so a caller offering a
+	// "gather"-confidence pick for confirmation must instead refuse.
+	Confirm func(prompt string) (bool, error)
 }
 
 func (a *App) outf(format string, args ...any) { _, _ = fmt.Fprintf(a.Stdout, format, args...) }

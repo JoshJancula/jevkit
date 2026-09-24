@@ -1,0 +1,111 @@
+version: 1
+name: ship-feature
+description: |
+  WHEN: a new user-facing capability needs spec, implementation, tests and review.
+  NOT FOR: single-line fixes, dependency bumps, or release cutting.
+
+budgets:
+  maxNodeAttempts: 3
+  maxReroutes: 2
+  maxRunActiveSeconds: 21600
+  maxEstimatedCostUsd: 5.00
+  missingUsage: warn
+
+nodes:
+  - id: write-spec
+    kind: work
+    agent: self
+    produces:
+      - path: spec.md
+        required: true
+        seedable: true
+    objective: |
+      Turn the task into a spec: scope, acceptance criteria, out-of-scope.
+    next: needs-agent
+
+  - id: needs-agent
+    kind: gate
+    questionSet: sdlc.needs-delegation
+    state: { from: [task, spec.md], maxBytes: 4000 }
+    routes: { yes: pick-implementer, no: orchestrator-inline }
+    trueRoute: yes
+    default: pick-implementer
+
+  - id: pick-implementer
+    kind: select
+    questionSet: sdlc.agent-selection
+    candidates: [codex-implementer, local-security-reviewer, cursor-planner]
+    state: { from: [task, spec.md], maxBytes: 8000 }
+    assignTo: implement
+    default: codex-implementer
+
+  - id: implement
+    kind: work
+    consumes: [{ path: spec.md, required: true }]
+    produces: [{ path: patch.diff, required: true }]
+    objective: |
+      Implement exactly what spec.md specifies. Do not widen scope.
+    next: handoff-gate
+
+  - id: handoff-gate
+    kind: gate
+    questionSet: sdlc.handoff-readiness
+    state: { from: [spec.md, patch.diff], maxBytes: 8000 }
+    routes: { ready: tests, not-ready: implement }
+    trueRoute: ready
+    default: tests
+
+  - id: tests
+    kind: check
+    command: "go test ./..."
+    routes: { pass: pick-reviewer, fail: triage }
+
+  - id: triage
+    kind: decide
+    questionSet: graph.failure-class
+    state: { from: [tests.output], maxBytes: 2048 }
+    routes:
+      transient-runtime:   tests
+      agent-correctable:   pick-implementer
+      plan-contract:       human-scope
+      operator-permission: human-scope
+    default: human-scope
+
+  - id: pick-reviewer
+    kind: select
+    questionSet: sdlc.agent-selection
+    candidates: [opencode-reviewer, local-security-reviewer]
+    assignTo: review
+    default: opencode-reviewer
+
+  - id: review
+    kind: work
+    consumes: [{ path: patch.diff, required: true }]
+    produces: [{ path: review.md, required: true }]
+    objective: "Review patch.diff against spec.md."
+    next: disposition
+
+  - id: disposition
+    kind: decide
+    questionSet: developer.review-disposition
+    routes: { block: pick-implementer, needs-review: human-scope,
+              informational: done, no-finding: done }
+    default: human-scope
+
+  - id: human-scope
+    kind: human
+    prompt: "Needs a decision. Continue, revise, or abort?"
+    routes: { continue: implement, revise: pick-implementer, abort: aborted }
+
+  - id: orchestrator-inline
+    kind: work
+    agent: self
+    objective: "Do the work inline; no delegation."
+    next: tests
+
+  - id: done
+    kind: terminal
+    outcome: succeeded
+  - id: aborted
+    kind: terminal
+    outcome: aborted

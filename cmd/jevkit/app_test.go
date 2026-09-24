@@ -329,18 +329,21 @@ func TestListShowsClassSourceAndState(t *testing.T) {
 		"custom.proj-rule":     {"HARD", "project", "enabled"},
 	}
 	for id, cols := range want {
-		var line string
+		var got []string
 		for _, l := range strings.Split(out, "\n") {
-			if strings.HasPrefix(l, id+" ") {
-				line = l
+			if strings.Contains(l, "│ "+id+" ") {
+				cells := strings.Split(l, "│")
+				for _, cell := range cells[1 : len(cells)-1] {
+					got = append(got, strings.TrimSpace(cell))
+				}
 			}
 		}
-		if line == "" {
+		if len(got) == 0 {
 			t.Errorf("no row for %s in:\n%s", id, out)
 			continue
 		}
-		if got := strings.Fields(line); strings.Join(got[1:], " ") != strings.Join(cols, " ") {
-			t.Errorf("%s: row %q, want %v", id, line, cols)
+		if strings.Join(got[1:], " ") != strings.Join(cols, " ") {
+			t.Errorf("%s: row %q, want %v", id, got, cols)
 		}
 	}
 	if !strings.Contains(out, "mode: standard") {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/OWNER/jevkit/internal/redact/audit"
@@ -93,12 +92,12 @@ func (a *App) redactAudit(args []string) int {
 			continue
 		}
 		a.outf("\n")
-		tw := tabwriter.NewWriter(a.Stdout, 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintf(tw, "%s\t%s\n", strings.ToUpper(sec.title), map[bool]string{true: "HITS", false: "SENDS"}[sec.title == "rule"])
+		a.heading(strings.ToUpper(sec.title[:1]) + sec.title[1:] + "s")
+		rows := make([][]string, 0, len(sec.m))
 		for _, k := range audit.SortedKeys(sec.m) {
-			_, _ = fmt.Fprintf(tw, "%s\t%d\n", k, sec.m[k])
+			rows = append(rows, []string{k, strconv.Itoa(sec.m[k])})
 		}
-		_ = tw.Flush()
+		a.table([]string{strings.ToUpper(sec.title), map[bool]string{true: "HITS", false: "SENDS"}[sec.title == "rule"]}, rows)
 	}
 	return exitOK
 }

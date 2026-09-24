@@ -35,7 +35,8 @@
             "enum": [
               "compaction",
               "mcp",
-              "graph"
+              "graph",
+              "sdlc"
             ]
           },
           "description": {

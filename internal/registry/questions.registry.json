@@ -242,6 +242,92 @@
         "fallback": "not ready - escalate to human release owner"
       },
       "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.agent-selection": {
+      "id": "sdlc.agent-selection",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Choose which candidate agent should run a select node's assigned work, from the closed set of agent ids declared by that node's candidates. Option keys for agent are populated at call time from the node's candidates and each candidate's catalog rubric, mirroring how graph.router-confidence fills target from allowedTargets. Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "agent": {
+          "type": "choice",
+          "instructions": "Given the task and any spec or artifacts in state, which candidate agent's rubric best matches this work?",
+          "criteria": {}
+        }
+      },
+      "policy": {
+        "primaryQuestion": "agent",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "select node's declared default agent"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.workflow-selection": {
+      "id": "sdlc.workflow-selection",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Choose which workflow should handle a bare `sdlc start --task` with no workflow named, from the closed set of available workflows. Option keys for workflow are populated at call time from every available workflow's name and its own description rubric, the same call-time criteria assembly sdlc.agent-selection uses for a node's candidates. Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "workflow": {
+          "type": "choice",
+          "instructions": "Given the task text, which available workflow's description rubric best matches what it asks for?",
+          "criteria": {}
+        }
+      },
+      "policy": {
+        "primaryQuestion": "workflow",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "refuse and list candidate workflows with their confidences"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.needs-delegation": {
+      "id": "sdlc.needs-delegation",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Gate: decide whether a workflow step is warranted enough to delegate to a selected agent, versus the orchestrator doing it inline. Expects state built from the node's declared state.from (typically the task and any spec produced so far). Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "delegate": {
+          "type": "noul",
+          "instructions": "Given the task and any spec or artifacts in state, does this step warrant delegating to a selected agent rather than the orchestrator doing it inline?",
+          "criteria": {
+            "true": "The step is substantial enough, or specialized enough, that a dedicated agent should do it.",
+            "false": "The step is small enough that the orchestrator should just do it inline."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "delegate",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "gate node's declared default route"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.handoff-readiness": {
+      "id": "sdlc.handoff-readiness",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Gate: decide whether a produced artifact is fit to hand on to the next step, versus looping back to redo the work that produced it. Expects state built from the node's declared state.from (typically the spec and the artifact just produced). Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "ready": {
+          "type": "noul",
+          "instructions": "Given the spec and the artifact just produced in state, is the artifact fit to hand on to the next step?",
+          "criteria": {
+            "true": "The artifact satisfies the spec well enough for the next step to depend on it.",
+            "false": "The artifact is incomplete, inconsistent with the spec, or otherwise not fit to build on yet."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "ready",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "gate node's declared default route"
+      },
+      "calibration": "placeholder - uncalibrated"
     }
   }
 }

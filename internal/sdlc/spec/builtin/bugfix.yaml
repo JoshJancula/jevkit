@@ -1,0 +1,90 @@
+version: 1
+name: bugfix
+description: |
+  WHEN: an existing feature is behaving incorrectly and needs investigation
+  and a fix.
+  NOT FOR: new user-facing capabilities (use feature), reviewing an
+  already-written diff with no further implementation (use review), or
+  release mechanics (use release).
+
+budgets:
+  maxNodeAttempts: 3
+  maxReroutes: 2
+
+nodes:
+  - id: reproduce
+    kind: work
+    agent: self
+    produces:
+      - path: repro.md
+        required: true
+        seedable: true
+    objective: |
+      Reproduce the bug: exact steps, expected vs actual behavior, and the
+      suspected affected area.
+    next: pick-fixer
+
+  - id: pick-fixer
+    kind: select
+    questionSet: sdlc.agent-selection
+    candidates: [codex-implementer, local-security-reviewer]
+    state: { from: [task, repro.md], maxBytes: 8000 }
+    assignTo: fix
+    default: codex-implementer
+
+  - id: fix
+    kind: work
+    consumes: [{ path: repro.md, required: true }]
+    produces: [{ path: patch.diff, required: true }]
+    objective: |
+      Fix exactly the bug described in repro.md. Do not widen scope.
+    next: tests
+
+  - id: tests
+    kind: check
+    command: "go test ./..."
+    routes: { pass: pick-reviewer, fail: triage }
+
+  - id: triage
+    kind: decide
+    questionSet: graph.failure-class
+    state: { from: [tests.output], maxBytes: 2048 }
+    routes:
+      transient-runtime:   tests
+      agent-correctable:   pick-fixer
+      plan-contract:       human-scope
+      operator-permission: human-scope
+    default: human-scope
+
+  - id: pick-reviewer
+    kind: select
+    questionSet: sdlc.agent-selection
+    candidates: [local-security-reviewer]
+    assignTo: review
+    default: local-security-reviewer
+
+  - id: review
+    kind: work
+    consumes: [{ path: patch.diff, required: true }]
+    produces: [{ path: review.md, required: true }]
+    objective: "Review patch.diff against repro.md."
+    next: disposition
+
+  - id: disposition
+    kind: decide
+    questionSet: developer.review-disposition
+    routes: { block: pick-fixer, needs-review: human-scope,
+              informational: done, no-finding: done }
+    default: human-scope
+
+  - id: human-scope
+    kind: human
+    prompt: "Needs a decision. Continue, revise, or abort?"
+    routes: { continue: fix, revise: pick-fixer, abort: aborted }
+
+  - id: done
+    kind: terminal
+    outcome: succeeded
+  - id: aborted
+    kind: terminal
+    outcome: aborted
