@@ -187,14 +187,15 @@ func (a *App) cliReach() enrollment.Reach {
 }
 
 func (a *App) sdlcAgentsDiscoverCmd() *cobra.Command {
-	return &cobra.Command{Use: "discover", Short: "optionally list existing definitions and installed CLI apps", Args: cobra.NoArgs,
-		Long: `Discovery is optional inventory. It shows reusable agent definitions
-and installed CLI apps, but it does not add agents to your personal roster.
-You can create your own agent directly with sdlc agents add.
+	return &cobra.Command{Use: "discover", Short: "look at possible agents without adding them to your team", Args: cobra.NoArgs,
+		Long: `Discover is a list of possibilities, not your team. It looks for host
+agent files, optional project suggestions in .jevkit/sdlc/agents.yaml, and
+installed CLI apps. None can receive SDLC work just because it appears here.
 
-A named definition can be added by ID with --role. A listed CLI app only
-confirms its executable is on PATH; it does not reveal models or named
-agents. Choose a model supported by that CLI when adding an agent.`,
+Use "sdlc agents add ID --role ROLE" to copy a named suggestion into your
+personal roster. You can also create your own runtime agent directly with
+"sdlc agents add". Use "sdlc agents" to see the roster Jevkit can use.
+The copy is separate: editing the suggestion later does not update the roster.`,
 		Example: "  jevkit sdlc agents discover\n  jevkit sdlc agents add reviewer --role assessor\n  jevkit sdlc agents add my-reviewer --runtime codex --model MODEL --rubric 'Review code' --role assessor",
 		RunE: func(*cobra.Command, []string) error {
 			c, err := a.loadCatalog()
@@ -212,7 +213,11 @@ agents. Choose a model supported by that CLI when adding an agent.`,
 			for _, agent := range roster.Agents {
 				enrolled[agent.ID] = agent.Ready()
 			}
-			a.outf("NAMED DEFINITIONS (project catalog and native files)\n")
+			a.heading("DISCOVER = LOOK, NOT ADD")
+			a.outf("  These are possible agents. Only agents in your roster can work.\n")
+			a.outf("  Project suggestions in .jevkit/sdlc/agents.yaml appear here, not in your roster.\n")
+			a.outf("\n")
+			a.heading("NAMED SUGGESTIONS (project file and host agent files)")
 			if len(c.IDs()) == 0 {
 				a.outf("  none found\n")
 			}
@@ -239,7 +244,8 @@ agents. Choose a model supported by that CLI when adding an agent.`,
 				names = append(names, n)
 			}
 			sort.Strings(names)
-			a.outf("\nCLI APPS ON PATH (apps, not agents or model lists)\n")
+			a.outf("\n")
+			a.heading("CLI APPS ON PATH (apps, not agents or model lists)")
 			if len(names) == 0 {
 				a.outf("  none found\n")
 			}
@@ -250,7 +256,8 @@ agents. Choose a model supported by that CLI when adding an agent.`,
 				}
 				a.outf("  %-10s binary: %s\n", n, binary)
 			}
-			a.outf("\nADD AN AGENT (discovery is optional)\n")
+			a.outf("\n")
+			a.heading("ADD = PUT AN AGENT ON YOUR TEAM")
 			if len(c.IDs()) > 0 {
 				a.outf("  Reuse a definition: jevkit sdlc agents add ID --role ROLE\n")
 			}
@@ -261,7 +268,8 @@ agents. Choose a model supported by that CLI when adding an agent.`,
 				a.outf("  Install that CLI before running; doctor checks reach.\n")
 			}
 			a.outf("  MODEL must be supported by the CLI. ROLE is planner, implementer, or assessor.\n")
-			a.outf("  Then check: jevkit sdlc doctor --policy lean\n")
+			a.outf("  See your team: jevkit sdlc agents\n")
+			a.outf("  Check setup: jevkit sdlc doctor --policy lean\n")
 			return nil
 		}}
 }
@@ -271,16 +279,16 @@ func (a *App) sdlcAgentsAddCmd() *cobra.Command {
 	var writeScopes []string
 	var readOnly, isolated bool
 	var via, subagent, runtime, model, runtimeAgent, rubric, binary string
-	c := &cobra.Command{Use: "add <id>", Short: "create an agent in your personal SDLC roster", Args: cobra.ExactArgs(1),
-		Long: `Add creates an agent entry in your personal sdlc/roster.yaml. The
-file is created automatically. Discovery is optional.
+	c := &cobra.Command{Use: "add <id>", Short: "put one agent in your personal SDLC roster", Args: cobra.ExactArgs(1),
+		Long: `Add puts an agent on your SDLC team by writing to your personal
+sdlc/roster.yaml. Jevkit creates the file if needed. You can also edit it
+yourself.
 
-For your own ID, supply --runtime, --model, --rubric, and one or more --role
-flags. For a supported CLI name (codex, claude, cursor, or opencode), the
-name itself can be the ID and runtime. You can also reuse a discovered named
-definition by ID; its binding and rubric are copied. Adding a runtime agent
-does not install its CLI or discover its models; doctor checks reach later.
-You may edit the roster YAML directly.`,
+You can copy a named suggestion shown by "sdlc agents discover": use its ID
+and choose a role. Or create your own agent with --runtime, --model, --rubric,
+and --role. For codex, claude, cursor, or opencode, the CLI name can also be
+the agent ID. Discovery is optional. Adding an agent does not install its
+CLI; "sdlc doctor" checks whether it can actually run.`,
 		Example: "  jevkit sdlc agents add my-reviewer --runtime codex --model MODEL --rubric 'Review code changes' --role assessor\n  jevkit sdlc agents add codex --model MODEL --rubric 'General repository work' --role all\n  jevkit sdlc agents add discovered-id --role assessor",
 		RunE: func(_ *cobra.Command, args []string) error {
 			id := args[0]

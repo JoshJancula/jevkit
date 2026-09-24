@@ -88,12 +88,14 @@ func (a *App) loadCatalog() (*catalog.Catalog, error) {
 func (a *App) sdlcAgentsCmd() *cobra.Command {
 	list := &cobra.Command{
 		Use:   "agents",
-		Short: "show your agent roster and manage agent setup",
-		Long: `Show your personal SDLC roster and create editable agent examples when
-the roster does not exist. Each agent declares roles it can perform and a
-rubric describing when Jev should choose it. Several agents can share a role;
-Jev selects among eligible agents for each SDLC step. Entries with
-disabled: true cannot receive work.`,
+		Short: "show the agents Jevkit can assign work to",
+		Long: `This is your team list. Only enabled agents in your personal roster can
+receive SDLC work. Running this command creates three editable, inactive
+examples if your roster does not exist.
+
+Use "sdlc agents discover" to look at possible agents. Looking does not add
+them to your team. Use "sdlc agents add" to add one, or edit your roster.
+Several agents can share a role; Jev chooses among them using each rubric.`,
 		Example: "  jevkit sdlc agents",
 		Args:    cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
@@ -106,6 +108,7 @@ disabled: true cannot receive work.`,
 			}
 			a.heading("SDLC AGENTS")
 			a.outf("  Roster: %s\n", sdlcFileURL(a.sdlcRosterPath()))
+			a.outf("  Only enabled agents in this roster can receive SDLC work.\n")
 			a.outf("\n")
 			a.heading("DEFAULT CLI RUN (lean policy)")
 			a.outf("  Needs 1 planner, 1 implementer, and 1 assessor.\n")
@@ -134,7 +137,7 @@ disabled: true cannot receive work.`,
 				a.outf("  jevkit sdlc agents add %s --model MODEL --rubric \"General work\" --role all\n", exampleRuntime)
 				a.outf("  Or name one: jevkit sdlc agents add my-reviewer --runtime codex --model MODEL --rubric \"Review code\" --role assessor\n")
 				a.outf("  MODEL is a model supported by that CLI. Add writes to this roster file.\n")
-				a.outf("  Optional inventory: jevkit sdlc agents discover\n")
+				a.outf("  To see possible agents first: jevkit sdlc agents discover\n")
 				a.outf("  Verify setup: jevkit sdlc doctor --policy lean\n")
 				return nil
 			}

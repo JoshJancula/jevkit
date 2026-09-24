@@ -29,6 +29,21 @@ workflow explicitly when you want its authored questions.
 
 ## Set up agents
 
+There is one team list: your personal `sdlc/roster.yaml`. Jevkit can assign
+work only to enabled agents in that file. The commands do three different
+things:
+
+| Command | Plain meaning | Does it let an agent work? |
+| --- | --- | --- |
+| `jevkit sdlc agents discover` | Look at possible agents and installed CLI apps | No |
+| `jevkit sdlc agents add ...` | Put one agent in your roster | Yes, if its binding works |
+| `jevkit sdlc agents` | Show your roster | Shows which entries are still inactive |
+
+You do **not** need to run `discover` first. You can add your own agent
+directly, or edit the roster. A discovered agent is only a suggestion until
+you add it. Adding copies its settings once; later edits to the suggestion
+do not update your roster.
+
 The default `lean` run needs one planner, one implementer, and one assessor.
 There are no required agent names. One reachable CLI agent can fill all three
 roles, so a single roster entry is enough for the default policy. Replace
@@ -54,8 +69,9 @@ assessors for `collaborative` (two) or `assured` (three) policies.
 
 Native subagents and `host-self` need to be added too. Use `jevkit sdlc agents add host-self --role planner` for a host that exposes itself, or add a discovered native ID with `--role planner`. The CLI driver cannot invoke either; `sdlc doctor --driver host --host-native NAME --host-self` is a diagnostic for the capabilities a host integration would expose. A host's own permission controls still apply. Jevkit never treats a discovered native definition as proof that the host can enforce read-only execution, write scopes, or isolation.
 
-`discover` has two different lists. **Named definitions** come from native host
-agent files or a project catalog; they have an ID, binding, and rubric. Enroll
+`discover` shows two kinds of possibilities. **Named suggestions** come from
+native host agent files or the optional project suggestions file; they have
+an ID, binding, and rubric. Add
 one with `jevkit sdlc agents add ID --role ROLE`. **CLI apps on PATH**
 (`codex`, `claude`, `cursor-agent`, `opencode`) only mean that the executable is
 installed. Jevkit cannot infer which models or named agents that app makes
@@ -85,10 +101,11 @@ and query performance.” `sdlc agents` displays it. There is no separate
 assured run, multiple assessor entries must have independent bindings to
 satisfy its quorum.
 
-Projects may also have `.jevkit/sdlc/agents.yaml`. That is an optional
-source of suggested agent definitions for `discover`, not another roster.
-It never authorizes work. Adding one of its IDs copies its binding into
-your personal roster and adds the roles you select.
+Projects may also have `.jevkit/sdlc/agents.yaml`. Think of it as a sheet of
+suggestions for `discover`. Its agents do **not** appear in your team list
+from `jevkit sdlc agents` until you add them, and they cannot work before
+then. If this optional file says `agents: []`, it contributes nothing; you
+can ignore it. Keep `.jevkit/sdlc/` for project policy and custom workflows.
 
 The user roster is `${XDG_CONFIG_HOME:-~/.config}/jevkit/sdlc/roster.yaml` (or the configured Jevkit config directory). It is editable YAML with `version: 1` and an `agents` list. Each entry needs a unique `id`, `roles`, `rubric`, `via`, and a native `subagent` or CLI `runtime` and `model` binding. Use `--agent NAME` (or `agent: NAME` in YAML) to distinguish named agents within one CLI runtime. For example:
 

@@ -63,7 +63,7 @@ func TestSdlcAgentsEmpty(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("agents: %d\nstdout=%q\nstderr=%q", code, out, errs)
 	}
-	if !strings.Contains(out, "SDLC AGENTS") || !strings.Contains(out, "inactive template") || !strings.Contains(out, "Needs 1 planner, 1 implementer, and 1 assessor") || !strings.Contains(out, "Multiple agents can share a role; Jev chooses among them by rubric") || !strings.Contains(out, "CLI apps on PATH: codex") || !strings.Contains(out, "disabled: false") || !strings.Contains(out, "WHEN TO CHOOSE") || !strings.Contains(out, "Plan complex changes") || !strings.Contains(out, "│ AGENT") {
+	if !strings.Contains(out, "SDLC AGENTS") || !strings.Contains(out, "Only enabled agents in this roster can receive SDLC work") || !strings.Contains(out, "inactive template") || !strings.Contains(out, "Needs 1 planner, 1 implementer, and 1 assessor") || !strings.Contains(out, "Multiple agents can share a role; Jev chooses among them by rubric") || !strings.Contains(out, "CLI apps on PATH: codex") || !strings.Contains(out, "disabled: false") || !strings.Contains(out, "WHEN TO CHOOSE") || !strings.Contains(out, "Plan complex changes") || !strings.Contains(out, "│ AGENT") {
 		t.Fatalf("agents output = %q", out)
 	}
 	if _, err := os.Stat(a.sdlcRosterPath()); err != nil {
@@ -194,10 +194,14 @@ agents:
 		t.Fatalf("agents: %d\nstdout=%q\nstderr=%q", code, out, errs)
 	}
 	for _, want := range []string{
-		"NAMED DEFINITIONS",
+		"DISCOVER = LOOK, NOT ADD",
+		"NAMED SUGGESTIONS",
+		"Project suggestions in .jevkit/sdlc/agents.yaml appear here, not in your roster",
 		"codex-implementer  (codex / gpt-5.6-luna; not enrolled)",
 		"security-reviewer  (native / security-reviewer; not enrolled)",
 		"CLI APPS ON PATH (apps, not agents or model lists)",
+		"ADD = PUT AN AGENT ON YOUR TEAM",
+		"See your team: jevkit sdlc agents",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("agents output missing %q, got:\n%s", want, out)
