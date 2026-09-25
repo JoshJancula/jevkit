@@ -114,15 +114,15 @@ func aggregateRuntime(runs []ledger.Run) runtimeSummary {
 
 func (a *App) renderJevUsage(s usage.Summary) {
 	if s.Calls == 0 {
-		fmt.Fprintf(a.Stdout, "%s: no recorded calls\n", a.styled(a.Stdout, ansiCyan, "Jev (TypeSafe AI) usage"))
+		_, _ = fmt.Fprintf(a.Stdout, "%s: no recorded calls\n", a.styled(a.Stdout, ansiCyan, "Jev (TypeSafe AI) usage"))
 		return
 	}
 
 	a.heading("Jev (TypeSafe AI) usage")
-	fmt.Fprintf(a.Stdout, "  calls: %d (measured %d, usage unavailable %d)\n", s.Calls, s.CallsMeasured, s.CallsUnavailable)
-	fmt.Fprintf(a.Stdout, "  tokens: input %s, output %s\n", formatInt(int64(s.InputTokens)), formatInt(int64(s.OutputTokens)))
+	_, _ = fmt.Fprintf(a.Stdout, "  calls: %d (measured %d, usage unavailable %d)\n", s.Calls, s.CallsMeasured, s.CallsUnavailable)
+	_, _ = fmt.Fprintf(a.Stdout, "  tokens: input %s, output %s\n", formatInt(int64(s.InputTokens)), formatInt(int64(s.OutputTokens)))
 	if s.Cost != nil {
-		fmt.Fprintf(a.Stdout, "  cost: ~$%.6f (%s)\n", s.Cost.EstimatedUSD, s.Cost.Note)
+		_, _ = fmt.Fprintf(a.Stdout, "  cost: ~$%.6f (%s)\n", s.Cost.EstimatedUSD, s.Cost.Note)
 	}
 
 	for _, group := range []struct {
@@ -158,10 +158,10 @@ func (a *App) renderJevUsage(s usage.Summary) {
 
 func (a *App) renderRuntime(s runtimeSummary) {
 	a.heading("Agent runtime usage")
-	fmt.Fprintf(a.Stdout, "  invocations: %d\n", s.Totals.Invocations)
-	fmt.Fprintf(a.Stdout, "  tokens: input %s (%d unknown), output %s (%d unknown)\n", formatInt(s.Totals.InputTokens), s.Totals.UnknownInput, formatInt(s.Totals.OutputTokens), s.Totals.UnknownOutput)
+	_, _ = fmt.Fprintf(a.Stdout, "  invocations: %d\n", s.Totals.Invocations)
+	_, _ = fmt.Fprintf(a.Stdout, "  tokens: input %s (%d unknown), output %s (%d unknown)\n", formatInt(s.Totals.InputTokens), s.Totals.UnknownInput, formatInt(s.Totals.OutputTokens), s.Totals.UnknownOutput)
 	if s.Totals.SuppliedCostUSD != nil {
-		fmt.Fprintf(a.Stdout, "  supplied cost: $%.6f\n", *s.Totals.SuppliedCostUSD)
+		_, _ = fmt.Fprintf(a.Stdout, "  supplied cost: $%.6f\n", *s.Totals.SuppliedCostUSD)
 	}
 
 	for _, group := range []struct {
@@ -208,7 +208,7 @@ func renderUsageReport(a *App, format, source string, jev usage.Summary, runtime
 		a.renderJevUsage(jev)
 	}
 	if source == "all" {
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 	}
 	if source == "all" || source == "runtime" {
 		a.renderRuntime(runtime)

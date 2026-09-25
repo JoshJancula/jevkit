@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -31,7 +32,7 @@ func TestInvocationLogRetainsBoundedTailAndMarksTruncation(t *testing.T) {
 	if !strings.HasPrefix(string(got), "[earlier output truncated]\n") || !strings.HasSuffix(string(got), "last line\n") || len(got) > MaxLogTail+40 {
 		t.Fatalf("invalid bounded tail: len=%d", len(got))
 	}
-	if info, err := os.Stat(filepath.Join(dir, "inv-1.stderr")); err != nil || info.Mode().Perm() != 0o600 {
+	if info, err := os.Stat(filepath.Join(dir, "inv-1.stderr")); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("private log: %v %v", info, err)
 	}
 }

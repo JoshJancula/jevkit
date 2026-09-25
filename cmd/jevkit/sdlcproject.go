@@ -11,8 +11,7 @@ import (
 // when the command was launched from a non-repository parent directory.
 func (a *App) sdlcProjectInputs(name, taskFile string, files []string) (string, string, []string, func(), error) {
 	old := a.WorkDir
-	root, err := gitWorktreeRoot(old)
-	if err == nil {
+	if _, err := gitWorktreeRoot(old); err == nil {
 		return name, taskFile, files, func() {}, nil
 	}
 	hint := taskFile
@@ -25,7 +24,7 @@ func (a *App) sdlcProjectInputs(name, taskFile string, files []string) (string, 
 			absolute = filepath.Join(old, absolute)
 		}
 		if _, statErr := os.Stat(absolute); statErr == nil {
-			root, err = gitWorktreeRoot(filepath.Dir(absolute))
+			root, err := gitWorktreeRoot(filepath.Dir(absolute))
 			if err == nil {
 				if name != "" && !filepath.IsAbs(name) {
 					if _, statErr := os.Stat(filepath.Join(old, name)); statErr == nil {

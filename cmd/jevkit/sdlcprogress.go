@@ -47,19 +47,19 @@ func (a *App) progressFlush() {
 			}
 			p.decisionSeen[run.RunID] = len(decisions)
 			for _, d := range decisions[start:] {
-				fmt.Fprintf(p.out, "%s  decision %s: %s", strings.Repeat("  ", run.Depth), d.Kind, d.Choice)
+				_, _ = fmt.Fprintf(p.out, "%s  decision %s: %s", strings.Repeat("  ", run.Depth), d.Kind, d.Choice)
 				if d.Outcome != "" {
-					fmt.Fprintf(p.out, " (%s)", shortProgressText(d.Outcome, 72))
+					_, _ = fmt.Fprintf(p.out, " (%s)", shortProgressText(d.Outcome, 72))
 				}
 				if d.Next != "" {
-					fmt.Fprintf(p.out, " → %s", shortProgressText(d.Next, 72))
+					_, _ = fmt.Fprintf(p.out, " → %s", shortProgressText(d.Next, 72))
 				}
-				fmt.Fprintln(p.out)
+				_, _ = fmt.Fprintln(p.out)
 			}
 		}
 		if run.AutoDecisionReason != "" && p.last[run.RunID+"/delegation"] != run.AutoDecisionReason {
 			p.last[run.RunID+"/delegation"] = run.AutoDecisionReason
-			fmt.Fprintf(p.out, "%s  delegation: %s\n", strings.Repeat("  ", run.Depth), shortProgressText(run.AutoDecisionReason, 96))
+			_, _ = fmt.Fprintf(p.out, "%s  delegation: %s\n", strings.Repeat("  ", run.Depth), shortProgressText(run.AutoDecisionReason, 96))
 		}
 		if run.Adaptive != nil {
 			for _, decision := range run.Adaptive.SpecialistDecisions {
@@ -69,11 +69,11 @@ func (a *App) progressFlush() {
 					continue
 				}
 				p.last[key] = value
-				fmt.Fprintf(p.out, "%s  specialist %s: %s", strings.Repeat("  ", run.Depth), decision.Role, decision.Reason)
+				_, _ = fmt.Fprintf(p.out, "%s  specialist %s: %s", strings.Repeat("  ", run.Depth), decision.Role, decision.Reason)
 				if decision.Choice != "" {
-					fmt.Fprintf(p.out, " (answer %s, confidence %.2f)", decision.Choice, decision.Confidence)
+					_, _ = fmt.Fprintf(p.out, " (answer %s, confidence %.2f)", decision.Choice, decision.Confidence)
 				}
-				fmt.Fprintln(p.out)
+				_, _ = fmt.Fprintln(p.out)
 			}
 		}
 		events, err := ledger.Open(a.sdlcRunsDir(), run.RunID).ReadEvents()
@@ -105,27 +105,27 @@ func (a *App) progressEvent(p *sdlcProgress, root, run ledger.Run, event ledger.
 		if event.Outcome != "" {
 			label += " (" + event.Outcome + ")"
 		}
-		fmt.Fprintf(p.out, "%s%s: %s  %s\n", indent, run.Workflow, a.styled(p.out, ansiCyan, label), progressElapsed(run.CreatedAt, event.At))
+		_, _ = fmt.Fprintf(p.out, "%s%s: %s  %s\n", indent, run.Workflow, a.styled(p.out, ansiCyan, label), progressElapsed(run.CreatedAt, event.At))
 		if run.RunID == p.root && root.TreeUsage != nil && root.Adaptive != nil {
-			fmt.Fprintf(p.out, "%s  left: %d assignments | %d revisions | %d children", indent,
+			_, _ = fmt.Fprintf(p.out, "%s  left: %d assignments | %d revisions | %d children", indent,
 				max(0, root.Adaptive.MaxAssignments-root.TreeUsage.Assignments),
 				max(0, root.Adaptive.MaxRevisions-root.TreeUsage.Revisions),
 				max(0, sdlcMaxChildRuns-root.TreeUsage.ChildRuns))
 			if policy, _, err := a.sdlcEnrollment(); err == nil {
 				if remaining, err := a.treeRemaining(root, policy); err == nil {
-					fmt.Fprintf(p.out, " | %s", remaining.Round(time.Second))
+					_, _ = fmt.Fprintf(p.out, " | %s", remaining.Round(time.Second))
 				}
 			}
-			fmt.Fprintln(p.out)
+			_, _ = fmt.Fprintln(p.out)
 		}
 	}
 	if event.Agent != "" {
 		assignment := event.Agent + "/" + event.Runtime + "/" + event.Invocation
 		if p.last[key+"agent"] != assignment {
 			p.last[key+"agent"] = assignment
-			fmt.Fprintf(p.out, "%s  agent: %s (%s)\n", indent, event.Agent, event.Runtime)
+			_, _ = fmt.Fprintf(p.out, "%s  agent: %s (%s)\n", indent, event.Agent, event.Runtime)
 			if event.Reason != "" {
-				fmt.Fprintf(p.out, "%s    route: %s\n", indent, shortProgressText(event.Reason, 88))
+				_, _ = fmt.Fprintf(p.out, "%s    route: %s\n", indent, shortProgressText(event.Reason, 88))
 			}
 		}
 	} else if event.Reason != "" && p.last[key+"reason"] != event.Reason {
@@ -133,8 +133,8 @@ func (a *App) progressEvent(p *sdlcProgress, root, run ledger.Run, event ledger.
 		// A pause reason often repeats the outcome with spaces instead of
 		// hyphens. The status line already says it.
 		if strings.ReplaceAll(event.Outcome, "-", " ") != event.Reason &&
-			!(stage == "paused" && run.Adaptive != nil && run.Adaptive.Stage == "paused" && run.Adaptive.PendingReason != "") {
-			fmt.Fprintf(p.out, "%s  note: %s\n", indent, shortProgressText(event.Reason, 96))
+			(stage != "paused" || run.Adaptive == nil || run.Adaptive.Stage != "paused" || run.Adaptive.PendingReason == "") {
+			_, _ = fmt.Fprintf(p.out, "%s  note: %s\n", indent, shortProgressText(event.Reason, 96))
 		}
 	}
 	if stage == "paused" && run.Adaptive != nil && run.Adaptive.Stage == "paused" && run.Adaptive.PendingReason != "" &&
@@ -144,9 +144,9 @@ func (a *App) progressEvent(p *sdlcProgress, root, run ledger.Run, event ledger.
 		if focus == "" {
 			focus = "decision"
 		}
-		fmt.Fprintf(p.out, "%s  pending %s: %s\n", indent, shortProgressText(focus, 40), shortProgressText(run.Adaptive.PendingReason, 96))
+		_, _ = fmt.Fprintf(p.out, "%s  pending %s: %s\n", indent, shortProgressText(focus, 40), shortProgressText(run.Adaptive.PendingReason, 96))
 		if strings.Contains(run.Adaptive.PendingReason, "no-key") {
-			fmt.Fprintf(p.out, "%s  next: jevkit key set; then jevkit sdlc resume %s\n", indent, run.RunID)
+			_, _ = fmt.Fprintf(p.out, "%s  next: jevkit key set; then jevkit sdlc resume %s\n", indent, run.RunID)
 		}
 	}
 	if event.TransitionKind != "" {
@@ -154,15 +154,15 @@ func (a *App) progressEvent(p *sdlcProgress, root, run ledger.Run, event ledger.
 		if event.TransitionAnswer != "" && p.last[key+"transition"] != transition {
 			p.last[key+"transition"] = transition
 			if event.TransitionKind == "spawn" && event.Stage != "spawn" {
-				fmt.Fprintf(p.out, "%s  workflow %s: %s -> %s\n", indent, a.progressChildName(event.ChildRunID), event.TransitionAnswer, event.TransitionNext)
+				_, _ = fmt.Fprintf(p.out, "%s  workflow %s: %s -> %s\n", indent, a.progressChildName(event.ChildRunID), event.TransitionAnswer, event.TransitionNext)
 			} else if event.TransitionKind != "spawn" {
-				fmt.Fprintf(p.out, "%s  %s %s: %s -> %s\n", indent, event.TransitionKind, event.TransitionStage, event.TransitionAnswer, event.TransitionNext)
+				_, _ = fmt.Fprintf(p.out, "%s  %s %s: %s -> %s\n", indent, event.TransitionKind, event.TransitionStage, event.TransitionAnswer, event.TransitionNext)
 			}
 		}
 	}
 	if event.Stage == "spawn" && event.ChildRunID != "" && p.last[key+"child"] != event.ChildRunID {
 		p.last[key+"child"] = event.ChildRunID
-		fmt.Fprintf(p.out, "%s  workflow %s: started run %s\n", indent, a.progressChildName(event.ChildRunID), event.ChildRunID)
+		_, _ = fmt.Fprintf(p.out, "%s  workflow %s: started run %s\n", indent, a.progressChildName(event.ChildRunID), event.ChildRunID)
 	}
 }
 

@@ -562,7 +562,7 @@ func ttySafeLine(s string) string {
 	for i := 0; i < len(s); {
 		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == ']' {
 			i += 2
-			for i < len(s) && s[i] != '\a' && !(s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '\\') {
+			for i < len(s) && s[i] != '\a' && (s[i] != '\x1b' || i+1 >= len(s) || s[i+1] != '\\') {
 				i++
 			}
 			if i < len(s) && s[i] == '\x1b' {
@@ -600,7 +600,7 @@ func watchTail(path string, maxBytes int64) []byte {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return nil
@@ -980,6 +980,7 @@ func watchFileChanges(raw, workDir string) (label, title string, detail []string
 		} else if path != ".." && !strings.HasPrefix(path, ".."+string(filepath.Separator)) {
 			inside = append(inside, path)
 		}
+		path = filepath.ToSlash(path)
 		names = append(names, path)
 		if len(detail) < 20 {
 			kind := change.Kind
@@ -1072,6 +1073,7 @@ func watchEditPreview(raw, workDir string) (string, []string) {
 	} else if filepath.IsAbs(path) {
 		path = filepath.Base(path) + " (outside project)"
 	}
+	path = filepath.ToSlash(path)
 	switch strings.ToLower(name) {
 	case "edit":
 		return "Edit · " + path, editDiffLines(path, cmp.Or(in.OldString, in.OldStr2), cmp.Or(in.NewString, in.NewStr2))

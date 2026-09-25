@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -100,6 +101,11 @@ func TestGuardRejectsEscapeAndAllowsNamedFile(t *testing.T) {
 	}
 	if _, ok := g.Check("read ../other.md"); ok {
 		t.Fatal("parent path allowed")
+	}
+	if runtime.GOOS == "windows" {
+		if _, ok := g.Check(`read ..\other.md`); ok {
+			t.Fatal("Windows parent path allowed")
+		}
 	}
 	if _, ok := g.Check("cd .."); ok {
 		t.Fatal("bare parent segment allowed")

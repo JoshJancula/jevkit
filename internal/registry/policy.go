@@ -178,10 +178,6 @@ func primary(a jev.Answer) (conf float64, chosen *string, hasChoice bool) {
 	return math.NaN(), nil, false
 }
 
-// offered reports whether choice is a declared option. A question with no
-// declared options takes them at call time, so anything is offered.
-func offered(q Question, choice string) bool { return offeredWith(q, choice, nil) }
-
 func offeredWith(q Question, choice string, dynamic map[string]json.RawMessage) bool {
 	var m map[string]string
 	if err := json.Unmarshal(q.Criteria, &m); err != nil {

@@ -170,12 +170,13 @@ Several agents can share a role; Jev chooses among them using each rubric.`,
 			rows := make([][]string, 0, len(roster.Agents))
 			for _, ag := range roster.Agents {
 				binding := ag.Via
-				if ag.Via == "runtime" {
+				switch ag.Via {
+				case "runtime":
 					binding = ag.Runtime + " / " + ag.Model
 					if ag.RuntimeAgent != "" {
 						binding += " / " + ag.RuntimeAgent
 					}
-				} else if ag.Via == "native" {
+				case "native":
 					binding += " / " + ag.Subagent
 				}
 				status := "configured"
@@ -337,9 +338,9 @@ func (a *App) sdlcListCmd() *cobra.Command {
 
 func sdlcDisplayPath(root, path string) string {
 	if rel, err := filepath.Rel(root, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return rel
+		return filepath.ToSlash(rel)
 	}
-	return path
+	return filepath.ToSlash(path)
 }
 
 func (a *App) sdlcCreateCmd() *cobra.Command {

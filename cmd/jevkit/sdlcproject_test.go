@@ -41,11 +41,11 @@ func TestSDLCRunFindsProjectFromTaskFileAndResumeUsesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.WorkDir != project || len(executor.requests) != 1 || executor.requests[0].WorkDir != project || a.WorkDir != parent {
+	if !sameProjectPath(t, saved.WorkDir, project) || len(executor.requests) != 1 || !sameProjectPath(t, executor.requests[0].WorkDir, project) || a.WorkDir != parent {
 		t.Fatalf("project binding: run=%q requests=%+v current=%q", saved.WorkDir, executor.requests, a.WorkDir)
 	}
 	code, _, errs = run(a, "", "sdlc", "resume", runID)
-	if code != exitOK || len(executor.requests) != 3 || executor.requests[1].WorkDir != project || a.WorkDir != parent {
+	if code != exitOK || len(executor.requests) != 3 || !sameProjectPath(t, executor.requests[1].WorkDir, project) || a.WorkDir != parent {
 		t.Fatalf("resume: %d %q requests=%+v current=%q", code, errs, executor.requests, a.WorkDir)
 	}
 }
@@ -80,9 +80,22 @@ func TestSDLCRunFindsProjectFromPlanFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.WorkDir != project || saved.Adaptive.Stage != "done" || len(executor.requests) != 2 || executor.requests[0].WorkDir != project || a.WorkDir != parent {
+	if !sameProjectPath(t, saved.WorkDir, project) || saved.Adaptive.Stage != "done" || len(executor.requests) != 2 || !sameProjectPath(t, executor.requests[0].WorkDir, project) || a.WorkDir != parent {
 		t.Fatalf("project plan binding: run=%+v requests=%+v current=%q", saved, executor.requests, a.WorkDir)
 	}
+}
+
+func sameProjectPath(t *testing.T, first, second string) bool {
+	t.Helper()
+	a, err := os.Stat(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.Stat(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return os.SameFile(a, b)
 }
 
 func TestSDLCRunOutsideRepositoryFailsBeforeCreatingRun(t *testing.T) {

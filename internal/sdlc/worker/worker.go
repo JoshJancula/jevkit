@@ -94,7 +94,7 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 		if err != nil {
 			return Reply{}, fmt.Errorf("worker: stage OpenCode review artifact: %w", err)
 		}
-		defer os.Remove(artifact.Name())
+		defer func() { _ = os.Remove(artifact.Name()) }()
 		if _, err := artifact.WriteString(req.Diff); err != nil {
 			_ = artifact.Close()
 			return Reply{}, fmt.Errorf("worker: write OpenCode review artifact: %w", err)
@@ -127,7 +127,7 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 		if err != nil {
 			return Reply{}, err
 		}
-		defer os.RemoveAll(dir)
+		defer func() { _ = os.RemoveAll(dir) }()
 		resultPath = filepath.Join(dir, "result.json")
 		args = append(args, "--output-last-message", resultPath, "-")
 	}
@@ -163,8 +163,8 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 		}
 		cmd.Stdout = io.MultiWriter(&stdout, outLog)
 		cmd.Stderr = io.MultiWriter(&stderr, errLog)
-		defer outLog.Flush()
-		defer errLog.Flush()
+		defer func() { _ = outLog.Flush() }()
+		defer func() { _ = errLog.Flush() }()
 	}
 	if err := runRuntimeCommand(cmd); err != nil {
 		if ctx.Err() != nil {

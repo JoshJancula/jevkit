@@ -40,7 +40,7 @@ func TestEvaluateOrderingAndJevError(t *testing.T) {
 	if decision, err := Evaluate(context.Background(), cfg, Request{Command: "rm -rf /"}, decider); err != nil || !decision.Deny || asker.calls != 0 {
 		t.Fatalf("killswitch must run first: %+v %v calls=%d", decision, err, asker.calls)
 	}
-	if decision, err := Evaluate(context.Background(), cfg, Request{Command: "cat /etc/passwd", Workspace: t.TempDir()}, decider); err != nil || !decision.Deny || asker.calls != 0 {
+	if decision, err := Evaluate(context.Background(), cfg, Request{Command: "cat " + filepath.Join(t.TempDir(), "passwd"), Workspace: t.TempDir()}, decider); err != nil || !decision.Deny || asker.calls != 0 {
 		t.Fatalf("sandbox must run before Jev: %+v %v calls=%d", decision, err, asker.calls)
 	}
 	if decision, err := Evaluate(context.Background(), cfg, Request{Command: "echo hi"}, decider); err != nil || decision.Deny || asker.calls != 1 {

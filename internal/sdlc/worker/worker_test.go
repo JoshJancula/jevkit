@@ -8,12 +8,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
 	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
 )
+
+func requireUnixShellFixture(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture executes a Unix shell script")
+	}
+}
 
 func TestCommandUsesEnrolledRuntimeAndReadOnlyMode(t *testing.T) {
 	req := Request{Agent: enrollment.Agent{Via: enrollment.Runtime, Runtime: "codex", Model: "selected-model"}, Assignment: adaptive.Assignment{Role: "assessor"}}
@@ -131,6 +139,7 @@ func TestCommandUsesExplicitSession(t *testing.T) {
 }
 
 func TestClaudeEnvelopeCapturesSessionAndUsage(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "initial"}} {
 		cmd := exec.Command("git", args...)
@@ -154,6 +163,7 @@ func TestClaudeEnvelopeCapturesSessionAndUsage(t *testing.T) {
 }
 
 func TestInvalidRoleOutcomeCanRerouteWithoutPausing(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	cmd := exec.Command("git", "init", "-q")
 	cmd.Dir = dir
@@ -173,6 +183,7 @@ func TestInvalidRoleOutcomeCanRerouteWithoutPausing(t *testing.T) {
 }
 
 func TestAssessorReplySurvivesWorkspaceDrift(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	cmd := exec.Command("git", "init", "-q")
 	cmd.Dir = dir
@@ -206,6 +217,7 @@ func TestFailedInvocationKeepsReportedUsage(t *testing.T) {
 }
 
 func TestOpenCodeReadsReviewArtifactInsideWorkspace(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	cmd := exec.Command("git", "init", "-q")
 	cmd.Dir = dir
@@ -239,6 +251,7 @@ echo '{"type":"step_finish","part":{"tokens":{"input":30,"output":4},"cost":0.02
 }
 
 func TestOpenCodeNoTextReportsCauseAndUsage(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	cmd := exec.Command("git", "init", "-q")
 	cmd.Dir = dir
@@ -265,6 +278,7 @@ echo '{"type":"step_finish","part":{"tokens":{"input":30,"output":4},"cost":0.02
 }
 
 func TestCursorScopedPlannerOutcomeIsAccepted(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	cmd := exec.Command("git", "init", "-q")
 	cmd.Dir = dir
@@ -287,6 +301,7 @@ echo '{"type":"result","result":"{\"outcome\":\"planner: planned\",\"content\":\
 }
 
 func TestClaudeStreamFeedsLiveActivityAndParsesResult(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "initial"}} {
 		cmd := exec.Command("git", args...)
@@ -312,6 +327,7 @@ echo '{"type":"result","result":"{\"outcome\":\"planned\",\"content\":\"Plan\"}"
 }
 
 func TestAntigravityCapturesConversationAndUsage(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "initial"}} {
 		cmd := exec.Command("git", args...)
@@ -346,6 +362,7 @@ echo '{"event":"result","result":{"conversation_id":"agy-123","status":"SUCCESS"
 }
 
 func TestClaudeCompactUsesCLIStreamWithoutSDK(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "initial"}} {
 		cmd := exec.Command("git", args...)
@@ -435,6 +452,7 @@ func TestChangeReportExcludesPreexistingBinary(t *testing.T) {
 }
 
 func TestCLIExecutorHandoffOmitsPreexistingBinary(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "initial"}} {
 		cmd := exec.Command("git", args...)

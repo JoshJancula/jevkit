@@ -88,7 +88,7 @@ func (s *Store) AppendDecision(d Decision) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b, err := json.Marshal(d)
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func (s *Store) ReadDecisions() ([]Decision, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []Decision
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 4096), 1<<20)

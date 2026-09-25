@@ -207,9 +207,7 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 			return a.sdlcFailAssignment(runID, *assignment, err)
 		}
 		if strategy == "compact" && agent.Runtime == "codex" {
-			var compactErr error
-			compactErr = worker.CompactCodex(ctx, agent.Binary, a.WorkDir, sessionID)
-			if err := compactErr; err != nil {
+			if err := worker.CompactCodex(ctx, agent.Binary, a.WorkDir, sessionID); err != nil {
 				_ = a.recordDecision(store, ledger.Decision{RunID: runID, Kind: "session-compaction", Stage: run.Adaptive.Stage, Invocation: assignment.InvocationID, Choice: "failed", Outcome: err.Error(), Next: "pause run"})
 				return a.sdlcFailAssignment(runID, *assignment, err)
 			}
@@ -305,7 +303,7 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	}
 	if req.Compact {
 		if !reply.CompactCompleted {
-			err := fmt.Errorf("Claude /compact did not confirm completion")
+			err := fmt.Errorf("claude /compact did not confirm completion")
 			_ = a.recordDecision(store, ledger.Decision{RunID: runID, Kind: "session-compaction", Invocation: assignment.InvocationID, Runtime: "claude", Choice: "failed", Outcome: err.Error(), Next: "pause run"})
 			return a.sdlcFailAssignment(runID, *assignment, err)
 		}

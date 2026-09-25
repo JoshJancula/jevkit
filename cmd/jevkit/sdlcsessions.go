@@ -80,23 +80,6 @@ func (a *App) chooseSession(ctx context.Context, store *ledger.Store, run ledger
 	return strategy, id, err
 }
 
-func (a *App) saveSession(store *ledger.Store, assignment adaptive.Assignment, id string) error {
-	if id == "" {
-		return nil
-	}
-	return store.WithRunLock(func() error {
-		r, err := store.ReadRun()
-		if err != nil {
-			return err
-		}
-		if r.Sessions == nil {
-			r.Sessions = map[string]string{}
-		}
-		r.Sessions[sessionKey(assignment)] = id
-		return store.WriteRun(r)
-	})
-}
-
 func (a *App) saveInvocationUsage(store *ledger.Store, assignment adaptive.Assignment, model string, reply worker.Reply) error {
 	return store.WithRunLock(func() error {
 		r, err := store.ReadRun()

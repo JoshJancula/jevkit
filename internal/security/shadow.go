@@ -28,7 +28,7 @@ func recordShadow(stateDir, reason, runtime string) {
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	raw, err := json.Marshal(map[string]any{
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"reason":    reason, "runtime": runtime,

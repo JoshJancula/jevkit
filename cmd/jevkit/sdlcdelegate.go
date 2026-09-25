@@ -173,16 +173,6 @@ func (a *App) continueDelegation(run ledger.Run, store *ledger.Store, reason str
 	return false, a.recordDecision(store, ledger.Decision{RunID: run.RunID, Kind: "delegation", Stage: run.Adaptive.Stage, Trigger: "implementation plan available", Choice: "continue", Outcome: reason, Next: "implement in parent"})
 }
 
-func (a *App) pauseDelegation(run ledger.Run, store *ledger.Store) (bool, error) {
-	run.Adaptive.PendingDecision = "delegation"
-	run.Adaptive.PendingPhase = run.Adaptive.Stage
-	run.Adaptive.Pause("delegation-decision-unavailable")
-	if err := store.WriteRun(run); err != nil {
-		return true, err
-	}
-	return true, failf("run %s paused: %s", run.RunID, run.Adaptive.Outcome)
-}
-
 func (a *App) driveAutoChild(ctx context.Context, parent ledger.Run) (bool, error) {
 	childStore := ledger.Open(a.sdlcRunsDir(), parent.AutoChildRunID)
 	child, err := childStore.ReadRun()

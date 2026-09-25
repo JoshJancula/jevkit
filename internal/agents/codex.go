@@ -3,7 +3,6 @@ package agents
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 
 	"github.com/OWNER/jevkit/internal/compact"
@@ -126,29 +125,6 @@ func (c *Codex) HandlePostTool(ctx context.Context, req Request) (Response, erro
 	return Response{Body: c.Passthrough(EventPostTool)}, nil
 }
 
-type codexPostPayload struct {
-	HookEventName string `json:"hook_event_name"`
-	ToolName      string `json:"tool_name"`
-	ToolInput     struct {
-		Command string `json:"command"`
-	} `json:"tool_input"`
-	ToolResponse *struct {
-		Stdout string `json:"stdout"`
-		Stderr string `json:"stderr"`
-	} `json:"tool_response"`
-}
-
-func codexReplacement(feedback string) []byte {
-	body, err := json.Marshal(struct {
-		Continue   bool   `json:"continue"`
-		StopReason string `json:"stopReason"`
-	}{Continue: false, StopReason: feedback})
-	if err != nil {
-		return codexPostPassthrough
-	}
-	return body
-}
-
 func (c *Codex) HandleStop(ctx context.Context, req Request) (Response, error) {
 	return Response{Body: c.Passthrough(EventStop)}, nil
 }
@@ -158,19 +134,4 @@ func (c *Codex) binary() string {
 		return strings.TrimSpace(c.Binary)
 	}
 	return "jevkit"
-}
-
-func (c *Codex) getenv(key string) string {
-	if c != nil && c.Getenv != nil {
-		return c.Getenv(key)
-	}
-	return os.Getenv(key)
-}
-
-func (c *Codex) compactEnabled() bool {
-	return compactEnvEnabled(c.getenv, "JEVKIT_COMPACT")
-}
-
-func (c *Codex) shadow() bool {
-	return compactEnvEnabled(c.getenv, "JEVKIT_COMPACT_SHADOW")
 }

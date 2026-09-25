@@ -49,11 +49,11 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 			sort.Strings(keys)
 			for _, key := range keys {
 				u := seen[key]
-				fmt.Fprintf(a.Stdout, "%s %s %s/%s via %s/%s: input %s, output %s", r.RunID, u.Invocation, u.Agent, u.Role, u.Runtime, u.Model, tokenCount(u.InputTokens), tokenCount(u.OutputTokens))
+				_, _ = fmt.Fprintf(a.Stdout, "%s %s %s/%s via %s/%s: input %s, output %s", r.RunID, u.Invocation, u.Agent, u.Role, u.Runtime, u.Model, tokenCount(u.InputTokens), tokenCount(u.OutputTokens))
 				if u.CostUSD != nil {
-					fmt.Fprintf(a.Stdout, ", cost $%.4f", *u.CostUSD)
+					_, _ = fmt.Fprintf(a.Stdout, ", cost $%.4f", *u.CostUSD)
 				}
-				fmt.Fprintln(a.Stdout)
+				_, _ = fmt.Fprintln(a.Stdout)
 				if u.InputTokens == nil {
 					unknownInput++
 				} else {
@@ -66,7 +66,7 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 				}
 			}
 		}
-		fmt.Fprintf(a.Stdout, "Measured total: input %s (%d unknown), output %s (%d unknown)\n", formatInt(input), unknownInput, formatInt(output), unknownOutput)
+		_, _ = fmt.Fprintf(a.Stdout, "Measured total: input %s (%d unknown), output %s (%d unknown)\n", formatInt(input), unknownInput, formatInt(output), unknownOutput)
 		records, err := usage.ReadRecords(usage.Path(a.stateHome()))
 		if err != nil {
 			return err
@@ -81,7 +81,7 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 				linked = append(linked, rec)
 			}
 		}
-		fmt.Fprintln(a.Stdout)
+		_, _ = fmt.Fprintln(a.Stdout)
 		return usage.Render(a.Stdout, usage.Aggregate(linked, usage.Filter{}, a.getenv), usage.FormatText, false)
 	}}
 }

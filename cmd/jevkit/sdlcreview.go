@@ -268,7 +268,7 @@ func (a *App) recoverLegacyReview(ctx context.Context, store *ledger.Store, run 
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	scan := bufio.NewScanner(file)
 	scan.Buffer(make([]byte, 64*1024), 16<<20)
 	var reply worker.Reply

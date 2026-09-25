@@ -240,12 +240,13 @@ The copy is separate: editing the suggestion later does not update the roster.`,
 					status = "enrolled"
 				}
 				binding := ag.Via
-				if ag.Via == "runtime" {
+				switch ag.Via {
+				case "runtime":
 					binding = ag.Runtime + " / " + ag.Model
 					if ag.RuntimeAgent != "" {
 						binding += " / " + ag.RuntimeAgent
 					}
-				} else if ag.Via == "native" {
+				case "native":
 					binding += " / " + ag.Subagent
 				}
 				a.outf("  %s  (%s; %s)\n    %s\n", id, binding, status, firstLine(ag.Rubric))
@@ -263,9 +264,10 @@ The copy is separate: editing the suggestion later does not update the roster.`,
 			}
 			for _, n := range names {
 				binary := n
-				if n == "cursor" {
+				switch n {
+				case "cursor":
 					binary = "cursor-agent"
-				} else if n == "antigravity" {
+				case "antigravity":
 					binary = "agy"
 				}
 				a.outf("  %-10s binary: %s\n", n, binary)

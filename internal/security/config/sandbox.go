@@ -16,7 +16,7 @@ type Guard struct {
 	AllowRead []string
 }
 
-var pathReference = regexp.MustCompile(`(?:^|[\s"'=;|()])((?:/|~/|\.\./|\./)[^\s"';&|()]*)`)
+var pathReference = regexp.MustCompile(`(?:^|[\s"'=;|()])((?:[A-Za-z]:[\\/]|\\\\|/|~/|\.\.[\\/]|\.[\\/])[^\s"';&|()]*)`)
 var parentReference = regexp.MustCompile(`(?:^|[\s"'=;|()])([^\s"';&|()]*\.\.[^\s"';&|()]*)`)
 
 func (g Guard) Check(text string) (string, bool) {
@@ -44,7 +44,7 @@ func (g Guard) Check(text string) (string, bool) {
 }
 
 func hasParentSegment(path string) bool {
-	for _, segment := range strings.Split(path, "/") {
+	for _, segment := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
 		if segment == ".." {
 			return true
 		}

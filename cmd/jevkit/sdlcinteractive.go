@@ -168,13 +168,13 @@ func (a *App) sdlcShowPlan(rootID string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "\n%s\n", a.styled(a.Stdout, ansiCyan, "PLAN FOR APPROVAL"))
-	fmt.Fprintf(a.Stdout, "  Run:  %s\n  File: %s/artifacts/plan.md\n\n", ttyClean(targetID), store.Dir)
-	fmt.Fprintln(a.Stdout, a.styled(a.Stdout, ansiCyan, strings.Repeat("─", 72)))
+	_, _ = fmt.Fprintf(a.Stdout, "\n%s\n", a.styled(a.Stdout, ansiCyan, "PLAN FOR APPROVAL"))
+	_, _ = fmt.Fprintf(a.Stdout, "  Run:  %s\n  File: %s/artifacts/plan.md\n\n", ttyClean(targetID), store.Dir)
+	_, _ = fmt.Fprintln(a.Stdout, a.styled(a.Stdout, ansiCyan, strings.Repeat("─", 72)))
 	for _, line := range strings.Split(clean.Text, "\n") {
-		fmt.Fprintln(a.Stdout, ttySafeLine(line))
+		_, _ = fmt.Fprintln(a.Stdout, ttySafeLine(line))
 	}
-	fmt.Fprintln(a.Stdout, a.styled(a.Stdout, ansiCyan, strings.Repeat("─", 72)))
+	_, _ = fmt.Fprintln(a.Stdout, a.styled(a.Stdout, ansiCyan, strings.Repeat("─", 72)))
 	return nil
 }
 
@@ -187,10 +187,10 @@ func (a *App) sdlcAskPlanDecision(ctx context.Context, rootID string) (string, s
 		if err != nil {
 			return "", "", err
 		}
-		defer term.Restore(int(input.Fd()), old)
+		defer func() { _ = term.Restore(int(input.Fd()), old) }()
 	}
 	selected := 0
-	fmt.Fprint(a.Stdout, "\r\n")
+	_, _ = fmt.Fprint(a.Stdout, "\r\n")
 	a.sdlcRenderReviewMenu(selected, false)
 	for {
 		key, err := a.sdlcReadKey(ctx)
@@ -230,14 +230,14 @@ func (a *App) sdlcAskPlanDecision(ctx context.Context, rootID string) (string, s
 }
 
 func (a *App) sdlcClearReviewMenu() {
-	fmt.Fprint(a.Stdout, "\r\x1b[4A\x1b[J")
+	_, _ = fmt.Fprint(a.Stdout, "\r\x1b[4A\x1b[J")
 }
 
 func (a *App) sdlcRenderReviewMenu(selected int, redraw bool) {
 	if redraw {
-		fmt.Fprint(a.Stdout, "\r\x1b[4A\x1b[J")
+		_, _ = fmt.Fprint(a.Stdout, "\r\x1b[4A\x1b[J")
 	}
-	fmt.Fprint(a.Stdout, ttyFit(a.styled(a.Stdout, ansiCyan, "Review the plan  ↑/↓ to move · Enter to select"), a.sdlcFeedbackBoxWidth()), "\r\n")
+	_, _ = fmt.Fprint(a.Stdout, ttyFit(a.styled(a.Stdout, ansiCyan, "Review the plan  ↑/↓ to move · Enter to select"), a.sdlcFeedbackBoxWidth()), "\r\n")
 	labels := []string{"Approve and continue", "Request changes", "Leave paused"}
 	for i, label := range labels {
 		marker := "  "
@@ -245,7 +245,7 @@ func (a *App) sdlcRenderReviewMenu(selected int, redraw bool) {
 			marker = "› "
 			label = a.styled(a.Stdout, []string{ansiGreen, ansiYellow, ansiBold}[i], label)
 		}
-		fmt.Fprintf(a.Stdout, "  %s%s\r\n", marker, label)
+		_, _ = fmt.Fprintf(a.Stdout, "  %s%s\r\n", marker, label)
 	}
 }
 
@@ -262,7 +262,7 @@ func (a *App) sdlcFeedbackBoxWidth() int {
 // The cursor stays inside the field; each keystroke repaints the same four rows.
 func (a *App) sdlcRenderFeedbackBox(feedback string, width int, redraw, empty bool) {
 	if redraw {
-		fmt.Fprint(a.Stdout, "\r\x1b[1A\x1b[J")
+		_, _ = fmt.Fprint(a.Stdout, "\r\x1b[1A\x1b[J")
 	}
 	inner := width - 4
 	visible := []rune(ttySafeLine(feedback))
@@ -274,15 +274,15 @@ func (a *App) sdlcRenderFeedbackBox(feedback string, width int, redraw, empty bo
 		label = " Feedback "
 	}
 	border := width - 2 - len([]rune(label))
-	fmt.Fprintf(a.Stdout, "┌%s%s┐\r\n", label, strings.Repeat("─", max(0, border)))
-	fmt.Fprintf(a.Stdout, "│ %s%s │\r\n", string(visible), strings.Repeat(" ", max(0, inner-len(visible))))
-	fmt.Fprintf(a.Stdout, "└%s┘\r\n", strings.Repeat("─", width-2))
+	_, _ = fmt.Fprintf(a.Stdout, "┌%s%s┐\r\n", label, strings.Repeat("─", max(0, border)))
+	_, _ = fmt.Fprintf(a.Stdout, "│ %s%s │\r\n", string(visible), strings.Repeat(" ", max(0, inner-len(visible))))
+	_, _ = fmt.Fprintf(a.Stdout, "└%s┘\r\n", strings.Repeat("─", width-2))
 	hint := "Enter to send · Esc to go back"
 	if empty {
 		hint = "Type a change request before sending · Esc to go back"
 	}
-	fmt.Fprint(a.Stdout, ttyFit(a.styled(a.Stdout, ansiCyan, hint), width), "\r\n")
-	fmt.Fprintf(a.Stdout, "\x1b[3A\r\x1b[%dC", 2+len(visible))
+	_, _ = fmt.Fprint(a.Stdout, ttyFit(a.styled(a.Stdout, ansiCyan, hint), width), "\r\n")
+	_, _ = fmt.Fprintf(a.Stdout, "\x1b[3A\r\x1b[%dC", 2+len(visible))
 }
 
 func (a *App) sdlcEditPlanFeedback(ctx context.Context) (string, error) {
@@ -296,11 +296,11 @@ func (a *App) sdlcEditPlanFeedback(ctx context.Context) (string, error) {
 		}
 		switch key {
 		case sdlcKeyEscape, 3, 4:
-			fmt.Fprint(a.Stdout, "\r\x1b[1A\x1b[J")
+			_, _ = fmt.Fprint(a.Stdout, "\r\x1b[1A\x1b[J")
 			return "", nil
 		case '\r', '\n':
 			if clean := strings.TrimSpace(feedback); clean != "" {
-				fmt.Fprint(a.Stdout, "\r\x1b[1A\x1b[J")
+				_, _ = fmt.Fprint(a.Stdout, "\r\x1b[1A\x1b[J")
 				return clean, nil
 			}
 			a.sdlcRenderFeedbackBox(feedback, width, true, true)

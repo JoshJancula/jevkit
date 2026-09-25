@@ -10,6 +10,7 @@ import (
 )
 
 func TestCompactCodexWaitsForNativeCompletion(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fake-codex")
 	script := `#!/bin/sh
@@ -33,6 +34,7 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"status
 }
 
 func TestCompactCodexReportsProtocolFailure(t *testing.T) {
+	requireUnixShellFixture(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fake-codex")
 	script := `#!/bin/sh

@@ -100,12 +100,11 @@ func (a *App) sdlcRunSilent(ctx context.Context, name, task, taskFile string, fi
 	if err := a.sdlcStartWithRunID(ctx, name, task, taskFile, files, false, "text", profile, &id, true); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "%s\n", id)
+	_, _ = fmt.Fprintf(out, "%s\n", id)
 	completed := ""
 	if initial, err := ledger.Open(a.sdlcRunsDir(), id).ReadRun(); err == nil && initial.Adaptive != nil {
 		completed = initial.Adaptive.Stage
 	}
-	err = nil
 	if step {
 		err = a.sdlcDrive(ctx, id)
 	} else {
@@ -125,15 +124,15 @@ func (a *App) sdlcSilentStatus(out io.Writer, id string, step bool, completed st
 		label = "step"
 	}
 	if r.Adaptive != nil {
-		fmt.Fprintf(out, "%s %s: ", label, id)
+		_, _ = fmt.Fprintf(out, "%s %s: ", label, id)
 		if step && completed != "" {
-			fmt.Fprintf(out, "completed %s; now ", completed)
+			_, _ = fmt.Fprintf(out, "completed %s; now ", completed)
 		}
-		fmt.Fprint(out, r.Adaptive.Stage)
+		_, _ = fmt.Fprint(out, r.Adaptive.Stage)
 		if r.Adaptive.Outcome != "" {
-			fmt.Fprintf(out, " (%s)", r.Adaptive.Outcome)
+			_, _ = fmt.Fprintf(out, " (%s)", r.Adaptive.Outcome)
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 }
 

@@ -291,7 +291,7 @@ func (s *Store) AppendEvent(e Event) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b, err := json.Marshal(e)
 	if err != nil {
 		return err
@@ -310,7 +310,7 @@ func (s *Store) ReadEvents() ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []Event
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 4096), 1<<20)

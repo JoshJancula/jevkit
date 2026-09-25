@@ -262,7 +262,7 @@ func (a *App) compactStatsCmd() *cobra.Command {
 		if err != nil {
 			return failf("read decisions: %v", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		counts := map[string]int{}
 		families := map[string]int{}
 		histogram := [5]int{}

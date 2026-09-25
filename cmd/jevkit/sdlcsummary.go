@@ -21,7 +21,7 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 		if err != nil {
 			cause = summaryText(a, err.Error())
 		}
-		fmt.Fprintf(out, "\nRun %s: status unavailable\n  Cause: %s\n  Next:  Verify the run ID and inspect its saved status.\n", ttyClean(rootID), cause)
+		_, _ = fmt.Fprintf(out, "\nRun %s: status unavailable\n  Cause: %s\n  Next:  Verify the run ID and inspect its saved status.\n", ttyClean(rootID), cause)
 		return
 	}
 	root := runs[0]
@@ -29,31 +29,32 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 	if root.Adaptive != nil {
 		stage, outcome = root.Adaptive.Stage, root.Adaptive.Outcome
 	}
-	fmt.Fprintf(out, "\n%s\n  Run:      %s\n", a.styled(out, ansiCyan, "Run summary"), rootID)
+	_, _ = fmt.Fprintf(out, "\n%s\n  Run:      %s\n", a.styled(out, ansiCyan, "Run summary"), rootID)
 	if root.Workflow != "" {
-		fmt.Fprintf(out, "  Workflow: %s\n", summaryText(a, root.Workflow))
+		_, _ = fmt.Fprintf(out, "  Workflow: %s\n", summaryText(a, root.Workflow))
 	}
 	if root.Task != "" {
-		fmt.Fprintf(out, "  Task:     %s\n", summaryText(a, root.Task))
+		_, _ = fmt.Fprintf(out, "  Task:     %s\n", summaryText(a, root.Task))
 	}
 	status := strings.ToUpper(ttyClean(stage))
 	if outcome != "" {
 		status += " (" + ttyClean(outcome) + ")"
 	}
 	statusColor := ansiCyan
-	if stage == adaptive.Done {
+	switch stage {
+	case adaptive.Done:
 		statusColor = ansiGreen
-	} else if stage == adaptive.Paused {
+	case adaptive.Paused:
 		statusColor = ansiYellow
 	}
-	fmt.Fprintf(out, "  State:    %s\n", a.styled(out, statusColor, status))
+	_, _ = fmt.Fprintf(out, "  State:    %s\n", a.styled(out, statusColor, status))
 	for _, child := range runs[1:] {
 		if child.Adaptive != nil {
-			fmt.Fprintf(out, "  Child:    %s — %s", ttyClean(child.RunID), ttyClean(child.Adaptive.Stage))
+			_, _ = fmt.Fprintf(out, "  Child:    %s — %s", ttyClean(child.RunID), ttyClean(child.Adaptive.Stage))
 			if child.Adaptive.Outcome != "" {
-				fmt.Fprintf(out, " (%s)", ttyClean(child.Adaptive.Outcome))
+				_, _ = fmt.Fprintf(out, " (%s)", ttyClean(child.Adaptive.Outcome))
 			}
-			fmt.Fprintln(out)
+			_, _ = fmt.Fprintln(out)
 		}
 	}
 	if stage == adaptive.Paused {
@@ -62,16 +63,16 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 			cause = outcome
 		}
 		if cause != "" {
-			fmt.Fprintf(out, "  Cause:    %s\n", summaryText(a, cause))
+			_, _ = fmt.Fprintf(out, "  Cause:    %s\n", summaryText(a, cause))
 		}
 	} else if driveErr != nil {
-		fmt.Fprintf(out, "  Note:     %s\n", summaryText(a, driveErr.Error()))
+		_, _ = fmt.Fprintf(out, "  Note:     %s\n", summaryText(a, driveErr.Error()))
 	}
 	if root.Adaptive != nil && root.RequirePlanApproval && root.Adaptive.PlanRevision != "" && root.ApprovedPlanRevision != root.Adaptive.PlanRevision {
-		fmt.Fprintf(out, "  Plan:     %s\n", ledger.Open(a.sdlcRunsDir(), rootID).Dir+"/artifacts/plan.md")
+		_, _ = fmt.Fprintf(out, "  Plan:     %s\n", ledger.Open(a.sdlcRunsDir(), rootID).Dir+"/artifacts/plan.md")
 	}
 	if root.Adaptive != nil && root.Adaptive.Outcome == "child-plan-approval-required" && root.StageFlow != nil {
-		fmt.Fprintf(out, "  Plan:     %s\n", ledger.Open(a.sdlcRunsDir(), root.StageFlow.ChildRunID).Dir+"/artifacts/plan.md")
+		_, _ = fmt.Fprintf(out, "  Plan:     %s\n", ledger.Open(a.sdlcRunsDir(), root.StageFlow.ChildRunID).Dir+"/artifacts/plan.md")
 	}
 
 	var actions []ledger.Decision
@@ -87,7 +88,7 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 		}
 	}
 	sort.SliceStable(actions, func(i, j int) bool { return actions[i].At < actions[j].At })
-	fmt.Fprintln(out, "\n"+a.styled(out, ansiCyan, "  What happened:"))
+	_, _ = fmt.Fprintln(out, "\n"+a.styled(out, ansiCyan, "  What happened:"))
 	if len(actions) == 0 {
 		var events []ledger.Event
 		for _, run := range runs {
@@ -98,7 +99,7 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 		}
 		sort.SliceStable(events, func(i, j int) bool { return events[i].At < events[j].At })
 		if len(events) == 0 {
-			fmt.Fprintln(out, "    No completed agent action recorded yet.")
+			_, _ = fmt.Fprintln(out, "    No completed agent action recorded yet.")
 		}
 		for _, e := range events[max(0, len(events)-4):] {
 			line := e.Stage
@@ -111,7 +112,7 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 			if e.Reason != "" {
 				line += " — " + e.Reason
 			}
-			fmt.Fprintf(out, "    %s\n", summaryText(a, line))
+			_, _ = fmt.Fprintf(out, "    %s\n", summaryText(a, line))
 		}
 	}
 	for _, d := range actions[max(0, len(actions)-4):] {
@@ -137,10 +138,10 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 		} else if d.Outcome != "" {
 			line += " → " + d.Outcome
 		}
-		fmt.Fprintf(out, "    %s\n", summaryText(a, line))
+		_, _ = fmt.Fprintf(out, "    %s\n", summaryText(a, line))
 	}
 
-	fmt.Fprintln(out, "\n"+a.styled(out, ansiCyan, "  Token usage by runtime and model:"))
+	_, _ = fmt.Fprintln(out, "\n"+a.styled(out, ansiCyan, "  Token usage by runtime and model:"))
 	records, err := usage.ReadRecords(usage.Path(a.stateHome()))
 	var linked []usage.Record
 	if err == nil {
@@ -156,10 +157,10 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 	}
 	a.sdlcUsageTable(out, runs, linked)
 	if err != nil {
-		fmt.Fprintln(out, "    Jev usage file unavailable; Jev rows may be missing.")
+		_, _ = fmt.Fprintln(out, "    Jev usage file unavailable; Jev rows may be missing.")
 	}
-	fmt.Fprintf(out, "\n  %s     %s\n", a.styled(out, ansiCyan, "Next:"), summaryText(a, sdlcSummaryNext(root, rootID)))
-	fmt.Fprintf(out, "  %s     jevkit sdlc logs %s\n", a.styled(out, ansiCyan, "Logs:"), rootID)
+	_, _ = fmt.Fprintf(out, "\n  %s     %s\n", a.styled(out, ansiCyan, "Next:"), summaryText(a, sdlcSummaryNext(root, rootID)))
+	_, _ = fmt.Fprintf(out, "  %s     jevkit sdlc logs %s\n", a.styled(out, ansiCyan, "Logs:"), rootID)
 }
 
 func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Record) {
@@ -208,7 +209,7 @@ func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Re
 		return keys[i].model < keys[j].model
 	})
 	if len(keys) == 0 {
-		fmt.Fprintln(out, "    No recorded model usage.")
+		_, _ = fmt.Fprintln(out, "    No recorded model usage.")
 		return
 	}
 	rows := make([][]string, 0, len(keys))
@@ -227,7 +228,7 @@ func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Re
 		rows = append(rows, []string{summaryText(a, key.runtime), summaryText(a, model), fmt.Sprint(g.Invocations), usageCount(g.InputTokens, g.UnknownInput), usageCount(g.OutputTokens, g.UnknownOutput), cost})
 	}
 	writeTable(out, []string{a.styled(out, ansiCyan, "RUNTIME"), a.styled(out, ansiCyan, "MODEL"), a.styled(out, ansiCyan, "CALLS"), a.styled(out, ansiCyan, "INPUT"), a.styled(out, ansiCyan, "OUTPUT"), a.styled(out, ansiCyan, "COST")}, rows)
-	fmt.Fprintln(out, "    Cost: — unavailable; ~ estimated Jev cost. Runtime cost includes only calls that reported it.")
+	_, _ = fmt.Fprintln(out, "    Cost: — unavailable; ~ estimated Jev cost. Runtime cost includes only calls that reported it.")
 }
 
 func usageCount(known int64, unknown int) string {
