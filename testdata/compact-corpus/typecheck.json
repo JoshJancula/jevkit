@@ -1,0 +1,13 @@
+{
+  "name": "typecheck-synthetic",
+  "kind": "typecheck",
+  "command": "npm run typecheck",
+  "exit": 1,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "ERROR: type mismatch at src/app.ts:18\n",
+  "gold": [
+    "ERROR: type mismatch at src/app.ts:18"
+  ]
+}

@@ -272,6 +272,10 @@ type ScoreAnswer struct {
 	Confidence   float64
 	Legend       []string
 	Distribution map[string]float64
+	// Raw fields retain response shapes that the typed display fields do not
+	// understand yet, so offline calibration can replay them without loss.
+	RawLegend       json.RawMessage
+	RawDistribution json.RawMessage
 }
 
 func (NoulAnswer) answerType() string   { return "noul" }
@@ -286,9 +290,10 @@ type Usage struct {
 
 // Response is a decoded SystemOne response.
 type Response struct {
-	Model   string
-	Answers map[string]Answer
-	Usage   Usage
+	Model         string
+	Answers       map[string]Answer
+	Usage         Usage
+	UsageReported bool
 }
 
 // ErrNoAnswers is returned when a response body lacks the `answers` object.
@@ -300,7 +305,7 @@ func DecodeResponse(data []byte) (*Response, error) {
 	var raw struct {
 		Model   string          `json:"model"`
 		Answers json.RawMessage `json:"answers"`
-		Usage   Usage           `json:"usage"`
+		Usage   *Usage          `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
@@ -312,7 +317,10 @@ func DecodeResponse(data []byte) (*Response, error) {
 	if err := json.Unmarshal(raw.Answers, &members); err != nil {
 		return nil, fmt.Errorf("decode answers: %w", err)
 	}
-	resp := &Response{Model: raw.Model, Usage: raw.Usage, Answers: make(map[string]Answer, len(members))}
+	resp := &Response{Model: raw.Model, UsageReported: raw.Usage != nil, Answers: make(map[string]Answer, len(members))}
+	if raw.Usage != nil {
+		resp.Usage = *raw.Usage
+	}
 	for name, m := range members {
 		a, err := decodeAnswer(m)
 		if err != nil {
@@ -362,15 +370,21 @@ func decodeAnswer(data json.RawMessage) (Answer, error) {
 		return ChoiceAnswer{Choice: *a.Choice, Probabilities: a.Probabilities, Confidence: a.Confidence}, nil
 	case "score":
 		var a struct {
-			Score        *float64           `json:"score"`
-			Confidence   float64            `json:"confidence"`
-			Legend       []string           `json:"legend"`
-			Distribution map[string]float64 `json:"distribution"`
+			Score        *float64        `json:"score"`
+			Confidence   float64         `json:"confidence"`
+			Legend       json.RawMessage `json:"legend"`
+			Distribution json.RawMessage `json:"distribution"`
 		}
-		if err := json.Unmarshal(data, &a); err != nil || a.Score == nil {
+		if err := json.Unmarshal(data, &a); err != nil {
+			return nil, fmt.Errorf("invalid score answer: %w", err)
+		}
+		if a.Score == nil {
 			return nil, errors.New("invalid score answer")
 		}
-		return ScoreAnswer{Score: *a.Score, Confidence: a.Confidence, Legend: a.Legend, Distribution: a.Distribution}, nil
+		answer := ScoreAnswer{Score: *a.Score, Confidence: a.Confidence, RawLegend: a.Legend, RawDistribution: a.Distribution}
+		_ = json.Unmarshal(a.Legend, &answer.Legend)
+		_ = json.Unmarshal(a.Distribution, &answer.Distribution)
+		return answer, nil
 	}
 	return nil, fmt.Errorf("unrecognized answer type %q", kind)
 }

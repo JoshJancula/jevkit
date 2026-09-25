@@ -1,0 +1,12 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "risk": {
+      "score": 4,
+      "confidence": 0.95,
+      "legend": ["low", "moderate", "high", "severe", "critical"],
+      "distribution": {"low": 0.01, "moderate": 0.01, "high": 0.02, "severe": 0.06, "critical": 0.90}
+    }
+  },
+  "usage": {"input_tokens": 80, "output_tokens": 15}
+}

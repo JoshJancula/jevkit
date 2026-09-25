@@ -9,6 +9,7 @@
 package ledger
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,26 @@ import (
 	"github.com/OWNER/jevkit/internal/sdlc/stageflow"
 )
 
+type Event struct {
+	At               string `json:"at"`
+	RunID            string `json:"runId"`
+	Stage            string `json:"stage"`
+	Outcome          string `json:"outcome,omitempty"`
+	Agent            string `json:"agent,omitempty"`
+	Runtime          string `json:"runtime,omitempty"`
+	Invocation       string `json:"invocation,omitempty"`
+	Reason           string `json:"reason,omitempty"`
+	Workflow         string `json:"workflow,omitempty"`
+	Assignments      int    `json:"assignments"`
+	Revisions        int    `json:"revisions"`
+	ChildRuns        int    `json:"childRuns"`
+	TransitionStage  string `json:"transitionStage,omitempty"`
+	TransitionKind   string `json:"transitionKind,omitempty"`
+	TransitionAnswer string `json:"transitionAnswer,omitempty"`
+	TransitionNext   string `json:"transitionNext,omitempty"`
+	ChildRunID       string `json:"childRunId,omitempty"`
+}
+
 // RunFileName and nodesDirName name the files within a run's directory.
 const (
 	RunFileName  = "run.json"
@@ -34,13 +55,29 @@ const (
 
 // Run is one run's authoritative record: run.json.
 type Run struct {
-	RunID       string `json:"runId"`
-	ParentRunID string `json:"parentRunId,omitempty"`
-	Depth       int    `json:"depth,omitempty"`
-	Workflow    string `json:"workflow"`
-	GraphSHA256 string `json:"graphSha256"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	RunID                string            `json:"runId"`
+	SessionStrategy      string            `json:"sessionStrategy,omitempty"`
+	RequirePlanApproval  bool              `json:"requirePlanApproval,omitempty"`
+	ApprovedPlanRevision string            `json:"approvedPlanRevision,omitempty"`
+	PlanFeedback         string            `json:"planFeedback,omitempty"`
+	Sessions             map[string]string `json:"sessions,omitempty"`
+	Usage                []InvocationUsage `json:"usage,omitempty"`
+	ReviewRecovery       *ReviewRecovery   `json:"reviewRecovery,omitempty"`
+	WorkDir              string            `json:"workDir,omitempty"`
+	AllowRead            []string          `json:"allowRead,omitempty"`
+	TreeUsage            *TreeUsage        `json:"treeUsage,omitempty"`
+	DelegateBuiltins     bool              `json:"delegateBuiltins,omitempty"`
+	AutoDecisionDone     bool              `json:"autoDecisionDone,omitempty"`
+	AutoDecisionReason   string            `json:"autoDecisionReason,omitempty"`
+	AutoChildRunID       string            `json:"autoChildRunId,omitempty"`
+	AutoTarget           string            `json:"autoTarget,omitempty"`
+	ParentRunID          string            `json:"parentRunId,omitempty"`
+	Depth                int               `json:"depth,omitempty"`
+	Workflow             string            `json:"workflow"`
+	SelectionReason      string            `json:"selectionReason,omitempty"`
+	GraphSHA256          string            `json:"graphSha256"`
+	CreatedAt            string            `json:"createdAt"`
+	UpdatedAt            string            `json:"updatedAt"`
 	// Task is the run's task statement, stored intact (run.json is written
 	// at 0600, like every ledger file); it is redacted before it ever
 	// reaches Jev, but kept whole here for a human or `sdlc status` to read.
@@ -48,6 +85,49 @@ type Run struct {
 	State     engine.State     `json:"state"`
 	Adaptive  *adaptive.State  `json:"adaptive,omitempty"`
 	StageFlow *stageflow.State `json:"stageFlow,omitempty"`
+}
+
+// InvocationUsage uses pointers so an absent count remains unknown.
+type InvocationUsage struct {
+	Invocation   string   `json:"invocation"`
+	Agent        string   `json:"agent"`
+	Runtime      string   `json:"runtime"`
+	Model        string   `json:"model,omitempty"`
+	Role         string   `json:"role"`
+	SessionID    string   `json:"sessionId,omitempty"`
+	InputTokens  *int64   `json:"inputTokens"`
+	OutputTokens *int64   `json:"outputTokens"`
+	CostUSD      *float64 `json:"costUsd,omitempty"`
+}
+
+// ReviewRecovery is durable evidence for a parsed review that was interrupted
+// by workspace drift or a crash before its result was applied.
+type ReviewRecovery struct {
+	Invocation   string   `json:"invocation"`
+	Agent        string   `json:"agent"`
+	Binding      string   `json:"binding"`
+	Runtime      string   `json:"runtime"`
+	Model        string   `json:"model,omitempty"`
+	Revision     string   `json:"revision"`
+	Outcome      string   `json:"outcome"`
+	Content      string   `json:"content,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	SessionID    string   `json:"sessionId,omitempty"`
+	InputTokens  *int64   `json:"inputTokens,omitempty"`
+	OutputTokens *int64   `json:"outputTokens,omitempty"`
+	CostUSD      *float64 `json:"costUsd,omitempty"`
+	Paths        []string `json:"paths,omitempty"`
+	Truncated    bool     `json:"truncated,omitempty"`
+	Applied      bool     `json:"applied,omitempty"`
+}
+
+// TreeUsage is charged at the root as work is reserved or completed.
+type TreeUsage struct {
+	Assignments      int     `json:"assignments"`
+	Revisions        int     `json:"revisions"`
+	ChildRuns        int     `json:"childRuns"`
+	StageSteps       int     `json:"stageSteps"`
+	EstimatedCostUSD float64 `json:"estimatedCostUsd,omitempty"`
 }
 
 // AttemptRecord is one execution of a node's effect: the effect asked for
@@ -146,7 +226,101 @@ func NewRun(store *Store, runID, workflow, graphSHA256 string, st engine.State, 
 
 // WriteRun atomically writes r to run.json.
 func (s *Store) WriteRun(r Run) error {
-	return writeAtomicJSON(s.runPath(), r)
+	if err := writeAtomicJSON(s.runPath(), r); err != nil {
+		return err
+	}
+	e := Event{At: r.UpdatedAt, RunID: r.RunID, Workflow: r.Workflow}
+	if r.Adaptive != nil {
+		e.Stage = r.Adaptive.Stage
+		e.Outcome = r.Adaptive.Outcome
+		e.Assignments = r.Adaptive.AssignmentCount
+		e.Revisions = r.Adaptive.RevisionCount
+		for _, a := range r.Adaptive.Pending() {
+			e.Agent = a.AgentID
+			e.Runtime = a.Runtime
+			e.Invocation = a.InvocationID
+			e.Reason = a.Reason
+			break
+		}
+		if e.Reason == "" {
+			e.Reason = r.Adaptive.PendingReason
+		}
+		if e.Reason == "" && e.Agent == "" {
+			e.Reason = r.SelectionReason
+		}
+		if e.Agent == "" && r.AutoTarget != "" {
+			e.Reason = "delegation target: " + r.AutoTarget
+		}
+	}
+	if r.TreeUsage != nil {
+		e.ChildRuns = r.TreeUsage.ChildRuns
+	}
+	if r.StageFlow != nil {
+		e.ChildRunID = r.StageFlow.ChildRunID
+		if n := len(r.StageFlow.Transitions); n > 0 {
+			transition := r.StageFlow.Transitions[n-1]
+			e.TransitionStage, e.TransitionAnswer, e.TransitionNext = transition.Stage, transition.Answer, transition.Next
+			if stage, ok := r.StageFlow.Workflow.StageByID(transition.Stage); ok {
+				if stage.Question != nil {
+					e.TransitionKind = "question"
+				} else if stage.Spawn != nil {
+					e.TransitionKind = "spawn"
+				} else if stage.Work != nil {
+					e.TransitionKind = "work"
+				}
+			}
+			if transition.ChildRunID != "" {
+				e.ChildRunID = transition.ChildRunID
+			}
+		}
+	}
+	return s.AppendEvent(e)
+}
+
+func (s *Store) AppendEvent(e Event) error {
+	path := filepath.Join(s.Dir, "events.jsonl")
+	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+		return err
+	}
+	lock, err := filelock.Acquire(path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	b, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	_, err = f.Write(b)
+	return err
+}
+
+func (s *Store) ReadEvents() ([]Event, error) {
+	path := filepath.Join(s.Dir, "events.jsonl")
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var out []Event
+	scan := bufio.NewScanner(f)
+	scan.Buffer(make([]byte, 4096), 1<<20)
+	for scan.Scan() {
+		var e Event
+		if json.Unmarshal(scan.Bytes(), &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out, scan.Err()
 }
 
 // UpdateState loads run.json, applies st, stamps UpdatedAt as now, and

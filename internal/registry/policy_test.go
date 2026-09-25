@@ -136,6 +136,25 @@ func TestDecisionFields(t *testing.T) {
 	}
 }
 
+func TestConservativeConfidenceKeepsOriginalDistribution(t *testing.T) {
+	d, dir := newDecider(t, "")
+	answers := map[string]jev.Answer{"pick": jev.ChoiceAnswer{
+		Choice: "a", Confidence: 0.45, Probabilities: map[string]float64{"a": 0.45, "b": 0.44},
+	}}
+	got, err := d.DecideWithConfidence("t.choice", answers, nil, 0.89)
+	if err != nil || got.Decision != Act || got.Confidence != 0.89 {
+		t.Fatalf("decision=%+v error=%v", got, err)
+	}
+	logged := readLog(t, dir)
+	answer := logged[0].Answers["pick"].(map[string]interface{})
+	if answer["confidence"] != float64(0.45) || answer["probabilities"].(map[string]interface{})["b"] != float64(0.44) {
+		t.Fatalf("raw distribution lost: %+v", answer)
+	}
+	if _, err := d.DecideWithConfidence("t.choice", answers, nil, math.NaN()); !errors.Is(err, ErrNoDecision) {
+		t.Fatalf("invalid derived confidence accepted: %v", err)
+	}
+}
+
 func TestOptionNotOffered(t *testing.T) {
 	d, _ := newDecider(t, "")
 	got, err := d.Decide("t.choice", map[string]jev.Answer{"pick": jev.ChoiceAnswer{Choice: "zzz", Confidence: 0.99}})
@@ -145,10 +164,15 @@ func TestOptionNotOffered(t *testing.T) {
 	if got.Decision != Fallback || got.Reason != ReasonOptionNotOffered || !got.FallbackUsed {
 		t.Errorf("got %+v", got)
 	}
-	// A call-time choice set (empty criteria) accepts any option.
+	// Empty criteria are closed until the caller supplies the offered options.
 	open, err := d.Decide("t.open", map[string]jev.Answer{"pick": jev.ChoiceAnswer{Choice: "L007", Confidence: 0.99}})
-	if err != nil || open.Decision != Act {
+	if err != nil || open.Decision != Fallback {
 		t.Errorf("open set: %+v, %v", open, err)
+	}
+	d.Registry.QuestionSets["t.open"].Questions["pick"] = Question{Type: "choice", Instructions: "i", Criteria: json.RawMessage(`{}`), CriteriaMode: "call-time"}
+	open, err = d.DecideWith("t.open", map[string]jev.Answer{"pick": jev.ChoiceAnswer{Choice: "L007", Confidence: 0.99}}, map[string]map[string]json.RawMessage{"pick": {"L007": jev.Null()}})
+	if err != nil || open.Decision != Act {
+		t.Errorf("call-time set: %+v, %v", open, err)
 	}
 }
 

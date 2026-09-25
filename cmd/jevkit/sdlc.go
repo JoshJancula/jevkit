@@ -23,6 +23,7 @@ func (a *App) sdlcCmd() *cobra.Command {
 	c := a.group("sdlc", "run work with enrolled agents and optional decision workflows",
 		a.sdlcValidateCmd(), a.sdlcExplainCmd(), a.sdlcListCmd(), a.sdlcCreateCmd(),
 		a.sdlcAgentsCmd(), a.sdlcDoctorCmd(), a.sdlcRunCmd(), a.sdlcResumeCmd(),
+		a.sdlcLogsCmd(), a.sdlcWatchCmd(), a.sdlcUsageCmd(),
 		a.sdlcInitCmd(), a.sdlcStartCmd(), a.sdlcNextCmd(), a.sdlcReportCmd(), a.sdlcDriveCmd())
 	c.Long = `Run an SDLC task with enrolled agents.
 
@@ -31,7 +32,8 @@ Normal CLI flow:
   jevkit sdlc doctor --policy lean
   jevkit sdlc run feature --task "..."
 
-Run starts and executes a new task. Resume continues an active run by ID.
+Run starts a new task and waits for plan approval before implementation.
+Use run --auto for the previous autonomous flow. Resume continues by ID.
 Create writes an optional custom workflow file with authored questions and
 routes. Built-in task kinds need no workflow file. Agents discover is optional
 inventory; you can add your own agent directly.`
@@ -59,6 +61,27 @@ func (a *App) sdlcCatalogPaths() (projectAgents, userAgents, projectLedger, user
 func (a *App) loadCatalog() (*catalog.Catalog, error) {
 	projectAgents, userAgents, projectLedgerPath, userLedgerPath := a.sdlcCatalogPaths()
 	native := catalog.DiscoverNative(projectAgents, userAgents)
+	for _, runtime := range []string{"claude", "codex", "cursor", "opencode", "antigravity"} {
+		var projectDir, globalDir string
+		if a.WorkDir != "" {
+			folder := runtime
+			if runtime == "antigravity" {
+				folder = "agents"
+			}
+			projectDir = filepath.Join(a.WorkDir, "."+folder, "agents")
+		}
+		if a.HomeDir != "" {
+			switch runtime {
+			case "opencode":
+				globalDir = filepath.Join(a.HomeDir, ".config", "opencode", "agents")
+			case "antigravity":
+				globalDir = filepath.Join(a.HomeDir, ".agents", "agents")
+			default:
+				globalDir = filepath.Join(a.HomeDir, "."+runtime, "agents")
+			}
+		}
+		native = append(native, catalog.DiscoverRuntimeAgents(runtime, projectDir, globalDir)...)
+	}
 	var ledgers []catalog.LedgerFile
 	if projectLedgerPath != "" {
 		l, err := catalog.LoadLedger(projectLedgerPath)
@@ -134,8 +157,8 @@ Several agents can share a role; Jev chooses among them using each rubric.`,
 				if len(runtimes) > 0 && !slices.Contains(runtimes, "codex") {
 					exampleRuntime = runtimes[0]
 				}
-				a.outf("  jevkit sdlc agents add %s --model MODEL --rubric \"General work\" --role all\n", exampleRuntime)
-				a.outf("  Or name one: jevkit sdlc agents add my-reviewer --runtime codex --model MODEL --rubric \"Review code\" --role assessor\n")
+				a.outf("  jevkit sdlc agents add %s --model MODEL --rubric \"API endpoint changes\" --role all --role-rubric planner=\"Plan endpoint contracts\" --role-rubric assessor=\"Review API behavior\"\n", exampleRuntime)
+				a.outf("  Or name one: jevkit sdlc agents add security-reviewer --runtime codex --model MODEL --rubric \"Audit auth and secrets\" --role security --read-only\n")
 				a.outf("  MODEL is a model supported by that CLI. Add writes to this roster file.\n")
 				a.outf("  To see possible agents first: jevkit sdlc agents discover\n")
 				a.outf("  Verify setup: jevkit sdlc doctor --policy lean\n")
@@ -275,7 +298,7 @@ func (a *App) sdlcListCmd() *cobra.Command {
 				} else if strings.Contains(leanIssue, "no agents enrolled") {
 					a.outf("  Default lean needs a planner, implementer, and assessor.\n")
 					a.outf("  One reachable CLI agent can cover all three roles:\n")
-					a.outf("  jevkit sdlc agents add codex --model MODEL --rubric \"General work\" --role all\n")
+					a.outf("  jevkit sdlc agents add codex --model MODEL --rubric \"API endpoint changes\" --role all --role-rubric planner=\"Plan endpoint contracts\" --role-rubric assessor=\"Review API behavior\"\n")
 					a.outf("  MODEL must be supported by the codex CLI.\n")
 					a.outf("  Optional inventory: jevkit sdlc agents discover\n")
 					a.outf("  Verify: jevkit sdlc doctor --policy lean\n")

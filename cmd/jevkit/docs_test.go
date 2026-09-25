@@ -15,7 +15,7 @@ import (
 // redaction guide linked from the README.
 var userDocPaths = []string{
 	"../../README.md",
-	"../../docs/AGENTS.md",
+	"../../docs/AGENT-INTEGRATIONS.md",
 	"../../docs/KEYS.md",
 	"../../docs/REDACTION.md",
 	"../../CONTRIBUTING.md",
@@ -69,7 +69,7 @@ func TestUserDocsCodeFenceCommandsExist(t *testing.T) {
 	tree := commandTree(t)
 	redactSubs := redactSubcommands()
 	var checked int
-	for _, rel := range []string{"../../README.md", "../../docs/AGENTS.md", "../../docs/KEYS.md"} {
+	for _, rel := range []string{"../../README.md", "../../docs/AGENT-INTEGRATIONS.md", "../../docs/KEYS.md"} {
 		path := filepath.Clean(rel)
 		data, err := os.ReadFile(path)
 		if err != nil {

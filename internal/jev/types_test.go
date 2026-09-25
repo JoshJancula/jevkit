@@ -210,3 +210,14 @@ func TestResponseRoundTripWithoutLegendOrDistribution(t *testing.T) {
 		t.Errorf("rate = %#v", rate)
 	}
 }
+
+func TestScoreAnswerPreservesUnknownLegendShape(t *testing.T) {
+	resp, err := DecodeResponse([]byte(`{"answers":{"rate":{"score":0.4,"confidence":0.9,"legend":{"low":"sparse","high":"dense"},"distribution":{"low":0.6,"high":0.4}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rate := resp.Answers["rate"].(ScoreAnswer)
+	if rate.Score != 0.4 || len(rate.Legend) != 0 || len(rate.RawLegend) == 0 || rate.Distribution["low"] != 0.6 {
+		t.Fatalf("score response shape lost: %+v", rate)
+	}
+}

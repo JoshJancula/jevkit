@@ -1,0 +1,13 @@
+{
+  "name": "help-usage-synthetic",
+  "kind": "help-usage",
+  "command": "custom-tool --help",
+  "exit": 2,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "Usage: custom-tool [options]\n",
+  "gold": [
+    "Usage: custom-tool [options]"
+  ]
+}

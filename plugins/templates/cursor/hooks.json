@@ -1,6 +1,12 @@
 {
   "version": 1,
   "hooks": {
+    "preToolUse": [
+      {
+        "command": "shared/jevkit-run.sh _runtime dispatch --protocol 1 cursor pre-tool",
+        "matcher": "Shell"
+      }
+    ],
     "postToolUse": [
       {
         "command": "shared/jevkit-run.sh _runtime dispatch --protocol 1 cursor post-tool",

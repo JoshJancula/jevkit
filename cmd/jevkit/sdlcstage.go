@@ -34,7 +34,7 @@ func (a *App) sdlcDriveQuestion(ctx context.Context, runID string, store *ledger
 		if err != nil {
 			return failf("%v", err)
 		}
-		remaining, err := sdlcRunRemaining(run, policy, a.now())
+		remaining, err := a.treeRemaining(run, policy)
 		if err != nil {
 			return failf("%v", err)
 		}
@@ -57,10 +57,16 @@ func (a *App) sdlcDriveQuestion(ctx context.Context, runID string, store *ledger
 		if err := run.StageFlow.Advance(answer, &st); err != nil {
 			return failf("advance question: %v", err)
 		}
+		if err := a.chargeTree(&run, policy, "step"); err != nil {
+			return failf("charge stage step: %v", err)
+		}
 		run.Adaptive = &st
 		run.UpdatedAt = a.now().UTC().Format(time.RFC3339)
 		if err := store.WriteRun(run); err != nil {
 			return failf("store question: %v", err)
+		}
+		if err := a.recordDecision(store, ledger.Decision{RunID: runID, Kind: "stage-transition", Stage: stage.ID, Trigger: "workflow question", Choice: answer, Outcome: reason, Next: run.StageFlow.Current}); err != nil {
+			return err
 		}
 		if answer == "fallback" {
 			a.outf("  question %s: fallback (%s) → %s\n", stage.ID, reason, run.StageFlow.Current)
@@ -73,7 +79,10 @@ func (a *App) sdlcDriveQuestion(ctx context.Context, runID string, store *ledger
 
 func (a *App) askStageQuestion(ctx context.Context, run ledger.Run, stage spec.Stage, store *ledger.Store) (string, string) {
 	q := stage.Question
-	cfg := jev.ConfigFromEnv(a.getenv)
+	cfg, err := a.jevConfig()
+	if err != nil {
+		return "fallback", "invalid Jev model setting"
+	}
 	keys := a.store()
 	br := a.Breaker
 	if br == nil {

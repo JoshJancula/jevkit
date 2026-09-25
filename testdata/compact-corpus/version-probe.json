@@ -1,0 +1,13 @@
+{
+  "name": "version-probe-synthetic",
+  "kind": "version-probe",
+  "command": "custom-tool --version",
+  "exit": 0,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "custom-tool version 1.2.3\n",
+  "gold": [
+    "custom-tool version 1.2.3"
+  ]
+}

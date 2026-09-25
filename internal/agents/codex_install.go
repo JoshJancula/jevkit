@@ -115,10 +115,13 @@ func mergeCodexHooks(existing []byte, binary string) ([]byte, error) {
 		hooksObj = map[string]any{}
 	}
 
+	preCmd := codexHookCommand(binary, CodexPreToolMarker)
 	postCmd := codexHookCommand(binary, CodexPostToolMarker)
 
-	// Remove legacy pre-tool wrapper entries without replacing them.
-	hooksObj["PreToolUse"] = stripManagedCodexHooks(asSlice(hooksObj["PreToolUse"]))
+	hooksObj["PreToolUse"] = upsertCodexMatcherHooks(
+		stripManagedCodexHooks(asSlice(hooksObj["PreToolUse"])),
+		[]string{codexBashMatcher, codexCommandMatcher}, preCmd,
+	)
 	hooksObj["PostToolUse"] = upsertCodexMatcherHooks(
 		stripManagedCodexHooks(asSlice(hooksObj["PostToolUse"])),
 		[]string{codexBashMatcher, codexCommandMatcher},

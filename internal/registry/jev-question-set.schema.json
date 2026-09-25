@@ -36,7 +36,8 @@
               "compaction",
               "mcp",
               "graph",
-              "sdlc"
+              "sdlc",
+              "security"
             ]
           },
           "description": {
@@ -63,7 +64,11 @@
                 "instructions": {
                   "type": "string"
                 },
-                "criteria": {}
+                "criteria": {},
+                "criteriaMode": {
+                  "type": "string",
+                  "enum": ["fixed", "call-time"]
+                }
               }
             }
           },

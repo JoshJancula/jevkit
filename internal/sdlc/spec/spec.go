@@ -155,6 +155,7 @@ type StageQuestion struct {
 type StageWork struct {
 	Role      string            `yaml:"role" json:"role"`
 	Objective string            `yaml:"objective" json:"objective"`
+	Focus     string            `yaml:"focus,omitempty" json:"focus,omitempty"`
 	Routes    map[string]string `yaml:"routes" json:"routes"`
 }
 

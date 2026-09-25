@@ -132,19 +132,14 @@ func SelectAgents(target string, look func(string) (string, error), detectedOnly
 	return []Agent{a}, nil
 }
 
-// SupportedInstallAgents filters legacy adapters retained solely so users can
-// uninstall their existing hooks. New integrations are supported for Claude,
-// Codex, and OpenCode only.
+// SupportedInstallAgents is the set of adapters available for new installs.
 func SupportedInstallAgents(in []Agent) []Agent {
 	out := make([]Agent, 0, len(in))
 	for _, a := range in {
 		if a == nil {
 			continue
 		}
-		switch a.Name() {
-		case ClaudeName, CodexName, OpenCodeName:
-			out = append(out, a)
-		}
+		out = append(out, a)
 	}
 	return out
 }

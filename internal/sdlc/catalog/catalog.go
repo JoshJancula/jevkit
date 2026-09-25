@@ -18,13 +18,14 @@ const (
 // enforceableReadOnly lists the runtimes whose worker adapter maps readOnly
 // to a real enforced flag (internal/sdlc/worker's capability matrix): claude
 // via its permission mode, codex via sandbox config, cursor via --mode
-// plan/ask. opencode's read-only behavior is agent-defined, not a flag this
-// package can enforce, and antigravity's shape is unverified; ralph's rule
+// plan/ask, and Antigravity via --mode plan. OpenCode's read-only behavior is
+// agent-defined, not a flag this package can enforce; Ralph's rule
 // carries over unchanged: never default to a capability you cannot enforce.
 var enforceableReadOnly = map[string]bool{
-	"claude": true,
-	"codex":  true,
-	"cursor": true,
+	"claude":      true,
+	"codex":       true,
+	"cursor":      true,
+	"antigravity": true,
 }
 
 // Agent is one discovered inventory entry. Rubric is a suggested enrollment
@@ -99,10 +100,18 @@ func Merge(native []NativeAgent, ledgers ...LedgerFile) (*Catalog, error) {
 		if n.Name == "" {
 			continue // unparseable; already recorded as a warning.
 		}
-		c.agents[n.Name] = &Agent{
+		id := n.Name
+		if n.Runtime != "" {
+			id = n.Runtime + "/" + n.Name
+		}
+		a := &Agent{
 			ID: n.Name, Rubric: n.Description, Via: ViaNative,
 			Subagent: n.Name, Model: n.Model, Source: "native:" + n.Path,
 		}
+		if n.Runtime != "" {
+			a.ID, a.Via, a.Runtime, a.RuntimeAgent, a.Subagent = id, ViaRuntime, n.Runtime, n.Name, ""
+		}
+		c.agents[id] = a
 	}
 	for _, l := range ledgers {
 		for _, e := range l.Agents {

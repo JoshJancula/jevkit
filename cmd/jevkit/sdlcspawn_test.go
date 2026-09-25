@@ -69,7 +69,7 @@ func TestCustomWorkflowChoiceRunsBuiltInBugfix(t *testing.T) {
 	if code != exitOK || !strings.Contains(explanation, "RUN WORKFLOW: bugfix") || !strings.Contains(explanation, "succeeded") {
 		t.Fatalf("explain: %d %q %q", code, explanation, errs)
 	}
-	code, out, errs := run(a, "", "sdlc", "run", "choose-fix", "--task", "login fails")
+	code, out, errs := run(a, "", "sdlc", "run", "choose-fix", "--task", "login fails", "--auto")
 	if code != exitOK || !strings.Contains(out, "workflow bugfix: started run") || !strings.Contains(out, "done (succeeded)") {
 		t.Fatalf("run: %d %q %q", code, out, errs)
 	}
@@ -99,7 +99,7 @@ func TestCustomWorkflowSpawnResumesSameChild(t *testing.T) {
 	stageTestRoster(t, a)
 	a.SdlcExecutor = &fakeSDLCExecutor{replies: []worker.Reply{{Outcome: "planned", Content: "Plan."}, {Outcome: "answer", Content: "No change."}}}
 	writeWorkflow(t, a, "choose-fix", directSpawnWorkflow("choose-fix", "bugfix"))
-	code, out, errs := run(a, "", "sdlc", "run", "choose-fix", "--task", "login fails", "--step")
+	code, out, errs := run(a, "", "sdlc", "run", "choose-fix", "--task", "login fails", "--step", "--auto")
 	if code != exitOK {
 		t.Fatalf("first step: %d %q %q", code, out, errs)
 	}
@@ -137,7 +137,7 @@ stages:
   - id: done
     finish: succeeded
 `)
-	code, out, errs := run(a, "", "sdlc", "run", "outer", "--task", "explain the issue")
+	code, out, errs := run(a, "", "sdlc", "run", "outer", "--task", "explain the issue", "--auto")
 	if code != exitOK || !strings.Contains(out, "workflow inner: started run") {
 		t.Fatalf("run: %d %q %q", code, out, errs)
 	}
@@ -160,7 +160,7 @@ stages:
   - id: stop
     finish: aborted
 `)
-	code, out, errs := run(a, "", "sdlc", "run", "outer", "--task", "stop")
+	code, out, errs := run(a, "", "sdlc", "run", "outer", "--task", "stop", "--auto")
 	if code != exitOK || !strings.Contains(out, "done (aborted)") {
 		t.Fatalf("run: %d %q %q", code, out, errs)
 	}
@@ -222,8 +222,8 @@ stages:
   - id: done
     finish: succeeded
 `)
-	code, out, errs := run(a, "", "sdlc", "run", "outer", "--task", "answer")
-	if code == exitOK || !strings.Contains(out, "workflow-budget-exhausted") || !strings.Contains(errs, "workflow-budget-exhausted") || len(f.requests) != 1 {
+	code, out, errs := run(a, "", "sdlc", "run", "outer", "--task", "answer", "--auto")
+	if code == exitOK || !strings.Contains(out, "workflow-target-repeated") || !strings.Contains(errs, "workflow-target-repeated") || len(f.requests) != 1 {
 		t.Fatalf("run: %d %q %q requests=%d", code, out, errs, len(f.requests))
 	}
 }
@@ -261,7 +261,7 @@ stages:
     finish: succeeded
 `, name, next))
 	}
-	code, out, errs := run(a, "", "sdlc", "run", "flow-0", "--task", "nested")
+	code, out, errs := run(a, "", "sdlc", "run", "flow-0", "--task", "nested", "--auto")
 	if code != exitOK || !strings.Contains(out, "workflow-depth-exhausted") || errs != "" {
 		t.Fatalf("depth limit: %d %q %q", code, out, errs)
 	}

@@ -15,7 +15,7 @@ const CommandName = "jevkit"
 const ModulePath = "github.com/OWNER/jevkit"
 
 // Hosts are the supported agent runtimes that receive a generated package.
-var Hosts = []string{"claude", "opencode"}
+var Hosts = []string{"claude", "opencode", "cursor", "antigravity"}
 
 // InstallCommand returns the remediation users should run when jevkit is
 // missing from PATH. Pinned when Version is a release tag; otherwise @latest.

@@ -39,9 +39,14 @@ func codeErr(code int) error {
 // Cobra's own errors (unknown command, bad flag, bad arguments) are usage
 // errors.
 func (a *App) Run(args []string) int {
+	return a.RunContext(context.Background(), args)
+}
+
+// RunContext dispatches a command with a caller-owned cancellation context.
+func (a *App) RunContext(ctx context.Context, args []string) int {
 	root := a.rootCmd()
 	root.SetArgs(args)
-	err := root.ExecuteContext(context.Background())
+	err := root.ExecuteContext(ctx)
 	if err == nil {
 		return exitOK
 	}
@@ -84,6 +89,8 @@ SDLC run commands can assign agents to work on your project.`,
 	root.SetOut(a.Stdout)
 	root.SetErr(a.Stderr)
 	root.SetIn(a.Stdin)
+	root.PersistentFlags().BoolVar(&a.Yolo, "yolo", a.Yolo, "lift path guard only; killswitch and Jev scoring still apply")
+	root.PersistentFlags().StringVar(&a.SecurityPolicy, "security-policy", a.SecurityPolicy, "select a named security policy (env: JEVKIT_SECURITY_POLICY)")
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
 		w := cmd.OutOrStdout()
 		description := cmd.Long
@@ -98,13 +105,16 @@ SDLC run commands can assign agents to work on your project.`,
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(
 		a.keyCmd(),
+		a.modelCmd(),
 		a.usageCmd(),
 		a.doctorCmd(),
 		a.versionCmd(),
+		a.upgradeCmd(),
 		a.mcpCmd(),
 		a.askCmd(),
 		a.compactCmd(),
 		a.redactCmd(),
+		a.securityCmd(),
 		a.sdlcCmd(),
 		a.runtimeCmd(),
 		a.installCmd(),

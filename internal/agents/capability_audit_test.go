@@ -25,20 +25,23 @@ func TestRuntimeCapabilityAuditCoversEveryAdapter(t *testing.T) {
 		if !profile.Telemetry {
 			t.Fatalf("%s must support telemetry", name)
 		}
+		if name == agents.ClaudeName && (!profile.PreToolDecision || !agents.Lookup(name).Capabilities().PreTool) {
+			t.Fatalf("Claude PreToolUse decision must be installed and audited")
+		}
 	}
 }
 
 func TestRuntimeCapabilityAuditIsDocumented(t *testing.T) {
-	doc, err := os.ReadFile("../../docs/AGENTS.md")
+	doc, err := os.ReadFile("../../docs/AGENT-INTEGRATIONS.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, needle := range []string{
-		"| Claude Code |", "| Codex |", "| OpenCode |",
-		"validated tool-result shape", "continue:false", "locally assembled compacted output",
+		"Claude Code and OpenCode", "Codex, Cursor, and Antigravity",
+		"pre-tool hook replaces an eligible shell command", "undocumented post-tool output mutation",
 	} {
 		if !strings.Contains(string(doc), needle) {
-			t.Errorf("capability matrix missing %q", needle)
+			t.Errorf("capability documentation missing %q", needle)
 		}
 	}
 }

@@ -23,7 +23,10 @@ jevkit sdlc run custom-review --task "Add a rate limit"
 
 `create` writes `.jevkit/sdlc/custom-review.yaml`. `run` checks the roster and
 policy, saves the run, then asks the questions and executes eligible enrolled
-agents until the workflow finishes or pauses. You can edit the YAML directly
+agents until the workflow finishes or pauses. A workflow with implementation
+shows its plan for approval or change requests in an interactive terminal. A
+redirected run pauses instead; use `sdlc resume RUN_ID --approve-plan` after
+reviewing `plan.md`, or pass `--auto` to run autonomously. You can edit the YAML directly
 before running it; each run keeps a snapshot of the workflow it started with.
 Use `run custom-review --task "..." --step` to execute only the first stage,
 then `resume RUN_ID --step` to advance the active run one stage at a time.
@@ -57,6 +60,7 @@ stages:
     work:
       role: implementer
       objective: Implement the plan in the repository.
+      focus: Apply the API rate limit without changing existing error responses.
       routes: {changed: assess, answer: done, no-change: done}
 
   - id: assess
@@ -80,9 +84,11 @@ fallback is a named stage, not another agent.
 A `work` stage names one standard role. `planner` can report `planned`,
 `answer`, or `no-change`; `implementer` can report `changed`, `answer`, or
 `no-change`; `assessor` can report `approved` or `changes-required`. The YAML
-must route every normal outcome for that role. Worker failures and timeouts
-pause or reroute under the SDLC policy; they are not authored as success
-routes. Assessment uses the policy quorum and the exact diff revision.
+must route every normal outcome for that role. Invocation failures reroute to
+another eligible agent with the same role when the workspace is unchanged.
+Other worker failures and timeouts pause under the SDLC policy; they are not
+authored as success routes. Assessment uses the policy quorum and the exact
+diff revision.
 
 ## Route a choice into another SDLC
 

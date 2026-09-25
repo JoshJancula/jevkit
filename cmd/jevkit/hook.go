@@ -11,6 +11,8 @@ import (
 	"github.com/OWNER/jevkit/internal/agents"
 	"github.com/OWNER/jevkit/internal/compact"
 	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/OWNER/jevkit/internal/registry"
+	securityconfig "github.com/OWNER/jevkit/internal/security/config"
 )
 
 // runtimeCmd is the private, versioned stdin hook protocol used only by
@@ -39,6 +41,7 @@ func (a *App) runtimeCmd() *cobra.Command {
 		Hidden: true,
 	}
 	runtime.AddCommand(dispatch)
+	runtime.AddCommand(a.shellWrapperCmd())
 	return runtime
 }
 
@@ -57,15 +60,16 @@ func (a *App) runtimePassthrough(agentName, eventName string) int {
 
 func (a *App) hook(ctx context.Context, agentName, eventName string) int {
 	event, ok := parseHookEvent(eventName)
-	agent := a.runtimeAgent(ctx, agentName)
+	agent, loadErr := a.runtimeAgent(ctx, agentName)
 	if !ok {
 		// Unknown event: still fail open with whatever passthrough we have.
 		event = agents.Event(eventName)
 	}
 	opts := agents.Options{
-		Timeout:  a.hookTimeout(),
-		StateDir: a.stateHome(),
-		Now:      a.Now,
+		Timeout:   a.hookTimeout(),
+		StateDir:  a.stateHome(),
+		Now:       a.Now,
+		LoadError: loadErr,
 	}
 	return agents.Run(ctx, agent, event, a.Stdin, a.Stdout, opts)
 }
@@ -73,16 +77,82 @@ func (a *App) hook(ctx context.Context, agentName, eventName string) int {
 // runtimeAgent gives replacement-capable adapters a short-lived Jev client.
 // A missing key or client setup failure intentionally leaves Asker nil, which
 // makes the compaction policy preserve the host's original output.
-func (a *App) runtimeAgent(ctx context.Context, name string) agents.Agent {
+func (a *App) runtimeAgent(ctx context.Context, name string) (agents.Agent, string) {
 	base := agents.Lookup(name)
 	if base == nil {
-		return nil
+		return nil, ""
 	}
+	opts := a.securityLoadOptions()
+	securityCfg, securityErr := securityconfig.LoadForHook(opts)
+	loadError := ""
+	if securityErr != nil {
+		loadError = securityErr.Error()
+	}
+	client, policy := a.compactionClient(ctx)
+	if securityCfg != nil && securityCfg.JevScoring {
+		securityCfg.Asker = a.securityAsker(ctx)
+	}
+	reg, _ := registry.Load()
+	decider := &registry.Decider{Registry: reg, StateDir: a.stateHome(), Getenv: a.getenv}
+	switch typed := base.(type) {
+	case *agents.Claude:
+		clone := *typed
+		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
+		clone.Security, clone.SecurityDecider = securityCfg, decider
+		return &clone, loadError
+	case *agents.Cursor:
+		clone := *typed
+		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
+		clone.Security, clone.SecurityDecider = securityCfg, decider
+		return &clone, loadError
+	case *agents.Codex:
+		clone := *typed
+		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
+		clone.Security, clone.SecurityDecider = securityCfg, decider
+		return &clone, loadError
+	case *agents.Antigravity:
+		clone := *typed
+		clone.Security, clone.SecurityDecider = securityCfg, decider
+		return &clone, loadError
+	case *agents.OpenCode:
+		clone := *typed
+		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
+		return &clone, loadError
+	default:
+		return base, loadError
+	}
+}
+
+func (a *App) securityAsker(ctx context.Context) Asker {
+	if a.getenv("JEVKIT_TRANSPORT") == jev.TransportFixture {
+		cfg, err := a.jevConfig()
+		if err != nil {
+			return nil
+		}
+		return a.newJev(cfg, nil)
+	}
+	client, _ := a.compactionClient(ctx)
+	return client
+}
+
+func (a *App) securityLoadOptions() securityconfig.LoadOptions {
+	environ := append([]string(nil), a.Environ...)
+	if a.Yolo {
+		environ = append(environ, "JEVKIT_YOLO=1")
+	}
+	return securityconfig.LoadOptions{ConfigDir: a.ConfigDir, StateDir: a.StateDir, WorkDir: a.WorkDir, Name: a.SecurityPolicy, Environ: environ}
+}
+
+func (a *App) compactionClient(ctx context.Context) (compact.Asker, *compact.Policy) {
 	key, _, err := a.store().Resolve(ctx)
 	if err != nil {
-		return base
+		return nil, nil
 	}
-	client := a.newJev(jev.ConfigFromEnv(a.getenv), func() (string, error) { return key, nil })
+	cfg, err := a.jevConfig()
+	if err != nil {
+		return nil, nil
+	}
+	client := a.newJev(cfg, func() (string, error) { return key, nil })
 	policy, _ := compact.LoadPolicy(a.compactionPolicyPath("", false), false)
 	if project, err := compact.LoadPolicy(a.compactionPolicyPath("", true), true); err == nil {
 		if policy == nil {
@@ -91,26 +161,7 @@ func (a *App) runtimeAgent(ctx context.Context, name string) agents.Agent {
 			policy.Rules = append(policy.Rules, project.Rules...)
 		}
 	}
-	switch typed := base.(type) {
-	case *agents.Claude:
-		clone := *typed
-		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
-		return &clone
-	case *agents.Cursor:
-		clone := *typed
-		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
-		return &clone
-	case *agents.Codex:
-		clone := *typed
-		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
-		return &clone
-	case *agents.OpenCode:
-		clone := *typed
-		clone.Asker, clone.StateDir, clone.Policy = client, a.stateHome(), policy
-		return &clone
-	default:
-		return base
-	}
+	return client, policy
 }
 
 func parseHookEvent(name string) (agents.Event, bool) {

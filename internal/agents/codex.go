@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/OWNER/jevkit/internal/compact"
+	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/OWNER/jevkit/internal/security/config"
 )
 
 // Codex adapter name used by installed runtime integrations.
@@ -20,9 +22,7 @@ const legacyCodexHookMarker = "hook codex"
 
 // CodexPreToolMarker / CodexPostToolMarker are the full event tokens.
 const (
-	// CodexPreToolMarker remains only for recognizing legacy config during an
-	// upgrade; new installations never emit it.
-	CodexPreToolMarker  = "hook codex pre-tool"
+	CodexPreToolMarker  = "_runtime dispatch --protocol 1 codex pre-tool"
 	CodexPostToolMarker = "_runtime dispatch --protocol 1 codex post-tool"
 )
 
@@ -57,9 +57,11 @@ type Codex struct {
 	ThresholdBytes int
 	// Asker is the optional Jev ranked-line tier. A nil or unavailable client
 	// fails open and preserves Codex's original tool result.
-	Asker    compact.Asker
-	StateDir string
-	Policy   *compact.Policy
+	Asker           compact.Asker
+	StateDir        string
+	Policy          *compact.Policy
+	Security        *config.Config
+	SecurityDecider *registry.Decider
 }
 
 func init() {
@@ -75,8 +77,10 @@ func (c *Codex) Name() string { return CodexName }
 
 func (c *Codex) Capabilities() Capabilities {
 	return Capabilities{
-		PostTool:      true,
-		OutputReplace: true,
+		PreTool:        true,
+		PreToolRewrite: true,
+		PostTool:       true,
+		OutputReplace:  true,
 	}
 }
 
@@ -89,54 +93,37 @@ func (c *Codex) Passthrough(event Event) []byte {
 	}
 }
 
-// HandlePreTool deliberately leaves input untouched.
 func (c *Codex) HandlePreTool(ctx context.Context, req Request) (Response, error) {
-	return Response{Body: c.Passthrough(EventPreTool)}, nil
+	var payload struct {
+		HookEventName string `json:"hook_event_name"`
+		ToolName      string `json:"tool_name"`
+		ToolInput     struct {
+			Command string `json:"command"`
+		} `json:"tool_input"`
+		CWD string `json:"cwd"`
+	}
+	if err := json.Unmarshal(req.Raw, &payload); err != nil || !strings.EqualFold(payload.HookEventName, "PreToolUse") ||
+		(payload.ToolName != codexBashMatcher && payload.ToolName != codexCommandMatcher) ||
+		strings.TrimSpace(payload.ToolInput.Command) == "" || strings.TrimSpace(payload.CWD) == "" || IsShellWrapperCommand(payload.ToolInput.Command) {
+		return Response{Body: c.Passthrough(EventPreTool)}, nil
+	}
+	if response, deny := securityDecision(ctx, c.Security, c.SecurityDecider, payload.ToolInput.Command, payload.CWD, payload.CWD, CodexName); deny {
+		return response, nil
+	}
+	body, err := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{
+		"hookEventName": "PreToolUse", "permissionDecision": "allow",
+		"updatedInput": map[string]string{"command": buildSecurityShellWrapperCommand(c.binary(), payload.CWD, payload.ToolInput.Command, CodexName, c.Security != nil && c.Security.Yolo, securityPolicyName(c.Security))},
+	}})
+	if err != nil {
+		return Response{Body: c.Passthrough(EventPreTool)}, nil
+	}
+	return Response{Body: body}, nil
 }
 
-// HandlePostTool replaces only eligible, high-confidence Bash output. Codex's
-// PostToolUse payload does not provide a documented exit-status field, so Jev
-// classifies the observed outcome rather than treating the local zero value as
-// authoritative.
+// HandlePostTool is telemetry-only. Shell output is replaced by the pre-tool
+// wrapper, which preserves the real exit status and raw original.
 func (c *Codex) HandlePostTool(ctx context.Context, req Request) (Response, error) {
-	passthrough := Response{Body: c.Passthrough(EventPostTool)}
-	if !c.compactEnabled() || c.shadow() {
-		return passthrough, nil
-	}
-	var payload codexPostPayload
-	if err := json.Unmarshal(req.Raw, &payload); err != nil {
-		return passthrough, nil
-	}
-	if !strings.EqualFold(payload.HookEventName, "PostToolUse") ||
-		(payload.ToolName != codexBashMatcher && payload.ToolName != codexCommandMatcher) ||
-		payload.ToolResponse == nil {
-		return passthrough, nil
-	}
-	result, compacted := compact.JevCompact(
-		payload.ToolInput.Command,
-		payload.ToolResponse.Stdout,
-		payload.ToolResponse.Stderr,
-		0,
-		c.Asker,
-		compact.JevOptions{
-			Enabled:        true,
-			ThresholdBytes: c.ThresholdBytes,
-			StateDir:       c.StateDir,
-			CanReplace:     true,
-			Policy:         c.Policy,
-		},
-	)
-	if !compacted.Compacted {
-		return passthrough, nil
-	}
-	feedback := result.Body
-	if feedback == "" {
-		feedback = compacted.Stdout
-	}
-	if feedback == "" {
-		return passthrough, nil
-	}
-	return Response{Body: codexReplacement(feedback)}, nil
+	return Response{Body: c.Passthrough(EventPostTool)}, nil
 }
 
 type codexPostPayload struct {
@@ -181,11 +168,9 @@ func (c *Codex) getenv(key string) string {
 }
 
 func (c *Codex) compactEnabled() bool {
-	v := c.getenv("JEVKIT_COMPACT")
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+	return compactEnvEnabled(c.getenv, "JEVKIT_COMPACT")
 }
 
 func (c *Codex) shadow() bool {
-	v := c.getenv("JEVKIT_COMPACT_SHADOW")
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+	return compactEnvEnabled(c.getenv, "JEVKIT_COMPACT_SHADOW")
 }

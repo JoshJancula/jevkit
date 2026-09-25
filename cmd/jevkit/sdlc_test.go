@@ -76,8 +76,8 @@ func TestSdlcAgentsEmpty(t *testing.T) {
 		}
 	}
 	roster, err := enrollment.LoadRoster(a.sdlcRosterPath())
-	if err != nil || len(roster.Agents) != 3 {
-		t.Fatalf("new roster must have three templates: %+v, %v", roster, err)
+	if err != nil || len(roster.Agents) != 4 {
+		t.Fatalf("new roster must have four templates: %+v, %v", roster, err)
 	}
 	for _, ag := range roster.Agents {
 		if !ag.Disabled || ag.Ready() {
@@ -139,7 +139,7 @@ func TestSdlcRosterStarterCanBeFilledOut(t *testing.T) {
 	data = strings.ReplaceAll(data, "YOUR_MODEL", "test-model")
 	writeFile(t, a.sdlcRosterPath(), data)
 	roster, err := enrollment.LoadRoster(a.sdlcRosterPath())
-	if err != nil || len(roster.Agents) != 3 || !roster.Agents[0].Ready() || !roster.Agents[1].Ready() || !roster.Agents[2].Ready() {
+	if err != nil || len(roster.Agents) != 4 || !roster.Agents[0].Ready() || !roster.Agents[1].Ready() || !roster.Agents[2].Ready() || !roster.Agents[3].Ready() {
 		t.Fatalf("filled starter: %+v, %v", roster, err)
 	}
 }

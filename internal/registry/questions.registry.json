@@ -1,6 +1,38 @@
 {
   "registryVersion": "1",
   "questionSets": {
+    "compaction.triage.v2": {
+      "id": "compaction.triage.v2", "version": 1, "surface": "compaction",
+      "description": "Classify observable diagnostic structure in redacted shell output; labels only.",
+      "questions": {
+        "evidence_locus": {"type":"choice","instructions":"Where in the output does evidence needed to understand the outcome live?", "criteria":{"throughout":"Distinct information throughout the output","head":"Opening lines explain the outcome","tail":"Ending lines explain the outcome","first-failure":"One first failure site explains the outcome","scattered":"Several separated lines explain the outcome","nowhere":"No output lines are needed beyond the recorded exit status"}},
+        "outcome": {"type":"choice","instructions":"Classify the observed command outcome.","criteria":{"success":"Completed successfully","success-with-warnings":"Completed with warnings","no-op":"Completed without changing anything","partial-failure":"Some work failed and some succeeded","failure":"Failed","blocked-environment":"Blocked by environment or permissions","interrupted":"Interrupted before completion","unknown":"Insufficient evidence"}},
+        "content_kind": {"type":"choice","instructions":"Classify what this output describes.","criteria":{"test-run":"Test execution","build-compile":"Build or compile","typecheck":"Type checking","lint-format":"Linting or formatting","dependency-install":"Dependency installation","migration-schema":"Schema or migration","deploy-infra":"Deployment or infrastructure","data-query":"Query results or retrieved data","log-stream":"Log records","help-usage":"Help or usage information","version-probe":"Version information","other":"Other command output"}},
+        "retention_budget": {"type":"score","instructions":"Rate the information density of the original text from sparse to mostly distinct, independent of byte size.","criteria":["Almost no lines carry distinct information","A few lines carry distinct information","Several lines carry distinct information","Many lines carry distinct information","Most lines carry distinct information","Nearly all lines carry distinct information"]},
+        "tail_explains": {"type":"noul","instructions":"Do the ending lines explain the observed outcome?"},
+        "head_explains": {"type":"noul","instructions":"Do the opening lines explain the observed outcome?"},
+        "middle_omission_safe": {"type":"noul","instructions":"Can the middle be omitted while preserving the diagnosis?"},
+        "single_failure_site": {"type":"noul","instructions":"Is there one local failure site that explains the outcome?"}
+      },
+      "policy":{"primaryQuestion":"evidence_locus","actThreshold":0.85,"escalateThreshold":0.6,"fallback":"deterministic"},
+      "calibration":"placeholder - uncalibrated"
+    },
+    "compaction.salient-lines.v2": {
+      "id":"compaction.salient-lines.v2","version":1,"surface":"compaction",
+      "description":"Select global original line IDs by diagnostic role from a bounded redacted candidate set.",
+      "questions": {
+        "outcome_line":{"type":"choice","instructions":"Choose the line reporting the final outcome, or NONE.","criteria":{"NONE":"No candidate reports the outcome"},"criteriaMode":"call-time"},
+        "cause_line":{"type":"choice","instructions":"Choose the line explaining the cause, or NONE.","criteria":{"NONE":"No candidate explains the cause"},"criteriaMode":"call-time"},
+        "location_line":{"type":"choice","instructions":"Choose the line locating the issue, or NONE.","criteria":{"NONE":"No candidate locates the issue"},"criteriaMode":"call-time"},
+        "tally_line":{"type":"choice","instructions":"Choose the line with an outcome tally, or NONE.","criteria":{"NONE":"No candidate gives a tally"},"criteriaMode":"call-time"},
+        "next_step_line":{"type":"choice","instructions":"Choose the line with an actionable next step, or NONE.","criteria":{"NONE":"No candidate gives a next step"},"criteriaMode":"call-time"},
+        "second_site_line":{"type":"choice","instructions":"Choose a second independent diagnostic site, or NONE.","criteria":{"NONE":"No second site"},"criteriaMode":"call-time"},
+        "has_failure":{"type":"noul","instructions":"Is a failure present?"},
+        "selection_covers":{"type":"noul","instructions":"Do the selected lines cover the diagnostic evidence?"}
+      },
+      "policy":{"primaryQuestion":"outcome_line","actThreshold":0.85,"escalateThreshold":0.6,"fallback":"deterministic"},
+      "calibration":"placeholder - uncalibrated"
+    },
     "compaction.line-relevance": {
       "id": "compaction.line-relevance",
       "version": 1,
@@ -10,7 +42,7 @@
         "relevant_lines": {
           "type": "choice",
           "instructions": "Which line of the output would a developer need in order to diagnose what happened?",
-          "criteria": {}
+          "criteria": {}, "criteriaMode": "call-time"
         },
         "has_failure": {
           "type": "noul",
@@ -54,7 +86,7 @@
         "target": {
           "type": "choice",
           "instructions": "Which allowed target should receive this request?",
-          "criteria": {}
+          "criteria": {}, "criteriaMode": "call-time"
         },
         "sufficiently_specified": {
           "type": "noul",
@@ -107,7 +139,7 @@
         "owner": {
           "type": "choice",
           "instructions": "Which candidate repair lane owns this finding?",
-          "criteria": {}
+          "criteria": {}, "criteriaMode": "call-time"
         }
       },
       "policy": {
@@ -116,6 +148,27 @@
         "escalateThreshold": 0.6,
         "fallback": "leave finding ambiguous"
       },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "security.command-risk": {
+      "id": "security.command-risk",
+      "version": 1,
+      "surface": "security",
+      "description": "Classify the risk of executing a shell command in a coding workspace.",
+      "questions": {
+        "risk": {
+          "type": "score",
+          "instructions": "Rate the command's destructive, data exfiltration, or supply-chain risk from low to critical. Rate only the supplied command.",
+          "criteria": [
+            "low - routine read-only or local development command",
+            "moderate - limited local changes with clear scope",
+            "high - broad changes, remote code, or unverified package installation",
+            "severe - likely destructive operation or sensitive data transfer",
+            "critical - catastrophic deletion, exfiltration, or hostile execution"
+          ]
+        }
+      },
+      "policy": {"primaryQuestion":"risk","actThreshold":0.85,"escalateThreshold":0.6,"fallback":"allow"},
       "calibration": "placeholder - uncalibrated"
     },
     "developer.change-risk": {
@@ -243,6 +296,26 @@
       },
       "calibration": "placeholder - uncalibrated"
     },
+    "sdlc.session-strategy": {
+      "id": "sdlc.session-strategy",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Choose whether a run-local agent session should be resumed or started fresh.",
+      "questions": {
+        "strategy": {
+          "type": "choice",
+          "instructions": "Given the current role, revision, and previous session, choose a session strategy. Preserve useful context while avoiding stale context.",
+          "criteria": {}, "criteriaMode": "call-time"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "strategy",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "resume the explicit run-local session"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
     "sdlc.agent-selection": {
       "id": "sdlc.agent-selection",
       "version": 1,
@@ -252,7 +325,7 @@
         "agent": {
           "type": "choice",
           "instructions": "Given the task and any spec or artifacts in state, which candidate agent's rubric best matches this work?",
-          "criteria": {}
+          "criteria": {}, "criteriaMode": "call-time"
         }
       },
       "policy": {
@@ -272,7 +345,7 @@
         "workflow": {
           "type": "choice",
           "instructions": "Given the task text, which available workflow's description rubric best matches what it asks for?",
-          "criteria": {}
+          "criteria": {}, "criteriaMode": "call-time"
         }
       },
       "policy": {
@@ -280,6 +353,46 @@
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
         "fallback": "refuse and list candidate workflows with their confidences"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.specialist-need": {
+      "id": "sdlc.specialist-need",
+      "version": 2,
+      "surface": "sdlc",
+      "description": "Decide whether an enrolled specialist focus is needed for the current plan or diff.",
+      "questions": {
+        "need": {
+          "type": "choice",
+          "instructions": "Does this exact plan or diff need the offered specialist focus?",
+          "criteria": {}, "criteriaMode": "call-time"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "need",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "continue the core role in advisory mode; pause only when project policy requires a specialist decision"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.builtin-delegation": {
+      "id": "sdlc.builtin-delegation",
+      "version": 2,
+      "surface": "sdlc",
+      "description": "Choose an allowed built-in child workflow or continue in the parent.",
+      "questions": {
+        "target": {
+          "type": "choice",
+          "instructions": "Would one of these built-in workflows better execute the current plan, or should the parent continue?",
+          "criteria": {}, "criteriaMode": "call-time"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "target",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "continue implementation in the parent run"
       },
       "calibration": "placeholder - uncalibrated"
     },

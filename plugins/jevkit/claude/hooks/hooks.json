@@ -10,6 +10,17 @@
         ],
         "matcher": "Bash"
       }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/shared/jevkit-run.sh\" _runtime dispatch --protocol 1 claude pre-tool",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
     ]
   }
 }

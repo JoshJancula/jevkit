@@ -17,7 +17,10 @@ import (
 // None of them is fatal: agents fall back to native behavior.
 func (a *App) mcpPreflight(ctx context.Context) []string {
 	var problems []string
-	cfg := jev.ConfigFromEnv(a.getenv)
+	cfg, err := a.jevConfig()
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("model setting: %v", err))
+	}
 	if cfg.Transport != jev.TransportFixture && a.store().Source(ctx) == keystore.SourceNone {
 		problems = append(problems, "no API key found; tools will return available:false (run `jevkit key set`)")
 	}

@@ -116,7 +116,13 @@ func (r *Router) Decide(ctx context.Context, setID, state string, criteria map[s
 		return Result{Decision: r.synthesizeFallback(set, "transport-error"), Available: false}, nil
 	}
 
-	dec, err := r.cfg.Decider.Decide(setID, resp.Answers)
+	callTime := make(map[string]map[string]json.RawMessage)
+	for id, q := range questions {
+		if choice, ok := q.(jev.ChoiceQuestion); ok && set.Questions[id].CriteriaMode == "call-time" {
+			callTime[id] = choice.Criteria
+		}
+	}
+	dec, err := r.cfg.Decider.DecideWith(setID, resp.Answers, callTime)
 	if err != nil {
 		return Result{Decision: r.synthesizeFallback(set, "decide-error"), Available: false}, nil
 	}

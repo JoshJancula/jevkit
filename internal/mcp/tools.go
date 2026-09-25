@@ -190,7 +190,13 @@ func (s *Server) handleCurated(ctx context.Context, tool, setID string, req *sdk
 	if res != nil || err != nil {
 		return res, err
 	}
-	dec, derr := s.cfg.Decider.Decide(setID, resp.Answers)
+	callTime := make(map[string]map[string]json.RawMessage)
+	for id, q := range questions {
+		if choice, ok := q.(jev.ChoiceQuestion); ok && set.Questions[id].CriteriaMode == "call-time" {
+			callTime[id] = choice.Criteria
+		}
+	}
+	dec, derr := s.cfg.Decider.DecideWith(setID, resp.Answers, callTime)
 	if derr != nil {
 		s.logf("tool=%s policy-decide-failed", tool)
 		return nil, rpcErr(codeServer, "policy decide failed for %s", setID)

@@ -1,0 +1,8 @@
+{
+  "name": "@jevkit/PLATFORM",
+  "version": "0.0.0-development",
+  "license": "MIT",
+  "os": ["OS"],
+  "cpu": ["CPU"],
+  "files": ["bin"]
+}

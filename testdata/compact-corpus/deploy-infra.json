@@ -1,0 +1,13 @@
+{
+  "name": "deploy-infra-synthetic",
+  "kind": "deploy-infra",
+  "command": "terraform apply",
+  "exit": 1,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "ERROR: resource creation failed\n",
+  "gold": [
+    "ERROR: resource creation failed"
+  ]
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -34,14 +35,15 @@ func newApp(t *testing.T) *App {
 		t.Fatal(err)
 	}
 	return &App{
-		Stdin:     strings.NewReader(""),
-		Environ:   []string{"HOME=" + home},
-		WorkDir:   work,
-		HomeDir:   home,
-		ConfigDir: filepath.Join(root, "cfg"),
-		StateDir:  filepath.Join(root, "state"),
-		Version:   "test",
-		Binary:    "jevkit",
+		Stdin:              strings.NewReader(""),
+		Environ:            []string{"HOME=" + home},
+		WorkDir:            work,
+		HomeDir:            home,
+		ConfigDir:          filepath.Join(root, "cfg"),
+		StateDir:           filepath.Join(root, "state"),
+		Version:            "test",
+		Binary:             "jevkit",
+		SdlcSpecialistNeed: func(context.Context, string, string, string) (bool, error) { return false, nil },
 	}
 }
 

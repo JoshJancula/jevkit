@@ -120,11 +120,13 @@ func mergeCursorHooks(existing []byte, binary string) ([]byte, error) {
 		hooksObj = map[string]any{}
 	}
 
+	preCmd := cursorHookCommand(binary, CursorPreToolMarker)
 	postCmd := cursorHookCommand(binary, CursorPostToolMarker)
 
-	// Legacy pre-tool wrapper entries are stripped but never replaced: jevkit
-	// observes results directly and no longer rewrites host commands.
-	hooksObj["preToolUse"] = stripManagedCursorHooks(asSlice(hooksObj["preToolUse"]))
+	hooksObj["preToolUse"] = upsertCursorHookEntries(
+		stripManagedCursorHooks(asSlice(hooksObj["preToolUse"])),
+		[]map[string]any{{"command": preCmd, "matcher": cursorShellMatcher}},
+	)
 	hooksObj["postToolUse"] = upsertCursorHookEntries(
 		stripManagedCursorHooks(asSlice(hooksObj["postToolUse"])),
 		[]map[string]any{

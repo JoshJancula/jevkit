@@ -18,12 +18,12 @@ func TestCursorLookupRegistered(t *testing.T) {
 		t.Fatalf("cursor not registered: %+v", got)
 	}
 	caps := got.Capabilities()
-	if caps.PreTool || caps.PreToolRewrite || !caps.PostTool || !caps.OutputReplace {
+	if !caps.PreTool || !caps.PreToolRewrite || !caps.PostTool || !caps.OutputReplace {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
 }
 
-func TestCursorPreToolDoesNotRewriteShell(t *testing.T) {
+func TestCursorPreToolRewritesShell(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "cursor", "pretooluse-shell.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -45,8 +45,8 @@ func TestCursorPreToolDoesNotRewriteShell(t *testing.T) {
 	if got["permission"] != "allow" {
 		t.Fatalf("permission %v", got["permission"])
 	}
-	if gotCmd != "" {
-		t.Fatalf("pre-tool must not rewrite, got %q", gotCmd)
+	if !strings.Contains(gotCmd, "_runtime shell-wrapper") || !strings.Contains(gotCmd, "go test ./...") {
+		t.Fatalf("pre-tool must rewrite, got %q", gotCmd)
 	}
 }
 
@@ -54,7 +54,8 @@ func TestCursorPreToolDoesNotMutateExistingCommand(t *testing.T) {
 	payload := map[string]any{
 		"hook_event_name": "preToolUse",
 		"tool_name":       "Shell",
-		"tool_input":      map[string]any{"command": "jevkit exec -- go test ./..."},
+		"tool_input":      map[string]any{"command": "jevkit _runtime shell-wrapper --command 'go test ./...'"},
+		"cwd":             "/tmp/proj",
 	}
 	raw, _ := json.Marshal(payload)
 	c := agents.NewCursor()
@@ -71,7 +72,7 @@ func TestCursorPreToolDoesNotMutateExistingCommand(t *testing.T) {
 	}
 	cmd := nestedString(got, "updated_input", "command")
 	if cmd != "" {
-		t.Fatalf("pre-tool must not mutate: %q", cmd)
+		t.Fatalf("pre-tool must not mutate wrapper: %q", cmd)
 	}
 }
 
@@ -259,8 +260,8 @@ func TestCursorInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if !strings.Contains(string(data), `"./my-stop.sh"`) {
 		t.Fatalf("lost unrelated stop hook: %s", data)
 	}
-	if strings.Contains(string(data), agents.CursorPreToolMarker) {
-		t.Fatalf("legacy pre command must not be installed: %s", data)
+	if strings.Count(string(data), agents.CursorPreToolMarker) != 1 {
+		t.Fatalf("expected one pre-tool command: %s", data)
 	}
 
 	if err := c.Uninstall(opts); err != nil {
@@ -318,7 +319,7 @@ func TestCursorInstallUserScopeAndAbsentRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(data), agents.CursorPostToolMarker) != 4 {
+	if strings.Count(string(data), agents.CursorPostToolMarker) != 4 || strings.Count(string(data), agents.CursorPreToolMarker) != 1 {
 		t.Fatalf("not idempotent: %s", data)
 	}
 	if err := c.Uninstall(opts); err != nil {

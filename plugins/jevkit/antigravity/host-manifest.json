@@ -1,0 +1,7 @@
+{
+  "bootstrap": "shared/jevkit-plugin-bootstrap.sh",
+  "command": "jevkit",
+  "id": "jevkit",
+  "runtime": "antigravity",
+  "version": "dev"
+}

@@ -95,6 +95,17 @@ agents:
     via: runtime
     runtime: opencode
     model: YOUR_MODEL
+  - id: codex-api-generalist
+    disabled: true
+    roles: [planner, implementer, assessor]
+    rubric: API endpoint changes and regression fixes.
+    roleRubrics:
+      planner: Plan endpoint contracts and migrations.
+      implementer: Update handlers and migration code.
+      assessor: Check endpoint behavior and error handling.
+    via: runtime
+    runtime: codex
+    model: YOUR_MODEL
 `
 
 // ensureSDLCRoster gives the path shown by `sdlc agents` a real file to open.
@@ -167,18 +178,18 @@ func (a *App) cliReach() enrollment.Reach {
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
-	for runtime, binary := range map[string]string{"claude": "claude", "codex": "codex", "cursor": "cursor-agent", "opencode": "opencode"} {
+	for runtime, binary := range map[string]string{"claude": "claude", "codex": "codex", "cursor": "cursor-agent", "opencode": "opencode", "antigravity": "agy"} {
 		if _, err := lookPath(binary); err == nil {
-			// A binary on PATH proves reach, not that this driver will apply
-			// read-only, isolation, or scoped-write flags during invocation.
-			reach.Runtimes[runtime] = enrollment.RuntimeCapability{Write: true}
+			// Codex, Claude, and Cursor adapters use their read-only modes.
+			// OpenCode has no enforced read-only CLI mode here.
+			reach.Runtimes[runtime] = enrollment.RuntimeCapability{Write: true, ReadOnly: runtime != "opencode"}
 		}
 	}
 	if roster, err := enrollment.LoadRoster(a.sdlcRosterPath()); err == nil {
 		for _, ag := range roster.Agents {
-			if ag.Via == enrollment.Runtime && ag.Binary != "" && (ag.Runtime == "claude" || ag.Runtime == "codex" || ag.Runtime == "cursor" || ag.Runtime == "opencode") {
+			if ag.Via == enrollment.Runtime && ag.Binary != "" && (ag.Runtime == "claude" || ag.Runtime == "codex" || ag.Runtime == "cursor" || ag.Runtime == "opencode" || ag.Runtime == "antigravity") {
 				if _, err := lookPath(ag.Binary); err == nil {
-					reach.Binaries[ag.Binary] = enrollment.RuntimeCapability{Write: true}
+					reach.Binaries[ag.Binary] = enrollment.RuntimeCapability{Write: true, ReadOnly: ag.Runtime != "opencode"}
 				}
 			}
 		}
@@ -188,15 +199,16 @@ func (a *App) cliReach() enrollment.Reach {
 
 func (a *App) sdlcAgentsDiscoverCmd() *cobra.Command {
 	return &cobra.Command{Use: "discover", Short: "look at possible agents without adding them to your team", Args: cobra.NoArgs,
-		Long: `Discover is a list of possibilities, not your team. It looks for host
-agent files, optional project suggestions in .jevkit/sdlc/agents.yaml, and
-installed CLI apps. None can receive SDLC work just because it appears here.
+		Long: `Discover is a list of possibilities, not your team. It looks for
+project and global runtime agent files, optional project suggestions in
+.jevkit/sdlc/agents.yaml, and installed CLI apps. None can receive SDLC work
+just because it appears here.
 
 Use "sdlc agents add ID --role ROLE" to copy a named suggestion into your
 personal roster. You can also create your own runtime agent directly with
 "sdlc agents add". Use "sdlc agents" to see the roster Jevkit can use.
 The copy is separate: editing the suggestion later does not update the roster.`,
-		Example: "  jevkit sdlc agents discover\n  jevkit sdlc agents add reviewer --role assessor\n  jevkit sdlc agents add my-reviewer --runtime codex --model MODEL --rubric 'Review code' --role assessor",
+		Example: "  jevkit sdlc agents discover\n  jevkit sdlc agents add security-reviewer --runtime codex --model MODEL --rubric 'Audit auth and secrets' --role security --read-only",
 		RunE: func(*cobra.Command, []string) error {
 			c, err := a.loadCatalog()
 			if err != nil {
@@ -217,7 +229,7 @@ The copy is separate: editing the suggestion later does not update the roster.`,
 			a.outf("  These are possible agents. Only agents in your roster can work.\n")
 			a.outf("  Project suggestions in .jevkit/sdlc/agents.yaml appear here, not in your roster.\n")
 			a.outf("\n")
-			a.heading("NAMED SUGGESTIONS (project file and host agent files)")
+			a.heading("NAMED SUGGESTIONS (project file and runtime agent files)")
 			if len(c.IDs()) == 0 {
 				a.outf("  none found\n")
 			}
@@ -253,6 +265,8 @@ The copy is separate: editing the suggestion later does not update the roster.`,
 				binary := n
 				if n == "cursor" {
 					binary = "cursor-agent"
+				} else if n == "antigravity" {
+					binary = "agy"
 				}
 				a.outf("  %-10s binary: %s\n", n, binary)
 			}
@@ -262,9 +276,9 @@ The copy is separate: editing the suggestion later does not update the roster.`,
 				a.outf("  Reuse a definition: jevkit sdlc agents add ID --role ROLE\n")
 			}
 			if len(names) > 0 {
-				a.outf("  Add your own: jevkit sdlc agents add my-agent --runtime %s --model MODEL --rubric \"When to use it\" --role ROLE\n", names[0])
+				a.outf("  Add your own: jevkit sdlc agents add api-reviewer --runtime %s --model MODEL --rubric \"Review API contracts\" --role assessor\n", names[0])
 			} else {
-				a.outf("  Add your own: jevkit sdlc agents add my-agent --runtime codex --model MODEL --rubric \"When to use it\" --role ROLE\n")
+				a.outf("  Add your own: jevkit sdlc agents add api-reviewer --runtime codex --model MODEL --rubric \"Review API contracts\" --role assessor\n")
 				a.outf("  Install that CLI before running; doctor checks reach.\n")
 			}
 			a.outf("  MODEL must be supported by the CLI. ROLE is planner, implementer, or assessor.\n")
@@ -276,6 +290,7 @@ The copy is separate: editing the suggestion later does not update the roster.`,
 
 func (a *App) sdlcAgentsAddCmd() *cobra.Command {
 	var roles []string
+	var roleRubricFlags []string
 	var writeScopes []string
 	var readOnly, isolated bool
 	var via, subagent, runtime, model, runtimeAgent, rubric, binary string
@@ -286,17 +301,17 @@ yourself.
 
 You can copy a named suggestion shown by "sdlc agents discover": use its ID
 and choose a role. Or create your own agent with --runtime, --model, --rubric,
-and --role. For codex, claude, cursor, or opencode, the CLI name can also be
+and --role. For codex, claude, cursor, opencode, or antigravity, the CLI name can also be
 the agent ID. Discovery is optional. Adding an agent does not install its
 CLI; "sdlc doctor" checks whether it can actually run.`,
-		Example: "  jevkit sdlc agents add my-reviewer --runtime codex --model MODEL --rubric 'Review code changes' --role assessor\n  jevkit sdlc agents add codex --model MODEL --rubric 'General repository work' --role all\n  jevkit sdlc agents add discovered-id --role assessor",
+		Example: "  jevkit sdlc agents add security-reviewer --runtime codex --model MODEL --rubric 'Review authentication and secrets' --role security\n  jevkit sdlc agents add full-stack --runtime codex --model MODEL --rubric 'Web application work' --role all --role-rubric planner='Plan API changes' --role-rubric assessor='Review API behavior'",
 		RunE: func(_ *cobra.Command, args []string) error {
 			id := args[0]
 			if a.ConfigDir == "" {
 				return failf("no user config directory for agent roster")
 			}
 			if len(roles) == 0 {
-				return usagef("--role is required: planner, implementer, assessor, or all")
+				return usagef("--role is required: planner, implementer, assessor, research, qa, security, code-review, or all")
 			}
 			if len(roles) == 1 && roles[0] == "all" {
 				roles = []string{"planner", "implementer", "assessor"}
@@ -308,6 +323,16 @@ CLI; "sdlc doctor" checks whether it can actually run.`,
 				}
 			}
 			ag := enrollment.Agent{ID: id, Roles: roles, Rubric: rubric, Via: via, Subagent: subagent, Runtime: runtime, Model: model, RuntimeAgent: runtimeAgent, Binary: binary}
+			if len(roleRubricFlags) > 0 {
+				ag.RoleRubrics = make(map[string]string, len(roleRubricFlags))
+				for _, item := range roleRubricFlags {
+					role, description, ok := strings.Cut(item, "=")
+					if !ok || strings.TrimSpace(role) == "" || strings.TrimSpace(description) == "" {
+						return usagef("--role-rubric requires ROLE=TEXT")
+					}
+					ag.RoleRubrics[role] = description
+				}
+			}
 			if ag.Via == "" {
 				if runtime != "" {
 					ag.Via = enrollment.Runtime
@@ -318,7 +343,7 @@ CLI; "sdlc doctor" checks whether it can actually run.`,
 					if ag.Rubric == "" {
 						ag.Rubric = "The current host agent handles work directly."
 					}
-				} else if id == "codex" || id == "claude" || id == "cursor" || id == "opencode" {
+				} else if id == "codex" || id == "claude" || id == "cursor" || id == "opencode" || id == "antigravity" {
 					ag.Via = enrollment.Runtime
 					ag.Runtime = id
 				} else {
@@ -330,10 +355,15 @@ CLI; "sdlc doctor" checks whether it can actually run.`,
 					if !ok {
 						return usagef("%q is not a named definition; to create your own agent, provide --runtime, --model and --rubric (discovery is optional)", id)
 					} else {
+						if found.RuntimeAgent != "" && found.Runtime != "claude" && found.Runtime != "opencode" && found.Runtime != "antigravity" {
+							return usagef("%q is discoverable, but direct named-agent selection is not supported by the %s CLI adapter; use a runtime/model scaffold instead", id, found.Runtime)
+						}
 						ag.Via = found.Via
 						ag.Subagent = found.Subagent
 						ag.Runtime = found.Runtime
-						ag.Model = found.Model
+						if ag.Model == "" {
+							ag.Model = found.Model
+						}
 						if ag.RuntimeAgent == "" {
 							ag.RuntimeAgent = found.RuntimeAgent
 						}
@@ -390,13 +420,14 @@ CLI; "sdlc doctor" checks whether it can actually run.`,
 			a.outf("added %s\nRoster: %s\nCheck eligibility: jevkit sdlc doctor --policy lean\n", id, sdlcFileURL(a.sdlcRosterPath()))
 			return nil
 		}}
-	c.Flags().StringArrayVar(&roles, "role", nil, "planner, implementer, assessor, or all (repeat for multiple roles)")
+	c.Flags().StringArrayVar(&roles, "role", nil, "planner, implementer, assessor, research, qa, security, code-review, or all (repeat for multiple roles)")
 	c.Flags().StringVar(&via, "via", "", "binding: host-self, native or runtime")
 	c.Flags().StringVar(&subagent, "subagent", "", "host native subagent name")
 	c.Flags().StringVar(&runtime, "runtime", "", "CLI runtime name")
 	c.Flags().StringVar(&model, "model", "", "runtime model binding")
 	c.Flags().StringVar(&runtimeAgent, "agent", "", "named agent in the selected runtime")
 	c.Flags().StringVar(&rubric, "rubric", "", "when Jev should choose this agent among eligible agents")
+	c.Flags().StringArrayVar(&roleRubricFlags, "role-rubric", nil, "role-specific selection rubric, ROLE=TEXT (repeatable)")
 	c.Flags().StringVar(&binary, "binary", "", "runtime binary override")
 	c.Flags().BoolVar(&readOnly, "read-only", false, "enroll only when the driver can enforce read-only execution")
 	c.Flags().BoolVar(&isolated, "isolated", false, "enroll only when the driver can enforce isolation")
@@ -436,7 +467,7 @@ func (a *App) sdlcPreflight(profile string, reach enrollment.Reach) (preflight, 
 		}
 	}
 	if len(r.Agents) == 0 {
-		result.Missing = append(result.Missing, "no agents enrolled; default lean needs a planner, implementer, and assessor. One reachable CLI agent can cover all three: `jevkit sdlc agents add codex --model MODEL --rubric \"General work\" --role all`")
+		result.Missing = append(result.Missing, "no agents enrolled; default lean needs a planner, implementer, and assessor. One reachable CLI agent can cover all three: `jevkit sdlc agents add codex --model MODEL --rubric \"API endpoint changes\" --role all --role-rubric planner=\"Plan endpoint contracts\" --role-rubric assessor=\"Review API behavior\"`")
 	} else if active == 0 {
 		result.Missing = append(result.Missing, "no active agents; edit the roster shown by `jevkit sdlc agents`: set a real model and disabled: false for each needed role")
 	}

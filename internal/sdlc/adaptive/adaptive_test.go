@@ -95,6 +95,23 @@ func TestAdaptiveDissentRequestsNewRevisionAndAuthFailureExcludesBinding(t *test
 	}
 }
 
+func TestInvocationFailureExcludesBindingAndKeepsRole(t *testing.T) {
+	s, _ := New("feature", "lean", 1, 1, 2)
+	if err := s.Assign(Assignment{InvocationID: "first", AgentID: "first", Role: "planner", Binding: "runtime:codex:model", Runtime: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	report(t, &s, "first", "invocation-failed", "")
+	if s.Stage != Planning || !s.Excluded["first"] || !s.ExcludedBindings["runtime:codex:model"] || s.ExcludedRuntimes["codex"] {
+		t.Fatalf("invocation failure state: %+v", s)
+	}
+	if err := s.Assign(Assignment{InvocationID: "alias", AgentID: "alias", Role: "planner", Binding: "runtime:codex:model", Runtime: "codex"}); err == nil {
+		t.Fatal("failed binding alias allowed")
+	}
+	if err := s.Assign(Assignment{InvocationID: "other", AgentID: "other", Role: "planner", Binding: "runtime:codex:other", Runtime: "codex"}); err != nil {
+		t.Fatalf("healthy binding on same runtime rejected: %v", err)
+	}
+}
+
 func TestAdaptiveAssignmentAndCostBudgets(t *testing.T) {
 	s, _ := New("feature", "lean", 1, 1, 2)
 	s.MaxAssignments = 1

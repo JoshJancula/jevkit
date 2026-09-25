@@ -35,7 +35,7 @@ func TestCustomStageWorkflowAsksAndDrivesEnrolledWorkers(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("init: %d %s", code, errs)
 	}
-	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "add a line")
+	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "add a line", "--auto")
 	if code != exitOK {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
@@ -67,7 +67,7 @@ func TestCustomStageWorkflowFallsBackWithoutJev(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("init: %d %s", code, errs)
 	}
-	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "unclear request")
+	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "unclear request", "--auto")
 	if code != exitOK {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
@@ -92,7 +92,7 @@ func TestCustomStageWorkflowNeedsEnrollmentBeforeRun(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("init: %d %s", code, errs)
 	}
-	code, _, errs = run(a, "", "sdlc", "start", "custom-review", "--task", "add a line")
+	code, _, errs = run(a, "", "sdlc", "start", "custom-review", "--task", "add a line", "--auto")
 	if code == exitOK || !strings.Contains(errs, "no agents enrolled") {
 		t.Fatalf("start: %d %q", code, errs)
 	}
@@ -111,7 +111,7 @@ func TestCustomStageWorkflowLowConfidenceUsesFallback(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("init: %d %s", code, errs)
 	}
-	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "unclear")
+	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "unclear", "--auto")
 	if code != exitOK {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
@@ -141,7 +141,7 @@ func TestCustomStageQuestionRedactsTaskBeforeJev(t *testing.T) {
 		t.Fatalf("init: %d %s", code, errs)
 	}
 	const secret = "sk-liveSECRETvalue123"
-	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "handle key "+secret)
+	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "handle key "+secret, "--auto")
 	if code != exitOK {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
@@ -180,7 +180,7 @@ agents:
 	if code != exitOK {
 		t.Fatalf("init: %d %s", code, errs)
 	}
-	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "add a line", "--policy", "collaborative")
+	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "add a line", "--policy", "collaborative", "--auto")
 	if code != exitOK {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}

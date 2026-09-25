@@ -2,10 +2,13 @@
 package main
 
 import (
+	"context"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 )
 
 // version is overridden at build time via -ldflags.
@@ -24,7 +27,10 @@ func main() {
 		Version:   version,
 		Dial:      (&net.Dialer{}).DialContext,
 	}
-	os.Exit(app.Run(os.Args[1:]))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := app.RunContext(ctx, os.Args[1:])
+	stop()
+	os.Exit(code)
 }
 
 // defaultConfigDir is $JEVKIT_CONFIG_DIR, else $JEVKIT_CONFIG_HOME (the name

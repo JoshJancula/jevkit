@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/OWNER/jevkit/internal/compact"
+	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/OWNER/jevkit/internal/security/config"
 )
 
 // Cursor adapter name used by installed runtime integrations.
@@ -20,9 +22,7 @@ const legacyCursorHookMarker = "hook cursor"
 
 // CursorPreToolMarker / CursorPostToolMarker are the full event tokens.
 const (
-	// CursorPreToolMarker remains only for recognizing legacy config during an
-	// upgrade; new installations never emit it.
-	CursorPreToolMarker  = "hook cursor pre-tool"
+	CursorPreToolMarker  = "_runtime dispatch --protocol 1 cursor pre-tool"
 	CursorPostToolMarker = "_runtime dispatch --protocol 1 cursor post-tool"
 )
 
@@ -57,8 +57,10 @@ type Cursor struct {
 	// Asker is the optional jev ranked-line tier; nil is deterministic-only.
 	Asker compact.Asker
 	// StateDir is forwarded to compact shadow logging.
-	StateDir string
-	Policy   *compact.Policy
+	StateDir        string
+	Policy          *compact.Policy
+	Security        *config.Config
+	SecurityDecider *registry.Decider
 }
 
 func init() {
@@ -74,8 +76,10 @@ func (c *Cursor) Name() string { return CursorName }
 
 func (c *Cursor) Capabilities() Capabilities {
 	return Capabilities{
-		PostTool:      true,
-		OutputReplace: true, // native + MCP; Shell post is telemetry-only
+		PreTool:        true,
+		PreToolRewrite: true,
+		PostTool:       true,
+		OutputReplace:  true, // native + MCP; Shell post is telemetry-only
 	}
 }
 
@@ -88,9 +92,39 @@ func (c *Cursor) Passthrough(event Event) []byte {
 	}
 }
 
-// HandlePreTool deliberately does not rewrite commands.
 func (c *Cursor) HandlePreTool(ctx context.Context, req Request) (Response, error) {
-	return Response{Body: c.Passthrough(EventPreTool)}, nil
+	var payload struct {
+		HookEventName string `json:"hook_event_name"`
+		ToolName      string `json:"tool_name"`
+		ToolInput     struct {
+			Command string `json:"command"`
+		} `json:"tool_input"`
+		WorkspaceRoots []string `json:"workspace_roots"`
+		CWD            string   `json:"cwd"`
+	}
+	if err := json.Unmarshal(req.Raw, &payload); err != nil ||
+		!strings.EqualFold(payload.HookEventName, "preToolUse") || payload.ToolName != "Shell" ||
+		strings.TrimSpace(payload.ToolInput.Command) == "" || IsShellWrapperCommand(payload.ToolInput.Command) {
+		return Response{Body: c.Passthrough(EventPreTool)}, nil
+	}
+	workspace := payload.CWD
+	if len(payload.WorkspaceRoots) > 0 && strings.TrimSpace(payload.WorkspaceRoots[0]) != "" {
+		workspace = payload.WorkspaceRoots[0]
+	}
+	if strings.TrimSpace(workspace) == "" {
+		return Response{Body: c.Passthrough(EventPreTool)}, nil
+	}
+	if response, deny := securityDecision(ctx, c.Security, c.SecurityDecider, payload.ToolInput.Command, payload.CWD, workspace, CursorName); deny {
+		return response, nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"permission":    "allow",
+		"updated_input": map[string]string{"command": buildSecurityShellWrapperCommand(c.binary(), workspace, payload.ToolInput.Command, CursorName, c.Security != nil && c.Security.Yolo, securityPolicyName(c.Security))},
+	})
+	if err != nil {
+		return Response{Body: c.Passthrough(EventPreTool)}, nil
+	}
+	return Response{Body: body}, nil
 }
 
 // HandlePostTool handles Shell and native tools as telemetry only. Cursor's
@@ -124,7 +158,7 @@ func (c *Cursor) HandlePostTool(ctx context.Context, req Request) (Response, err
 		return passthrough, nil
 	}
 
-	if !c.compactEnabled() || c.shadow() {
+	if !c.compactEnabled() {
 		return passthrough, nil
 	}
 
@@ -161,15 +195,21 @@ func (c *Cursor) compactMCPResult(passthrough Response, payload cursorPostPayloa
 }
 
 func (c *Cursor) compactText(toolName, text string) (string, bool) {
+	pointer, err := storeRawResult(c.StateDir, CursorName, text)
+	if err != nil {
+		return "", false
+	}
 	opts := compact.JevOptions{
 		Enabled:        true,
+		Shadow:         c.shadow(),
 		ThresholdBytes: c.ThresholdBytes,
 		StateDir:       c.StateDir,
-		CanReplace:     true,
+		RawPointer:     pointer,
+		Runtime:        CursorName,
 		Policy:         c.Policy,
 	}
 	_, result := compact.JevCompact(toolName, text, "", 0, c.Asker, opts)
-	if !result.Compacted {
+	if !result.Compacted || c.shadow() {
 		return "", false
 	}
 	out := result.Stdout
@@ -179,7 +219,7 @@ func (c *Cursor) compactText(toolName, text string) (string, bool) {
 	if out == "" || out == text {
 		return "", false
 	}
-	return out, true
+	return rawResultTrailer(out, pointer), true
 }
 
 func (c *Cursor) binary() string {
@@ -197,13 +237,11 @@ func (c *Cursor) getenv(key string) string {
 }
 
 func (c *Cursor) compactEnabled() bool {
-	v := c.getenv("JEVKIT_COMPACT")
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+	return compactEnvEnabled(c.getenv, "JEVKIT_COMPACT")
 }
 
 func (c *Cursor) shadow() bool {
-	v := c.getenv("JEVKIT_COMPACT_SHADOW")
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+	return compactEnvEnabled(c.getenv, "JEVKIT_COMPACT_SHADOW")
 }
 
 type cursorPostPayload struct {

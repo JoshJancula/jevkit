@@ -40,6 +40,10 @@ type App struct {
 	ConfigDir string
 	// StateDir holds the audit log and the review store.
 	StateDir string
+	// SecurityPolicy selects a named local security policy for this invocation.
+	SecurityPolicy string
+	// Yolo lifts the workspace guard; killswitch and Jev scoring still apply.
+	Yolo bool
 	// Now is the clock; nil means time.Now.
 	Now     func() time.Time
 	Version string
@@ -73,13 +77,30 @@ type App struct {
 	SdlcReach func() enrollment.Reach
 	// SdlcExecutor replaces CLI invocation in tests and host integrations.
 	SdlcExecutor worker.Executor
+	// SdlcSpecialistNeed replaces the specialist-need router in tests or hosts.
+	// Nil uses Jev's registered specialist question set.
+	SdlcSpecialistNeed func(context.Context, string, string, string) (bool, error)
 	// Confirm prompts prompt and reports whether the user agreed; nil means
 	// non-interactive (no TTY to confirm on), so a caller offering a
 	// "gather"-confidence pick for confirmation must instead refuse.
-	Confirm func(prompt string) (bool, error)
+	Confirm            func(prompt string) (bool, error)
+	sdlcDelegateChoice *bool
+	sdlcSessionChoice  string
+	sdlcAutoChoice     bool
+	sdlcProgress       *sdlcProgress
+	sdlcSuppressLegacy bool
+	sdlcAllowRead      []string
+	sdlcInputBytes     chan byte
+	sdlcPendingByte    byte
+	sdlcHasPending     bool
 }
 
-func (a *App) outf(format string, args ...any) { _, _ = fmt.Fprintf(a.Stdout, format, args...) }
+func (a *App) outf(format string, args ...any) {
+	if a.sdlcSuppressLegacy {
+		return
+	}
+	_, _ = fmt.Fprintf(a.Stdout, format, args...)
+}
 func (a *App) errf(format string, args ...any) { _, _ = fmt.Fprintf(a.Stderr, format, args...) }
 
 func (a *App) now() time.Time {

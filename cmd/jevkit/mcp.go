@@ -58,7 +58,10 @@ func (a *App) mcpServer() (*jevmcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := jev.ConfigFromEnv(a.getenv)
+	cfg, err := a.jevConfig()
+	if err != nil {
+		return nil, err
+	}
 	store := a.store()
 	br := a.Breaker
 	if br == nil {
@@ -87,11 +90,11 @@ func (a *App) mcpServer() (*jevmcp.Server, error) {
 	var client jevmcp.Asker
 	keyFn := func() (string, error) { return resolve(context.Background()) }
 	if a.NewJev != nil {
-		client = a.NewJev(cfg, keyFn)
+		client = a.recordJev(a.NewJev(cfg, keyFn), cfg)
 	} else {
 		c := jev.New(cfg, keyFn)
 		c.Breaker = br
-		client = c
+		client = a.recordJev(c, cfg)
 	}
 
 	loadRedactor := func() (*redact.Redactor, error) {

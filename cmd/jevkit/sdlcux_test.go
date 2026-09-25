@@ -49,7 +49,7 @@ func TestSDLCRunStepAndResumeContinueActiveRun(t *testing.T) {
 	stageTestRoster(t, a)
 	executor := &fakeSDLCExecutor{replies: []worker.Reply{{Outcome: "planned", Content: "Plan."}, {Outcome: "changed", Content: "diff --git a/a b/a\n+new\n"}, {Outcome: "approved"}}}
 	a.SdlcExecutor = executor
-	code, out, errs := run(a, "", "sdlc", "run", "feature", "--task", "add a line", "--step")
+	code, out, errs := run(a, "", "sdlc", "run", "feature", "--task", "add a line", "--step", "--auto")
 	if code != exitOK {
 		t.Fatalf("run step: %d %q %q", code, out, errs)
 	}
@@ -88,7 +88,7 @@ func TestSDLCResumeExplainsPausedRun(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("create: %d %q", code, errs)
 	}
-	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "unclear")
+	code, out, errs := run(a, "", "sdlc", "start", "custom-review", "--task", "unclear", "--auto")
 	if code != exitOK {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}

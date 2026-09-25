@@ -29,6 +29,36 @@ func TestDiscoverNativeParsesRubric(t *testing.T) {
 	}
 }
 
+func TestDiscoverRuntimeAgentsProjectAndGlobal(t *testing.T) {
+	project, global := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(project, "review.md"), "---\ndescription: Project review.\nmodel: opus\n---\n")
+	writeFile(t, filepath.Join(global, "review.md"), "---\ndescription: Global review.\n---\n")
+	writeFile(t, filepath.Join(global, "writer.md"), "---\ndescription: Writes docs.\n---\n")
+	got := DiscoverRuntimeAgents("opencode", project, global)
+	if len(got) != 2 || got[0].Name != "review" || got[0].Description != "Project review." || got[1].Name != "writer" {
+		t.Fatalf("runtime discovery: %+v", got)
+	}
+	c, err := Merge(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent, ok := c.Agent("opencode/review"); !ok || agent.RuntimeAgent != "review" || agent.Via != ViaRuntime {
+		t.Fatalf("named runtime entry: %+v %v", agent, ok)
+	}
+}
+
+func TestDiscoverRuntimeAgentConfigJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "implementation"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "implementation", "config.json"), `{"description":"Implement changes.","model":"model-x"}`)
+	got := DiscoverRuntimeAgents("antigravity", dir)
+	if len(got) != 1 || got[0].Name != "implementation" || got[0].Model != "model-x" {
+		t.Fatalf("config discovery: %+v", got)
+	}
+}
+
 func TestDiscoverNativeSkipsMalformedNotFatal(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "good.md"), "---\nname: good\ndescription: A fine agent.\n---\n")
@@ -121,7 +151,7 @@ func TestReadOnlyMustBeEnforceable(t *testing.T) {
 		wantErr bool
 	}{
 		{"cursor", false}, {"claude", false}, {"codex", false},
-		{"opencode", true}, {"antigravity", true}, {"nonesuch", true},
+		{"opencode", true}, {"antigravity", false}, {"nonesuch", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.runtime, func(t *testing.T) {

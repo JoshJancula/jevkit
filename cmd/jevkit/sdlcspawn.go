@@ -19,6 +19,7 @@ import (
 // A root run and up to three child levels may compose SDLC workflows. Child
 // assignments, revisions, and reported cost count against the parent's budget.
 const sdlcMaxChildDepth = 3
+const sdlcMaxChildRuns = 8
 
 func (a *App) validateSpawnTargets(wf availableWorkflow) error {
 	if wf.Builtin {
@@ -58,11 +59,23 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 		if !ok || stage.Spawn == nil {
 			return failf("run %s has an invalid workflow stage", runID)
 		}
+		for _, transition := range parent.StageFlow.Transitions {
+			if transition.ChildRunID == "" {
+				continue
+			}
+			previous, err := ledger.Open(a.sdlcRunsDir(), transition.ChildRunID).ReadRun()
+			if err != nil {
+				return failf("read previous child run: %v", err)
+			}
+			if previous.Workflow == stage.Spawn.Workflow {
+				return a.pauseSpawnLocked(parent, store, "workflow-target-repeated")
+			}
+		}
 		policy, _, err := a.sdlcEnrollment()
 		if err != nil {
 			return failf("%v", err)
 		}
-		remaining, err = sdlcRunRemaining(parent, policy, a.now())
+		remaining, err = a.treeRemaining(parent, policy)
 		if err != nil {
 			return failf("%v", err)
 		}
@@ -71,6 +84,19 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 		}
 		if parent.Depth >= sdlcMaxChildDepth {
 			return a.pauseSpawnLocked(parent, store, "workflow-depth-exhausted")
+		}
+		rootID := parent.RunID
+		for ancestor := parent; ancestor.ParentRunID != ""; {
+			rootID = ancestor.ParentRunID
+			ancestor, err = ledger.Open(a.sdlcRunsDir(), rootID).ReadRun()
+			if err != nil {
+				return failf("read ancestor run: %v", err)
+			}
+		}
+		if tree, err := a.sdlcTree(rootID); err != nil {
+			return failf("read run tree: %v", err)
+		} else if len(tree) > sdlcMaxChildRuns {
+			return a.pauseSpawnLocked(parent, store, "workflow-child-budget-exhausted")
 		}
 		if parent.Adaptive.BudgetExhausted() || parent.Adaptive.MaxAssignments-parent.Adaptive.AssignmentCount < 1 || parent.Adaptive.MaxRevisions-parent.Adaptive.RevisionCount < 1 {
 			return a.pauseSpawnLocked(parent, store, "workflow-budget-exhausted")
@@ -89,6 +115,9 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 				return failf("child run ID %s is already in use", childID)
 			}
 		} else if errors.Is(err, os.ErrNotExist) {
+			if err := a.chargeTree(&parent, policy, "child"); err != nil {
+				return a.pauseSpawnLocked(parent, store, "workflow-child-budget-exhausted")
+			}
 			if err := a.createSpawnChild(parent, stage.Spawn.Workflow, stage.Spawn.Objective, childID, childStore); err != nil {
 				a.outf("  workflow %s: cannot start: %v\n", stage.Spawn.Workflow, err)
 				return a.pauseSpawnLocked(parent, store, "workflow-start-failed")
@@ -107,6 +136,7 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 	if err != nil || childID == "" {
 		return err
 	}
+	a.progressFlush()
 	childStore := ledger.Open(a.sdlcRunsDir(), childID)
 	child, err := childStore.ReadRun()
 	if err != nil {
@@ -127,6 +157,20 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 	}
 	if child.Adaptive.Stage != adaptive.Done && child.Adaptive.Stage != adaptive.Paused {
 		return driveErr
+	}
+	if child.Adaptive.Stage == adaptive.Paused && child.Adaptive.Outcome == "plan-approval-required" {
+		return store.WithRunLock(func() error {
+			parent, err := store.ReadRun()
+			if err != nil {
+				return err
+			}
+			parent.Adaptive.PendingDecision = "child-plan-approval"
+			parent.Adaptive.PendingPhase = "spawn"
+			parent.Adaptive.PendingReason = "Review and approve the plan for child run " + childID + "."
+			parent.Adaptive.Pause("child-plan-approval-required")
+			parent.UpdatedAt = a.now().UTC().Format(time.RFC3339)
+			return store.WriteRun(parent)
+		})
 	}
 	return store.WithRunLock(func() error {
 		parent, err := store.ReadRun()
@@ -164,6 +208,13 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 		if err := parent.StageFlow.Advance(outcome, parent.Adaptive); err != nil {
 			return failf("advance workflow stage: %v", err)
 		}
+		policy, _, err := a.sdlcEnrollment()
+		if err != nil {
+			return err
+		}
+		if err := a.chargeTree(&parent, policy, "step"); err != nil {
+			parent.Adaptive.Pause("stage-step-budget-exhausted")
+		}
 		parent.UpdatedAt = a.now().UTC().Format(time.RFC3339)
 		if err := store.WriteRun(parent); err != nil {
 			return failf("store parent run: %v", err)
@@ -187,6 +238,18 @@ func (a *App) createSpawnChild(parent ledger.Run, name, objective, childID strin
 	target, err := a.resolveWorkflowByName(name)
 	if err != nil {
 		return err
+	}
+	for ancestor := parent; ; {
+		if ancestor.Workflow == target.Name {
+			return fmt.Errorf("workflow %q is already in the parent ancestry", target.Name)
+		}
+		if ancestor.ParentRunID == "" {
+			break
+		}
+		ancestor, err = ledger.Open(a.sdlcRunsDir(), ancestor.ParentRunID).ReadRun()
+		if err != nil {
+			return fmt.Errorf("read ancestor run: %w", err)
+		}
 	}
 	if !target.Builtin {
 		if err := a.validateSpawnTargets(target); err != nil {
@@ -249,7 +312,7 @@ func (a *App) createSpawnChild(parent ledger.Run, name, objective, childID strin
 		task += "\n\nSubworkflow objective: " + objective
 	}
 	now := a.now().UTC().Format(time.RFC3339)
-	child := ledger.Run{RunID: childID, ParentRunID: parent.RunID, Depth: parent.Depth + 1, Workflow: target.Name, Task: task, CreatedAt: now, UpdatedAt: now, Adaptive: &st, StageFlow: flow}
+	child := ledger.Run{RunID: childID, WorkDir: parent.WorkDir, AllowRead: append([]string(nil), parent.AllowRead...), ParentRunID: parent.RunID, Depth: parent.Depth + 1, Workflow: target.Name, Task: task, CreatedAt: now, UpdatedAt: now, Adaptive: &st, StageFlow: flow, RequirePlanApproval: parent.RequirePlanApproval}
 	if !target.Builtin {
 		raw, err := os.ReadFile(target.Path)
 		if err != nil {

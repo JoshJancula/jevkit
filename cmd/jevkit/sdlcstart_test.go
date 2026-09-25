@@ -55,7 +55,7 @@ func TestSdlcStartNamedStageWorkflowSkipsSelection(t *testing.T) {
 	a, _, fj := cliApp(t)
 	setupSDLC(t, a)
 	writeWorkflow(t, a, "ship-feature", startWorkflowYAML)
-	code, out, errs := run(a, "", "sdlc", "start", "ship-feature", "--task", "add a thing")
+	code, out, errs := run(a, "", "sdlc", "start", "ship-feature", "--task", "add a thing", "--auto")
 	if code != exitOK || !strings.Contains(out, "workflow ship-feature") || fj.calls != 0 {
 		t.Fatalf("start: %d %q %q, calls=%d", code, out, errs, fj.calls)
 	}
@@ -65,7 +65,7 @@ func TestSdlcStartRejectsGraphShapeWithoutCreatingRun(t *testing.T) {
 	a := newApp(t)
 	setupSDLC(t, a)
 	writeWorkflow(t, a, "custom", "version: 1\nname: custom\ndescription: example\nnodes: []\n")
-	code, _, errs := run(a, "", "sdlc", "start", "custom", "--task", "x")
+	code, _, errs := run(a, "", "sdlc", "start", "custom", "--task", "x", "--auto")
 	if code == exitOK || !strings.Contains(errs, "must define stages") || strings.Contains(strings.ToLower(errs), "legacy") || strings.Contains(strings.ToLower(errs), "migration") {
 		t.Fatalf("start: %d %q", code, errs)
 	}

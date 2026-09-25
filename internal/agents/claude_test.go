@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/OWNER/jevkit/internal/agents"
+	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/OWNER/jevkit/internal/registry"
 )
 
 func TestClaudeLookupRegistered(t *testing.T) {
@@ -18,7 +20,7 @@ func TestClaudeLookupRegistered(t *testing.T) {
 		t.Fatalf("claude not registered: %+v", got)
 	}
 	caps := got.Capabilities()
-	if !caps.PostTool || !caps.OutputReplace || caps.PreTool {
+	if !caps.PostTool || !caps.OutputReplace || !caps.PreTool {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
 }
@@ -99,6 +101,37 @@ func TestClaudePostToolShadowPassthrough(t *testing.T) {
 	}
 }
 
+func TestClaudeShadowRunsAndRecordsDecision(t *testing.T) {
+	output := largeCompactableOutput(160)
+	payload := mutateClaudeStdout(t, mustClaudeFixture(t, "posttooluse-bash.json"), "custom-build-tool --verbose", output)
+	dir := t.TempDir()
+	response := &jev.Response{Answers: map[string]jev.Answer{
+		"evidence_locus":       jev.ChoiceAnswer{Choice: "tail", Confidence: 0.99, Probabilities: map[string]float64{"tail": 0.99}},
+		"outcome":              jev.ChoiceAnswer{Choice: "failure", Confidence: 0.99, Probabilities: map[string]float64{"failure": 0.99}},
+		"content_kind":         jev.ChoiceAnswer{Choice: "build-compile", Confidence: 0.99, Probabilities: map[string]float64{"build-compile": 0.99}},
+		"retention_budget":     jev.ScoreAnswer{Score: 0.2, Confidence: 0.99},
+		"tail_explains":        jev.NoulAnswer{Noul: 0.99},
+		"middle_omission_safe": jev.NoulAnswer{Noul: 0.99},
+	}}
+	c := &agents.Claude{Getenv: envMap{"JEVKIT_COMPACT": "1", "JEVKIT_COMPACT_SHADOW": "1"}.Getenv, ThresholdBytes: 200, StateDir: dir, Asker: codexAsker{response: response}}
+	result, err := c.HandlePostTool(context.Background(), agents.Request{Raw: payload, Event: agents.EventPostTool})
+	if err != nil || string(result.Body) != "{}" {
+		t.Fatalf("shadow output changed: %s %v", result.Body, err)
+	}
+	b, err := os.ReadFile(registry.DecisionsPath(dir))
+	if err != nil || !bytes.Contains(b, []byte(`"shadow":true`)) || !bytes.Contains(b, []byte(`"probabilities"`)) {
+		t.Fatalf("missing shadow decision: %s %v", b, err)
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "tool-results", "claude", "*.log"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("raw files=%v %v", files, err)
+	}
+	raw, err := os.ReadFile(files[0])
+	if err != nil || string(raw) != output {
+		t.Fatal("raw original changed")
+	}
+}
+
 func TestClaudePostToolDisabledPassthrough(t *testing.T) {
 	raw := mustClaudeFixture(t, "posttooluse-bash.json")
 	payload := mutateClaudeStdout(t, raw, "custom-build-tool --verbose", largeCompactableOutput(80))
@@ -172,6 +205,9 @@ func TestClaudeInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "/opt/jevkit "+agents.ClaudeHookMarker) {
 		t.Fatalf("missing command: %s", data)
+	}
+	if strings.Count(string(data), agents.ClaudePreHookMarker) != 1 || !strings.Contains(string(data), "\"PreToolUse\"") {
+		t.Fatalf("missing single PreToolUse Bash hook: %s", data)
 	}
 	if !strings.Contains(string(data), `"permissions"`) {
 		t.Fatalf("lost unrelated settings: %s", data)

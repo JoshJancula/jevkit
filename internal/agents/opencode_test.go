@@ -113,7 +113,7 @@ func TestOpenCodePostToolCompactsOutput(t *testing.T) {
 
 	var mu sync.Mutex
 	var recs []usage.HookInvocation
-	o := &agents.OpenCode{Getenv: envMap{"JEVKIT_COMPACT": "1"}.Getenv, ThresholdBytes: 1, Asker: codexAsker{response: &jev.Response{Answers: map[string]jev.Answer{
+	o := &agents.OpenCode{Getenv: envMap{"JEVKIT_COMPACT": "1"}.Getenv, ThresholdBytes: 1, StateDir: t.TempDir(), Asker: codexAsker{response: &jev.Response{Answers: map[string]jev.Answer{
 		"disposition": jev.ChoiceAnswer{Choice: "deterministic-compact", Confidence: 0.99},
 		"outcome":     jev.ChoiceAnswer{Choice: "success", Confidence: 0.99},
 	}}}}

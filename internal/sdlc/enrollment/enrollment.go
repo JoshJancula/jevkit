@@ -30,32 +30,36 @@ type RolePolicy struct {
 }
 
 type Policy struct {
-	Version              int                   `yaml:"version"`
-	MinimumProfile       string                `yaml:"minimumProfile"`
-	MaxConcurrent        int                   `yaml:"maxConcurrent"`
-	MaxAssignments       int                   `yaml:"maxAssignments"`
-	MaxRevisions         int                   `yaml:"maxRevisions"`
-	MaxInvocationSeconds int                   `yaml:"maxInvocationSeconds"`
-	MaxRunSeconds        int                   `yaml:"maxRunSeconds"`
-	MaxEstimatedCostUSD  float64               `yaml:"maxEstimatedCostUsd"`
-	Quorums              map[string]int        `yaml:"quorums"`
-	Roles                map[string]RolePolicy `yaml:"roles"`
+	Version                   int                   `yaml:"version"`
+	MinimumProfile            string                `yaml:"minimumProfile"`
+	MaxConcurrent             int                   `yaml:"maxConcurrent"`
+	MaxAssignments            int                   `yaml:"maxAssignments"`
+	MaxRevisions              int                   `yaml:"maxRevisions"`
+	MaxInvocationSeconds      int                   `yaml:"maxInvocationSeconds"`
+	MaxRunSeconds             int                   `yaml:"maxRunSeconds"`
+	MaxEstimatedCostUSD       float64               `yaml:"maxEstimatedCostUsd"`
+	AdaptiveBuiltinDelegation string                `yaml:"adaptiveBuiltinDelegation"`
+	SpecialistMode            string                `yaml:"specialistMode"`
+	SessionStrategy           string                `yaml:"sessionStrategy"`
+	Quorums                   map[string]int        `yaml:"quorums"`
+	Roles                     map[string]RolePolicy `yaml:"roles"`
 }
 
 type Agent struct {
-	ID           string   `yaml:"id" json:"id"`
-	Disabled     bool     `yaml:"disabled,omitempty" json:"disabled,omitempty"`
-	Roles        []string `yaml:"roles" json:"roles"`
-	Rubric       string   `yaml:"rubric" json:"rubric"`
-	Via          string   `yaml:"via" json:"via"`
-	Subagent     string   `yaml:"subagent,omitempty" json:"subagent,omitempty"`
-	Runtime      string   `yaml:"runtime,omitempty" json:"runtime,omitempty"`
-	Model        string   `yaml:"model,omitempty" json:"model,omitempty"`
-	RuntimeAgent string   `yaml:"agent,omitempty" json:"agent,omitempty"`
-	Binary       string   `yaml:"binary,omitempty" json:"binary,omitempty"`
-	WriteScopes  []string `yaml:"writeScopes,omitempty" json:"writeScopes,omitempty"`
-	ReadOnly     bool     `yaml:"readOnly,omitempty" json:"readOnly,omitempty"`
-	Isolated     bool     `yaml:"isolated,omitempty" json:"isolated,omitempty"`
+	ID           string            `yaml:"id" json:"id"`
+	Disabled     bool              `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	Roles        []string          `yaml:"roles" json:"roles"`
+	Rubric       string            `yaml:"rubric" json:"rubric"`
+	RoleRubrics  map[string]string `yaml:"roleRubrics,omitempty" json:"roleRubrics,omitempty"`
+	Via          string            `yaml:"via" json:"via"`
+	Subagent     string            `yaml:"subagent,omitempty" json:"subagent,omitempty"`
+	Runtime      string            `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Model        string            `yaml:"model,omitempty" json:"model,omitempty"`
+	RuntimeAgent string            `yaml:"agent,omitempty" json:"agent,omitempty"`
+	Binary       string            `yaml:"binary,omitempty" json:"binary,omitempty"`
+	WriteScopes  []string          `yaml:"writeScopes,omitempty" json:"writeScopes,omitempty"`
+	ReadOnly     bool              `yaml:"readOnly,omitempty" json:"readOnly,omitempty"`
+	Isolated     bool              `yaml:"isolated,omitempty" json:"isolated,omitempty"`
 }
 
 // Ready reports whether a roster entry may be offered for work. Starter
@@ -100,11 +104,18 @@ type Candidate struct {
 // enrollment. Projects can narrow it in .jevkit/sdlc/policy.yaml.
 func DefaultPolicy() Policy {
 	return Policy{Version: 1, MinimumProfile: "lean", MaxConcurrent: 3, MaxAssignments: 20, MaxRevisions: 3,
-		MaxInvocationSeconds: 1800, MaxRunSeconds: 21600,
+		AdaptiveBuiltinDelegation: "off",
+		SpecialistMode:            "off",
+		SessionStrategy:           "auto",
+		MaxInvocationSeconds:      1800, MaxRunSeconds: 21600,
 		Roles: map[string]RolePolicy{
 			"planner":     {Via: []string{HostSelf, Native, Runtime}, Write: true},
 			"implementer": {Via: []string{HostSelf, Native, Runtime}, Write: true},
 			"assessor":    {Via: []string{HostSelf, Native, Runtime}, Write: true},
+			"research":    {Via: []string{Native, Runtime}, ReadOnly: true},
+			"qa":          {Via: []string{Native, Runtime}, ReadOnly: true},
+			"security":    {Via: []string{Native, Runtime}, ReadOnly: true},
+			"code-review": {Via: []string{Native, Runtime}, ReadOnly: true},
 		},
 	}
 }
@@ -130,6 +141,15 @@ func LoadPolicy(path string) (Policy, error) {
 }
 
 func (p Policy) Validate() error {
+	if p.SessionStrategy != "" && p.SessionStrategy != "auto" && p.SessionStrategy != "fresh" && p.SessionStrategy != "resume" && p.SessionStrategy != "compact" {
+		return fmt.Errorf("sdlc: sessionStrategy must be auto, fresh, resume or compact")
+	}
+	if p.SpecialistMode != "off" && p.SpecialistMode != "advisory" && p.SpecialistMode != "required" {
+		return fmt.Errorf("specialistMode must be off, advisory or required")
+	}
+	if p.AdaptiveBuiltinDelegation != "off" && p.AdaptiveBuiltinDelegation != "opt-in" && p.AdaptiveBuiltinDelegation != "on" {
+		return fmt.Errorf("adaptiveBuiltinDelegation must be off, opt-in or on")
+	}
 	if p.Version != 1 {
 		return fmt.Errorf("version must be 1")
 	}
@@ -192,6 +212,11 @@ func (r Roster) Validate() error {
 		seen[a.ID] = true
 		if len(a.Roles) == 0 || strings.TrimSpace(a.Rubric) == "" {
 			return fmt.Errorf("agent %q needs roles and rubric", a.ID)
+		}
+		for role, rubric := range a.RoleRubrics {
+			if !contains(a.Roles, role) || strings.TrimSpace(rubric) == "" {
+				return fmt.Errorf("agent %q has an invalid role rubric for %q", a.ID, role)
+			}
 		}
 		switch a.Via {
 		case HostSelf:
@@ -319,10 +344,14 @@ func scopesAllowed(wanted, allowed []string) bool {
 	return true
 }
 
-func Rubrics(candidates []Candidate) map[string]string {
+func Rubrics(candidates []Candidate, role ...string) map[string]string {
 	out := map[string]string{}
 	for _, c := range candidates {
-		out[c.Agent.ID] = c.Agent.Rubric
+		rubric := c.Agent.Rubric
+		if len(role) > 0 && c.Agent.RoleRubrics[role[0]] != "" {
+			rubric = c.Agent.RoleRubrics[role[0]]
+		}
+		out[c.Agent.ID] = rubric
 	}
 	return out
 }

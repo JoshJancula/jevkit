@@ -14,7 +14,7 @@ import (
 	"github.com/OWNER/jevkit/internal/sdlc/ledger"
 )
 
-func TestCLIReachDoesNotClaimRestrictionsFromBinaryPresence(t *testing.T) {
+func TestCLIReachClaimsOnlyEnforcedRestrictions(t *testing.T) {
 	a := newApp(t)
 	a.LookPath = func(name string) (string, error) {
 		if name == "codex" {
@@ -23,7 +23,7 @@ func TestCLIReachDoesNotClaimRestrictionsFromBinaryPresence(t *testing.T) {
 		return "", errors.New("missing")
 	}
 	r := a.cliReach()
-	if r.Driver != "cli" || len(r.Runtimes) != 1 || r.Runtimes["codex"].ReadOnly || r.Runtimes["codex"].Isolated || r.Runtimes["codex"].Scopes {
+	if r.Driver != "cli" || len(r.Runtimes) != 1 || !r.Runtimes["codex"].ReadOnly || r.Runtimes["codex"].Isolated || r.Runtimes["codex"].Scopes {
 		t.Fatalf("reach overclaimed: %+v", r)
 	}
 }
@@ -44,7 +44,7 @@ func TestSDLCDiscoveryDoesNotAuthorizeStart(t *testing.T) {
 	if code != exitOK || !strings.Contains(out, "reviewer  (native / reviewer; not enrolled)") {
 		t.Fatalf("discover: %d %q %q", code, out, errs)
 	}
-	code, _, errs = run(a, "", "sdlc", "start", "feature", "--task", "new feature")
+	code, _, errs = run(a, "", "sdlc", "start", "feature", "--task", "new feature", "--auto")
 	if code == exitOK || !strings.Contains(errs, "no agents enrolled") {
 		t.Fatalf("start without enrollment: %d %q", code, errs)
 	}
@@ -120,7 +120,7 @@ roles:
   assessor: {via: [runtime], write: true}
 `)
 	fj.resp = &jev.Response{Answers: map[string]jev.Answer{"agent": jev.ChoiceAnswer{Choice: "cursor-planner", Confidence: 0.95}}}
-	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it")
+	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it", "--auto")
 	if code != exitOK {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
@@ -161,7 +161,7 @@ agents:
   - {id: assessor, roles: [assessor], rubric: Assess., via: runtime, runtime: opencode, model: a}
 `)
 	fj.resp = &jev.Response{Answers: map[string]jev.Answer{"workflow": jev.ChoiceAnswer{Choice: "bugfix", Confidence: 0.95}}}
-	code, out, errs := run(a, "", "sdlc", "start", "--task", "login breaks when cookie expires")
+	code, out, errs := run(a, "", "sdlc", "start", "--task", "login breaks when cookie expires", "--auto")
 	if code != exitOK || !strings.Contains(out, "task kind bugfix") || fj.calls != 1 {
 		t.Fatalf("selection: %d %q %q calls=%d", code, out, errs, fj.calls)
 	}
@@ -177,7 +177,7 @@ agents:
   - {id: assessor-a, roles: [assessor], rubric: Assess., via: runtime, runtime: opencode, model: a}
   - {id: assessor-alias, roles: [assessor], rubric: Assess., via: runtime, runtime: opencode, model: a}
 `)
-	code, _, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it", "--policy", "assured")
+	code, _, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it", "--policy", "assured", "--auto")
 	if code == exitOK || !strings.Contains(errs, "assessor: need 3 eligible independent agent(s), have 1") {
 		t.Fatalf("assured preflight: %d %q", code, errs)
 	}
@@ -196,7 +196,7 @@ agents:
   - {id: self, roles: [planner, implementer, assessor], rubric: Self., via: host-self}
   - {id: native, roles: [planner, implementer, assessor], rubric: Native., via: native, subagent: native}
 `)
-	code, _, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it")
+	code, _, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it", "--auto")
 	if code == exitOK || !strings.Contains(errs, "planner: need 1 eligible") {
 		t.Fatalf("CLI incorrectly accepted host agents: %d %q", code, errs)
 	}
@@ -216,7 +216,7 @@ agents:
   - {id: writer, roles: [implementer], rubric: Implement., via: native, subagent: writer}
   - {id: reviewer, roles: [assessor], rubric: Review., via: native, subagent: reviewer}
 `)
-	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it")
+	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it", "--auto")
 	if code != exitOK {
 		t.Fatalf("host start: %d %q %q", code, out, errs)
 	}
@@ -244,7 +244,7 @@ agents:
   - {id: implementer, roles: [implementer], rubric: Implement., via: runtime, runtime: cursor, model: i}
   - {id: assessor, roles: [assessor], rubric: Assess., via: runtime, runtime: opencode, model: r}
 `)
-	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it")
+	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it", "--auto")
 	if code != exitOK {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
@@ -283,7 +283,86 @@ agents:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Adaptive.Stage != adaptive.Paused || !strings.Contains(run.Adaptive.Outcome, "no-eligible") {
+	if run.Adaptive.Stage != adaptive.Paused || !strings.Contains(run.Adaptive.Outcome, "invocations-exhausted") {
 		t.Fatalf("run did not pause: %+v", run.Adaptive)
+	}
+}
+
+func TestHandoffRetriesCoreAgentWhenNoAlternateExists(t *testing.T) {
+	a := newApp(t)
+	fakeSDLCReach(a)
+	writeFile(t, a.sdlcRosterPath(), `version: 1
+agents:
+  - {id: planner, roles: [planner], rubric: Plan., via: runtime, runtime: codex, model: p}
+  - {id: implementer, roles: [implementer], rubric: Implement., via: runtime, runtime: cursor, model: i}
+  - {id: assessor, roles: [assessor], rubric: Assess., via: runtime, runtime: opencode, model: a}
+`)
+	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it", "--auto")
+	if code != exitOK {
+		t.Fatalf("start: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	code, out, errs = run(a, "", "sdlc", "next", id)
+	if code != exitOK {
+		t.Fatalf("next: %d %q %q", code, out, errs)
+	}
+	var first adaptive.Assignment
+	if err := json.Unmarshal([]byte(out), &first); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs = run(a, "", "sdlc", "report", id, "--invocation", first.InvocationID, "--agent", first.AgentID, "--outcome", "handoff", "--focus", "database", "--reason", "need help")
+	if code != exitOK {
+		t.Fatalf("report: %d %q", code, errs)
+	}
+	code, out, errs = run(a, "", "sdlc", "next", id)
+	if code != exitOK {
+		t.Fatalf("retry: %d %q %q", code, out, errs)
+	}
+	var second adaptive.Assignment
+	if err := json.Unmarshal([]byte(out), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.AgentID != first.AgentID || !strings.Contains(second.Reason, "no alternate agent") {
+		t.Fatalf("fallback assignment: %+v", second)
+	}
+}
+
+func TestSDLCReportedInvocationFailureReroutesSameRole(t *testing.T) {
+	a := newApp(t)
+	fakeSDLCReach(a)
+	writeFile(t, a.sdlcRosterPath(), `version: 1
+agents:
+  - {id: a-planner, roles: [planner], rubric: Plan A., via: runtime, runtime: codex, model: a}
+  - {id: b-planner, roles: [planner], rubric: Plan B., via: runtime, runtime: cursor, model: b}
+  - {id: implementer, roles: [implementer], rubric: Implement., via: runtime, runtime: cursor, model: i}
+  - {id: assessor, roles: [assessor], rubric: Assess., via: runtime, runtime: opencode, model: r}
+`)
+	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "build it", "--auto")
+	if code != exitOK {
+		t.Fatalf("start: %d %q %q", code, out, errs)
+	}
+	runID := strings.Fields(out)[1]
+	code, out, errs = run(a, "", "sdlc", "next", runID)
+	if code != exitOK {
+		t.Fatalf("next: %d %q %q", code, out, errs)
+	}
+	var first adaptive.Assignment
+	if err := json.Unmarshal([]byte(out), &first); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs = run(a, "", "sdlc", "report", runID, "--invocation", first.InvocationID, "--agent", first.AgentID, "--outcome", "invocation-failed")
+	if code != exitOK {
+		t.Fatalf("report: %d %q", code, errs)
+	}
+	code, out, errs = run(a, "", "sdlc", "next", runID)
+	if code != exitOK {
+		t.Fatalf("reroute: %d %q %q", code, out, errs)
+	}
+	var second adaptive.Assignment
+	if err := json.Unmarshal([]byte(out), &second); err != nil {
+		t.Fatal(err)
+	}
+	if first.AgentID != "a-planner" || second.AgentID != "b-planner" || second.Role != first.Role {
+		t.Fatalf("wrong same-role reroute: first=%+v second=%+v", first, second)
 	}
 }

@@ -93,7 +93,7 @@ agents:
 func TestSdlcStartResolvesBuiltinByName(t *testing.T) {
 	a, _, fj := cliApp(t)
 	setupSDLC(t, a)
-	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "add rate limiting")
+	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "add rate limiting", "--auto")
 	if code != exitOK || !strings.Contains(out, "task kind feature") || fj.calls != 0 {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
@@ -103,7 +103,7 @@ func TestSdlcStartProjectWorkflowOverridesBuiltinName(t *testing.T) {
 	a := newApp(t)
 	setupSDLC(t, a)
 	writeWorkflow(t, a, "feature", strings.Replace(customWorkflowYAML, "name: custom", "name: feature", 1))
-	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "x")
+	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "x", "--auto")
 	if code != exitOK || !strings.Contains(out, "workflow feature") || strings.Contains(out, "task kind feature") {
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
@@ -142,7 +142,7 @@ agents:
   - {id: implementer, roles: [implementer], rubric: Implement., via: runtime, runtime: cursor, model: i}
   - {id: assessor, roles: [assessor], rubric: Assess., via: runtime, runtime: opencode, model: a}
 `)
-	code, out, errs = run(a, "", "sdlc", "start", "custom-review", "--task", "prepare a handoff")
+	code, out, errs = run(a, "", "sdlc", "start", "custom-review", "--task", "prepare a handoff", "--auto")
 	if code != exitOK || !strings.Contains(out, "workflow custom-review") || !strings.Contains(out, "first stage scope") {
 		t.Fatalf("start starter: %d %q %q", code, out, errs)
 	}

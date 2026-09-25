@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +21,73 @@ type NativeAgent struct {
 	Description string
 	Model       string
 	Path        string
+	Runtime     string
 	Warnings    []string
+}
+
+// DiscoverRuntimeAgents inventories runtime-owned definitions. IDs are
+// namespaced so similarly named native agents from different CLIs coexist.
+// A project definition takes precedence over the global definition.
+func DiscoverRuntimeAgents(runtime string, dirs ...string) []NativeAgent {
+	seen := map[string]bool{}
+	var out []NativeAgent
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Name() == "README.md" {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			var a NativeAgent
+			if entry.IsDir() {
+				path = filepath.Join(path, "config.json")
+				var spec struct {
+					Name        string `json:"name"`
+					Description string `json:"description"`
+					Model       string `json:"model"`
+				}
+				if raw, err := os.ReadFile(path); err == nil && json.Unmarshal(raw, &spec) == nil {
+					a = NativeAgent{Name: spec.Name, Description: spec.Description, Model: spec.Model, Path: path}
+					if a.Name == "" {
+						a.Name = entry.Name()
+					}
+				}
+			} else if strings.HasSuffix(entry.Name(), ".md") {
+				// OpenCode uses the file name as its agent name. Other runtimes
+				// commonly supply a name in frontmatter.
+				a = parseRuntimeAgentFile(path, strings.TrimSuffix(entry.Name(), ".md"))
+			}
+			if a.Name == "" || a.Description == "" || seen[a.Name] {
+				continue
+			}
+			seen[a.Name] = true
+			a.Runtime = runtime
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func parseRuntimeAgentFile(path, fallbackName string) NativeAgent {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return NativeAgent{}
+	}
+	body, ok := extractFrontmatter(raw)
+	if !ok {
+		return NativeAgent{}
+	}
+	var fm frontmatter
+	if yaml.Unmarshal(body, &fm) != nil {
+		return NativeAgent{}
+	}
+	if fm.Name == "" {
+		fm.Name = fallbackName
+	}
+	return NativeAgent{Name: fm.Name, Description: fm.Description, Model: fm.Model, Path: path}
 }
 
 // frontmatter is the subset of a Claude Code subagent's YAML frontmatter

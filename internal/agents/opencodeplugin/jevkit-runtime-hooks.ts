@@ -29,6 +29,7 @@ export type AfterInput = BeforeInput & {
 export type AfterOutput = {
   title?: string;
   output?: string;
+  status?: "completed" | "error";
   metadata?: unknown;
 };
 

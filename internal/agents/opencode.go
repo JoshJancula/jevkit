@@ -69,18 +69,30 @@ func (o *OpenCode) HandlePreTool(ctx context.Context, req Request) (Response, er
 
 func (o *OpenCode) HandlePostTool(ctx context.Context, req Request) (Response, error) {
 	pass := Response{Body: o.Passthrough(EventPostTool)}
-	if !o.compactEnabled() || o.shadow() {
+	if !o.compactEnabled() {
 		return pass, nil
 	}
 	var payload openCodePostPayload
 	if json.Unmarshal(req.Raw, &payload) != nil || !isShellTool(payload.Input.Tool) {
 		return pass, nil
 	}
-	_, result := compact.JevCompact(payload.Input.Args.Command, payload.Output.Output, "", 0, o.Asker, compact.JevOptions{Enabled: true, ThresholdBytes: o.ThresholdBytes, StateDir: o.StateDir, CanReplace: true, Policy: o.Policy})
-	if !result.Compacted || result.Stdout == "" {
+	pointer, _ := storeRawResult(o.StateDir, OpenCodeName, payload.Output.Output)
+	exit, authoritative := 0, false
+	if payload.Output.Status == "completed" {
+		authoritative = true
+	}
+	if payload.Output.Status == "error" {
+		exit, authoritative = 1, true
+	}
+	_, result := compact.JevCompact(payload.Input.Args.Command, payload.Output.Output, "", exit, o.Asker, compact.JevOptions{Enabled: true, Shadow: o.shadow(), ThresholdBytes: o.ThresholdBytes, StateDir: o.StateDir, RawPointer: pointer, AuthoritativeExit: authoritative, Policy: o.Policy, Runtime: OpenCodeName})
+	if !result.Compacted || result.Stdout == "" || o.shadow() {
 		return pass, nil
 	}
-	body, err := json.Marshal(map[string]string{"output": result.Stdout})
+	bodyText := result.Stdout
+	if pointer != "" {
+		bodyText = rawResultTrailer(bodyText, pointer)
+	}
+	body, err := json.Marshal(map[string]string{"output": bodyText})
 	if err != nil {
 		return pass, nil
 	}
@@ -96,6 +108,7 @@ type openCodePostPayload struct {
 	} `json:"input"`
 	Output struct {
 		Output string `json:"output"`
+		Status string `json:"status"`
 	} `json:"output"`
 }
 
@@ -125,10 +138,8 @@ func (o *OpenCode) getenv(key string) string {
 	return os.Getenv(key)
 }
 func (o *OpenCode) compactEnabled() bool {
-	v := o.getenv("JEVKIT_COMPACT")
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+	return compactEnvEnabled(o.getenv, "JEVKIT_COMPACT")
 }
 func (o *OpenCode) shadow() bool {
-	v := o.getenv("JEVKIT_COMPACT_SHADOW")
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+	return compactEnvEnabled(o.getenv, "JEVKIT_COMPACT_SHADOW")
 }

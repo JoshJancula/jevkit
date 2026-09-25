@@ -2,10 +2,13 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-.PHONY: build test lint install snapshot plugins
+.PHONY: build clean test lint install snapshot plugins
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/jevkit ./cmd/jevkit
+
+clean:
+	rm -f jevkit bin/jevkit
 
 install: build
 	mkdir -p "$(INSTALL_DIR)"

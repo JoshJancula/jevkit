@@ -2,7 +2,11 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+
+	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/OWNER/jevkit/internal/security/config"
 )
 
 // Antigravity adapter name used by installed runtime integrations.
@@ -14,10 +18,9 @@ const AntigravityName = "antigravity"
 const AntigravityHookMarker = "_runtime dispatch --protocol 1 antigravity"
 const legacyAntigravityHookMarker = "hook antigravity"
 
-// AntigravityPreToolMarker is retained only to recognize legacy config.
-const AntigravityPreToolMarker = "hook antigravity pre-tool"
+const AntigravityPreToolMarker = "_runtime dispatch --protocol 1 antigravity pre-tool"
 
-// AntigravityPostToolMarker is the full post-tool event token.
+// AntigravityPostToolMarker is retained for removal of old telemetry hooks.
 const AntigravityPostToolMarker = "_runtime dispatch --protocol 1 antigravity post-tool"
 
 // AntigravityHooksGroup is the top-level group key written into .agents/hooks.json
@@ -40,7 +43,9 @@ var antigravityAllowPassthrough = []byte(`{"decision":"allow"}`)
 type Antigravity struct {
 	// Binary is the jevkit executable name/path used in rewrites and install
 	// commands. Empty means "jevkit".
-	Binary string
+	Binary          string
+	Security        *config.Config
+	SecurityDecider *registry.Decider
 }
 
 func init() {
@@ -56,9 +61,11 @@ func (a *Antigravity) Name() string { return AntigravityName }
 
 func (a *Antigravity) Capabilities() Capabilities {
 	return Capabilities{
-		// PostToolUse has no replaceable result, but it does include the error
-		// field needed for privacy-safe telemetry.
-		PostTool:      true,
+		PreTool:        true,
+		PreToolRewrite: true,
+		// Antigravity's PostToolUse payload has no command or output, so the
+		// installed integration uses no post-tool hook at all.
+		PostTool:      false,
 		OutputReplace: false,
 	}
 }
@@ -68,9 +75,32 @@ func (a *Antigravity) Passthrough(event Event) []byte {
 	return append([]byte(nil), antigravityAllowPassthrough...)
 }
 
-// HandlePreTool deliberately leaves input untouched.
 func (a *Antigravity) HandlePreTool(ctx context.Context, req Request) (Response, error) {
-	return Response{Body: a.Passthrough(EventPreTool)}, nil
+	var payload struct {
+		ToolCall struct {
+			Name string `json:"name"`
+			Args struct {
+				CommandLine string `json:"CommandLine"`
+			} `json:"args"`
+		} `json:"toolCall"`
+		WorkspacePaths []string `json:"workspacePaths"`
+	}
+	if err := json.Unmarshal(req.Raw, &payload); err != nil || payload.ToolCall.Name != antigravityRunCommandMatcher ||
+		strings.TrimSpace(payload.ToolCall.Args.CommandLine) == "" || IsShellWrapperCommand(payload.ToolCall.Args.CommandLine) ||
+		len(payload.WorkspacePaths) == 0 || strings.TrimSpace(payload.WorkspacePaths[0]) == "" {
+		return Response{Body: a.Passthrough(EventPreTool)}, nil
+	}
+	if response, deny := securityDecision(ctx, a.Security, a.SecurityDecider, payload.ToolCall.Args.CommandLine, payload.WorkspacePaths[0], payload.WorkspacePaths[0], AntigravityName); deny {
+		return response, nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"decision":  "allow",
+		"overwrite": map[string]string{"CommandLine": buildSecurityShellWrapperCommand(a.binary(), payload.WorkspacePaths[0], payload.ToolCall.Args.CommandLine, AntigravityName, a.Security != nil && a.Security.Yolo, securityPolicyName(a.Security))},
+	})
+	if err != nil {
+		return Response{Body: a.Passthrough(EventPreTool)}, nil
+	}
+	return Response{Body: body}, nil
 }
 
 func (a *Antigravity) HandlePostTool(ctx context.Context, req Request) (Response, error) {

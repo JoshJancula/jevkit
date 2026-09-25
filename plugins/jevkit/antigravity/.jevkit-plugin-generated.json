@@ -1,0 +1,12 @@
+{
+  "generatedPaths": [
+    "shared/jevkit-plugin-bootstrap.sh",
+    "shared/jevkit-run.sh",
+    "hooks.json",
+    "mcp_config.json",
+    "host-manifest.json"
+  ],
+  "pluginVersion": "dev",
+  "schemaVersion": 1,
+  "sourceDescriptor": "plugins/templates/antigravity"
+}

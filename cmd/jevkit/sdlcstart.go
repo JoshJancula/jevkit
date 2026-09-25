@@ -46,7 +46,10 @@ func (a *App) sdlcRouter() (*route.Router, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := jev.ConfigFromEnv(a.getenv)
+	cfg, err := a.jevConfig()
+	if err != nil {
+		return nil, err
+	}
 	store := a.store()
 	br := a.Breaker
 	if br == nil {
@@ -55,11 +58,11 @@ func (a *App) sdlcRouter() (*route.Router, error) {
 	var client route.Asker
 	keyFn := func() (string, error) { k, _, err := store.Resolve(context.Background()); return k, err }
 	if a.NewJev != nil {
-		client = a.NewJev(cfg, keyFn)
+		client = a.recordJev(a.NewJev(cfg, keyFn), cfg)
 	} else {
 		c := jev.New(cfg, keyFn)
 		c.Breaker = br
-		client = c
+		client = a.recordJev(c, cfg)
 	}
 	loadRedactor := func() (*redact.Redactor, error) {
 		rc, err := config.Load(a.loadOptions())
@@ -207,9 +210,9 @@ func (a *App) newRunID(now time.Time) string {
 }
 
 func (a *App) sdlcStartCmd() *cobra.Command {
-	var task, taskFile, format, profile string
+	var task, taskFile, format, profile, sessionStrategy string
 	var files []string
-	var selectOnly bool
+	var selectOnly, delegate, auto bool
 	c := &cobra.Command{
 		Use:    "start [task-kind|workflow] --task \"...\" [--file path[=artifact]]...",
 		Hidden: true,
@@ -235,6 +238,19 @@ enrolled agents. Host integrations use next and report to execute agents.`,
   jevkit sdlc start --task "bump deps" --select-only`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			a.sdlcAutoChoice = auto
+			defer func() { a.sdlcAutoChoice = false }()
+			if sessionStrategy != "" {
+				if err := validateSessionStrategy(sessionStrategy); err != nil {
+					return err
+				}
+				a.sdlcSessionChoice = sessionStrategy
+				defer func() { a.sdlcSessionChoice = "" }()
+			}
+			if cmd.Flags().Changed("delegate-builtins") {
+				a.sdlcDelegateChoice = &delegate
+				defer func() { a.sdlcDelegateChoice = nil }()
+			}
 			var name string
 			if len(args) == 1 {
 				name = args[0]
@@ -248,10 +264,20 @@ enrolled agents. Host integrations use next and report to execute agents.`,
 	c.Flags().BoolVar(&selectOnly, "select-only", false, "classify and print the outcome; create no run")
 	c.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	c.Flags().StringVar(&profile, "policy", "", "adaptive policy profile: lean, collaborative or assured (default lean)")
+	c.Flags().StringVar(&sessionStrategy, "session-strategy", "", "session policy: auto, fresh, resume or compact")
+	c.Flags().BoolVar(&delegate, "delegate-builtins", false, "enable or disable policy-permitted automatic built-in delegation")
+	c.Flags().BoolVar(&auto, "auto", false, "continue through implementation without human plan approval")
 	return c
 }
 
 func (a *App) sdlcStart(ctx context.Context, workflowName, task, taskFile string, fileArgs []string, selectOnly bool, format, profile string) error {
+	var restore func()
+	var err error
+	workflowName, taskFile, fileArgs, restore, err = a.sdlcProjectInputs(workflowName, taskFile, fileArgs)
+	if err != nil {
+		return failf("%v", err)
+	}
+	defer restore()
 	return a.sdlcStartWithRunID(ctx, workflowName, task, taskFile, fileArgs, selectOnly, format, profile, nil, false)
 }
 
@@ -282,7 +308,25 @@ func (a *App) sdlcStartWithRunID(ctx context.Context, workflowName, task, taskFi
 		}
 		parsedFiles = append(parsedFiles, fa)
 	}
+	previousAllowRead := a.sdlcAllowRead
+	a.sdlcAllowRead = nil
+	if taskFile != "" && taskFile != "-" {
+		if absolute, err := filepath.Abs(taskFile); err == nil {
+			a.sdlcAllowRead = append(a.sdlcAllowRead, absolute)
+		}
+	}
+	for _, file := range parsedFiles {
+		if absolute, err := filepath.Abs(file.Path); err == nil {
+			a.sdlcAllowRead = append(a.sdlcAllowRead, absolute)
+		}
+	}
+	defer func() { a.sdlcAllowRead = previousAllowRead }()
 	if !selectOnly {
+		if drive && workflowName == "" {
+			if _, err := a.sdlcAvailableWorkflows(); err != nil {
+				return failf("%v", err)
+			}
+		}
 		if profile == "" {
 			profile = "lean"
 		}
@@ -294,11 +338,52 @@ func (a *App) sdlcStartWithRunID(ctx context.Context, workflowName, task, taskFi
 			return failf("policy %s cannot start: %s", profile, strings.Join(pf.Missing, "; "))
 		}
 		if drive && workflowName == "" {
-			kind, err := a.selectAdaptiveKind(ctx, task)
+			wf, selection, err := a.resolveWorkflow(ctx, "", task)
 			if err != nil {
 				return err
 			}
-			return a.startAdaptive(kind, task, parsedFiles, profile, pf, format, created, drive)
+			var startErr error
+			if wf.Builtin {
+				startErr = a.startAdaptive(wf.Name, task, parsedFiles, profile, pf, format, created, drive)
+			} else {
+				startErr = a.startStageFlow(wf, task, parsedFiles, profile, pf, format, created, drive)
+			}
+			if startErr != nil {
+				return startErr
+			}
+			if created != nil && *created != "" {
+				store := ledger.Open(a.sdlcRunsDir(), *created)
+				run, err := store.ReadRun()
+				if err != nil {
+					return err
+				}
+				run.SelectionReason = "selected " + wf.Name + " from task"
+				if err := store.WriteRun(run); err != nil {
+					return err
+				}
+				d := ledger.Decision{RunID: run.RunID, Kind: "workflow-selection", Stage: run.Adaptive.Stage, Trigger: "task supplied without workflow", Choice: wf.Name, Next: "start workflow"}
+				if selection != nil {
+					d.Confidence = &selection.Decision.Confidence
+					d.Outcome = selection.Decision.Decision
+					d.Detail = selection.Decision.Reason
+					if !selection.Available {
+						d.Outcome = "Jev unavailable; policy fallback"
+					}
+				} else {
+					d.Outcome = "only eligible workflow"
+				}
+				if all, err := a.sdlcAvailableWorkflows(); err == nil {
+					d.Rubrics = map[string]string{}
+					for _, item := range all {
+						d.Candidates = append(d.Candidates, ledger.Candidate{ID: item.Name})
+						d.Rubrics[item.Name] = item.W.Description
+					}
+				}
+				if err := a.recordDecision(store, d); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		if workflowName != "" && !a.useAdaptiveStart(workflowName) {
 			wf, err := a.resolveWorkflowByName(workflowName)
@@ -373,7 +458,11 @@ func (a *App) startStageFlow(wf availableWorkflow, task string, files []seed.Fil
 	now := a.now()
 	runID := a.newRunID(now)
 	ts := now.UTC().Format(time.RFC3339)
-	run := ledger.Run{RunID: runID, Workflow: wf.Name, GraphSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, StageFlow: &flow}
+	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, AllowRead: append([]string(nil), a.sdlcAllowRead...), Workflow: wf.Name, GraphSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, StageFlow: &flow, TreeUsage: &ledger.TreeUsage{}, SessionStrategy: a.sdlcSessionChoice, RequirePlanApproval: !a.sdlcAutoChoice}
+	run.DelegateBuiltins, err = a.sdlcDelegationAllowed(p)
+	if err != nil {
+		return err
+	}
 	if err := ledger.Open(a.sdlcRunsDir(), runID).WriteRun(run); err != nil {
 		return failf("create run: %v", err)
 	}
@@ -481,6 +570,12 @@ func (a *App) startAdaptive(name, task string, files []seed.FileArg, profile str
 		}
 		data, err := os.ReadFile(f.Path)
 		if err != nil {
+			if strings.HasPrefix(f.Path, filepath.Base(a.WorkDir)+string(filepath.Separator)) {
+				local := strings.TrimPrefix(f.Path, filepath.Base(a.WorkDir)+string(filepath.Separator))
+				if _, localErr := os.Stat(local); localErr == nil {
+					return failf("seed %s: %v; from %s use --file %s", f.Path, err, a.WorkDir, local)
+				}
+			}
 			return failf("seed %s: %v", f.Path, err)
 		}
 		contents[artifact] = data
@@ -497,7 +592,19 @@ func (a *App) startAdaptive(name, task string, files []seed.FileArg, profile str
 	runID := a.newRunID(now)
 	store := ledger.Open(a.sdlcRunsDir(), runID)
 	ts := now.UTC().Format(time.RFC3339)
-	run := ledger.Run{RunID: runID, Workflow: name, Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st}
+	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, AllowRead: append([]string(nil), a.sdlcAllowRead...), Workflow: name, Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, TreeUsage: &ledger.TreeUsage{}, SessionStrategy: a.sdlcSessionChoice, RequirePlanApproval: !a.sdlcAutoChoice}
+	run.DelegateBuiltins, err = a.sdlcDelegationAllowed(p)
+	if err != nil {
+		return err
+	}
+	if drive && a.SdlcExecutor == nil {
+		if _, err := gitWorktreeRoot(a.WorkDir); err != nil {
+			return failf("SDLC CLI runs require a Git repository; run from the project directory or pass --task-file inside that repository")
+		}
+		if !gitHasHEAD(a.WorkDir) {
+			return failf("SDLC CLI runs require an initial Git commit in %s", a.WorkDir)
+		}
+	}
 	if err := store.WriteRun(run); err != nil {
 		return failf("create run: %v", err)
 	}

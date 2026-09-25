@@ -43,6 +43,7 @@ type Record struct {
 	Agent         string `json:"agent,omitempty"`
 	PlanKey       string `json:"planKey,omitempty"`
 	Session       string `json:"session,omitempty"`
+	RunID         string `json:"runId,omitempty"`
 }
 
 // Path is <stateDir>/jevkit/usage.jsonl.
@@ -130,6 +131,7 @@ type Filter struct {
 	PlanKey        string
 	Session        string
 	Agent          string
+	RunID          string
 	Model          string
 	QuestionSetID  string
 	Since, Until   time.Time
@@ -141,7 +143,7 @@ func (f Filter) match(r Record) bool {
 		return false
 	}
 	for _, c := range [][2]string{
-		{f.PlanKey, r.PlanKey}, {f.Session, r.Session}, {f.Agent, r.Agent},
+		{f.PlanKey, r.PlanKey}, {f.Session, r.Session}, {f.Agent, r.Agent}, {f.RunID, r.RunID},
 		{f.Model, r.Model}, {f.QuestionSetID, r.QuestionSetID},
 	} {
 		if c[0] != "" && c[0] != c[1] {

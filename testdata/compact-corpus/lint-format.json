@@ -1,0 +1,13 @@
+{
+  "name": "lint-format-synthetic",
+  "kind": "lint-format",
+  "command": "npm run lint",
+  "exit": 1,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "ERROR: lint violation at src/app.ts:18\n",
+  "gold": [
+    "ERROR: lint violation at src/app.ts:18"
+  ]
+}

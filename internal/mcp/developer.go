@@ -79,7 +79,7 @@ func (s *Server) developerAssessTool() (*sdk.Tool, error) {
 	}
 	return &sdk.Tool{
 		Name: "jev_developer_assess",
-		Description: fmt.Sprintf(`Decision support for coding agents: one strongly typed dispatcher over a small, versioned, opt-in set of built-in developer.* question sets (registry-backed, auditable, shadow-rollout capable — see docs/AGENTS.md for calibration and shadow-mode notes). This is decision support only: no jevkit tool call ever modifies code, runs a command, merges, deploys, or exposes a secret. The caller decides what, if anything, to do with the answer.
+		Description: fmt.Sprintf(`Decision support for coding agents: one strongly typed dispatcher over a small, versioned, opt-in set of built-in developer.* question sets (registry-backed, auditable, shadow-rollout capable — see docs/AGENT-INTEGRATIONS.md for calibration and shadow-mode notes). This is decision support only: no jevkit tool call ever modifies code, runs a command, merges, deploys, or exposes a secret. The caller decides what, if anything, to do with the answer.
 
 Built-in assessments:%s
 

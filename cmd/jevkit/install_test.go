@@ -119,12 +119,12 @@ func TestInstallUnknownAgent(t *testing.T) {
 	}
 }
 
-func TestInstallRejectsUnsupportedHookAgents(t *testing.T) {
+func TestInstallSupportsHookRewriteAgents(t *testing.T) {
 	for _, name := range []string{"cursor", "antigravity"} {
 		t.Run(name, func(t *testing.T) {
 			a, _, _ := cliApp(t)
-			code, _, errs := run(a, "", "install", name)
-			if code != exitUsage || !strings.Contains(errs, "no longer supported") {
+			code, out, errs := run(a, "", "install", name, "--components", "hooks")
+			if code != exitOK || !strings.Contains(out, "install "+name) {
 				t.Fatalf("exit %d errs %q", code, errs)
 			}
 		})

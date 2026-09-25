@@ -125,6 +125,9 @@ func mergeClaudeSettings(existing []byte, command string) ([]byte, error) {
 	groups = stripManagedClaudeHooks(groups)
 	groups = appendClaudeBashHook(groups, command)
 	hooksObj["PostToolUse"] = groups
+	preGroups := stripManagedClaudeHooks(asSlice(hooksObj["PreToolUse"]))
+	preCommand := strings.Replace(command, ClaudeHookMarker, ClaudePreHookMarker, 1)
+	hooksObj["PreToolUse"] = appendClaudeBashHook(preGroups, preCommand)
 	doc["hooks"] = hooksObj
 
 	return marshalSettings(doc)
@@ -198,7 +201,7 @@ func appendClaudeBashHook(groups []any, command string) []any {
 }
 
 func isManagedClaudeCommand(command string) bool {
-	return strings.Contains(command, ClaudeHookMarker) || strings.Contains(command, legacyClaudeHookMarker)
+	return strings.Contains(command, ClaudeHookMarker) || strings.Contains(command, ClaudePreHookMarker) || strings.Contains(command, legacyClaudeHookMarker)
 }
 
 func ensureClaudeBackup(settingsPath string, existing []byte) error {
@@ -249,6 +252,12 @@ func plannedClaudeRestore(settingsPath string, existing []byte) ([]byte, error) 
 				delete(hooksObj, "PostToolUse")
 			} else {
 				hooksObj["PostToolUse"] = groups
+			}
+			preGroups := stripManagedClaudeHooks(asSlice(hooksObj["PreToolUse"]))
+			if len(preGroups) == 0 {
+				delete(hooksObj, "PreToolUse")
+			} else {
+				hooksObj["PreToolUse"] = preGroups
 			}
 			if len(hooksObj) == 0 {
 				delete(doc, "hooks")
@@ -308,6 +317,12 @@ func stripClaudeManagedInPlace(settingsPath string) error {
 		delete(hooksObj, "PostToolUse")
 	} else {
 		hooksObj["PostToolUse"] = groups
+	}
+	preGroups := stripManagedClaudeHooks(asSlice(hooksObj["PreToolUse"]))
+	if len(preGroups) == 0 {
+		delete(hooksObj, "PreToolUse")
+	} else {
+		hooksObj["PreToolUse"] = preGroups
 	}
 	if len(hooksObj) == 0 {
 		delete(doc, "hooks")

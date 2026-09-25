@@ -16,6 +16,7 @@ const (
 // reviewed; they are not a claim that an unpinned runtime API is immutable.
 type RuntimeCapability struct {
 	Name               string
+	PreToolDecision    bool
 	Evidence           string
 	PostToolOutput     bool
 	AuthoritativeState string
@@ -36,6 +37,7 @@ func RuntimeCapabilities(name string) (RuntimeCapability, bool) {
 var runtimeCapabilities = map[string]RuntimeCapability{
 	ClaudeName: {
 		Name:               ClaudeName,
+		PreToolDecision:    true,
 		Evidence:           "Claude Code hooks reference reviewed 2026-09-22",
 		PostToolOutput:     true,
 		AuthoritativeState: "event: PostToolUse is success; PostToolUseFailure is failure",
@@ -46,6 +48,7 @@ var runtimeCapabilities = map[string]RuntimeCapability{
 	},
 	CursorName: {
 		Name:               CursorName,
+		PreToolDecision:    true,
 		Evidence:           "Cursor hooks reference reviewed 2026-09-22",
 		PostToolOutput:     true,
 		AuthoritativeState: "postToolUse success payload or postToolUseFailure failure event",
@@ -56,6 +59,7 @@ var runtimeCapabilities = map[string]RuntimeCapability{
 	},
 	CodexName: {
 		Name:               CodexName,
+		PreToolDecision:    true,
 		Evidence:           "OpenAI Codex hooks reference reviewed 2026-09-23",
 		PostToolOutput:     true,
 		AuthoritativeState: "PostToolUse receives Bash output but no documented exit status",
@@ -76,12 +80,13 @@ var runtimeCapabilities = map[string]RuntimeCapability{
 	},
 	AntigravityName: {
 		Name:               AntigravityName,
+		PreToolDecision:    true,
 		Evidence:           "Google Antigravity hooks reference reviewed 2026-09-22",
 		PostToolOutput:     false,
 		AuthoritativeState: "PostToolUse error field only",
 		Replacement:        ReplacementNone,
 		ContextInjection:   false,
-		Telemetry:          true,
+		Telemetry:          false,
 		Installation:       ".agents/hooks.json",
 	},
 }

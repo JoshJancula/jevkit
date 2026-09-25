@@ -376,7 +376,11 @@ func (a *App) ask(ctx context.Context, kind, state, instructions string, criteri
 	if err != nil {
 		return failf("no usable key: %v", err)
 	}
-	client := a.newJev(jev.ConfigFromEnv(a.getenv), func() (string, error) { return key, nil })
+	clientCfg, err := a.jevConfig()
+	if err != nil {
+		return failf("%v", err)
+	}
+	client := a.newJev(clientCfg, func() (string, error) { return key, nil })
 	resp, err := client.Ask(ctx, req)
 	if err != nil || resp == nil {
 		return failf("ask failed: %s", failReason(err))
@@ -474,7 +478,11 @@ func (a *App) askRequest(ctx context.Context, path, modelOverride, format string
 	if err != nil {
 		return failf("no usable key: %v", err)
 	}
-	client := a.newJev(jev.ConfigFromEnv(a.getenv), func() (string, error) { return key, nil })
+	clientCfg, err := a.jevConfig()
+	if err != nil {
+		return failf("%v", err)
+	}
+	client := a.newJev(clientCfg, func() (string, error) { return key, nil })
 	resp, err := client.Ask(ctx, req)
 	if err != nil || resp == nil {
 		return failf("ask failed: %s", failReason(err))
