@@ -116,6 +116,9 @@ func resolvePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("empty path")
 	}
+	// Windows accepts both separators. Normalize without cleaning so a parent
+	// segment after a symlink is still resolved in order.
+	path = filepath.FromSlash(path)
 	absolute := path
 	if !filepath.IsAbs(path) {
 		wd, err := os.Getwd()

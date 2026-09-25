@@ -12,7 +12,7 @@ func TestShellWrapperDeniesOutsidePathAndYoloBypasses(t *testing.T) {
 	a := newApp(t)
 	outside := t.TempDir()
 	path := filepath.Join(outside, "output.txt")
-	command := "printf safe > " + path
+	command := "printf safe > " + filepath.ToSlash(path)
 	a.Stdout, a.Stderr = &bytes.Buffer{}, &bytes.Buffer{}
 	if err := a.runShellWrapper(a.WorkDir, "codex", command); err == nil {
 		t.Fatal("outside path was allowed")

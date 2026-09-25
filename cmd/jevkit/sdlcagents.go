@@ -156,7 +156,11 @@ func sdlcFileURL(path string) string {
 	if err != nil {
 		return path
 	}
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}).String()
+	urlPath := filepath.ToSlash(absolute)
+	if filepath.VolumeName(absolute) != "" {
+		urlPath = "/" + urlPath
+	}
+	return (&url.URL{Scheme: "file", Path: urlPath}).String()
 }
 
 func (a *App) sdlcEnrollment() (enrollment.Policy, enrollment.Roster, error) {

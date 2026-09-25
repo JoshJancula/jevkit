@@ -91,7 +91,11 @@ func TestSdlcAgentsEmpty(t *testing.T) {
 		}
 	}
 	parsed, err := url.Parse(rosterURL)
-	if err != nil || parsed.Scheme != "file" || parsed.Path != filepath.ToSlash(a.sdlcRosterPath()) || !strings.Contains(rosterURL, "Application%20Support") {
+	wantPath := filepath.ToSlash(a.sdlcRosterPath())
+	if filepath.VolumeName(a.sdlcRosterPath()) != "" {
+		wantPath = "/" + wantPath
+	}
+	if err != nil || parsed.Scheme != "file" || parsed.Host != "" || parsed.Path != wantPath || !strings.Contains(rosterURL, "Application%20Support") {
 		t.Fatalf("roster URL %q does not point to %q: %v", rosterURL, a.sdlcRosterPath(), err)
 	}
 }
