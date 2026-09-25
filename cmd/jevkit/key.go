@@ -184,7 +184,10 @@ func (a *App) keyTestCmd() *cobra.Command {
 			if err != nil {
 				return failf("fail (no usable key: %v)", err)
 			}
-			cfg := jev.ConfigFromEnv(a.getenv)
+			cfg, err := a.jevConfig()
+			if err != nil {
+				return failf("%v", err)
+			}
 			client := a.newJev(cfg, func() (string, error) { return key, nil })
 			_, err = client.Ask(cmd.Context(), jev.Request{
 				State: "jevkit key test",
@@ -207,9 +210,9 @@ func (a *App) keyTestCmd() *cobra.Command {
 
 func (a *App) newJev(cfg jev.Config, key func() (string, error)) Asker {
 	if a.NewJev != nil {
-		return a.NewJev(cfg, key)
+		return a.recordJev(a.NewJev(cfg, key), cfg)
 	}
-	return jev.New(cfg, key)
+	return a.recordJev(jev.New(cfg, key), cfg)
 }
 
 // failReason names a client failure without any wrapped detail, which could

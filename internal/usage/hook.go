@@ -24,6 +24,7 @@ type HookInvocation struct {
 	Outcome    string `json:"outcome"`
 	Tool       string `json:"tool,omitempty"`
 	DurationMs int64  `json:"durationMs,omitempty"`
+	LoadError  string `json:"loadError,omitempty"`
 }
 
 // HookPath is <stateDir>/jevkit/hooks.jsonl.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 )
 
 // Format names an output format.
@@ -38,7 +39,7 @@ func renderText(w io.Writer, s Summary, omitEmpty bool) error {
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format+"\n", a...) }
 	p("Jev (TypeSafe AI) usage")
 	p("  calls: %d (measured %d, usage unavailable %d)", s.Calls, s.CallsMeasured, s.CallsUnavailable)
-	p("  tokens: input %d, output %d", s.InputTokens, s.OutputTokens)
+	p("  tokens: input %s, output %s", formatInt(s.InputTokens), formatInt(s.OutputTokens))
 	if s.Cost != nil {
 		p("  cost: ~$%.6f (%s)", s.Cost.EstimatedUSD, s.Cost.Note)
 	}
@@ -59,11 +60,33 @@ func renderText(w io.Writer, s Summary, omitEmpty bool) error {
 		p("  %s:", title)
 		for _, k := range names {
 			t := m[k]
-			p("    %-32s calls %-5d in %-8d out %d", k, t.Calls, t.InputTokens, t.OutputTokens)
+			p("    %-32s calls %-5d in %-8s out %s", k, t.Calls, formatInt(t.InputTokens), formatInt(t.OutputTokens))
 		}
 	}
 	group("by question set", s.ByQuestionSet)
 	group("by model", s.ByModel)
 	group("by agent", s.ByAgent)
 	return nil
+}
+
+func formatInt(n int) string {
+	digits := strconv.Itoa(n)
+	start := 0
+	if digits[0] == '-' {
+		start = 1
+	}
+	groups := (len(digits) - start - 1) / 3
+	if groups == 0 {
+		return digits
+	}
+
+	formatted := make([]byte, 0, len(digits)+groups)
+	formatted = append(formatted, digits[:start]...)
+	for i := start; i < len(digits); i++ {
+		if i > start && (len(digits)-i)%3 == 0 {
+			formatted = append(formatted, ',')
+		}
+		formatted = append(formatted, digits[i])
+	}
+	return string(formatted)
 }

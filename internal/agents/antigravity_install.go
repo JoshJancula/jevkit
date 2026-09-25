@@ -202,7 +202,7 @@ func stripManagedAntigravityHookGroups(groups []any) []any {
 }
 
 func isManagedAntigravityCommand(command string) bool {
-	return strings.Contains(command, AntigravityHookMarker)
+	return strings.Contains(command, AntigravityHookMarker) || strings.Contains(command, legacyAntigravityHookMarker)
 }
 
 func ensureAntigravityBackup(hooksPath string, existing []byte) error {

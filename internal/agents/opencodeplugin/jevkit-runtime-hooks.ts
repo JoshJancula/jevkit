@@ -1,10 +1,8 @@
 // JEVKIT_OPENCODE_PLUGIN — staged by `jevkit install opencode`. Do not edit in-place;
 // change the embedded source under internal/agents/opencodeplugin/ and reinstall.
 //
-// Model-visible tool.execute.after output mutation is unproven on OpenCode
-// (see ralph bundle/.opencode/plugins/SPIKE-output-mutation.md). Compaction
-// relies on rewriting bash/shell commands to `jevkit exec -- ...` in
-// tool.execute.before so the wrapper sees the real exit code.
+// The post-tool hook replaces output only when the local Jevkit dispatcher
+// returns a validated compacted result. Every other case leaves it unchanged.
 
 const INSTALLED_BINARY = /*JEVKIT_BINARY*/"jevkit"/*JEVKIT_BINARY*/;
 
@@ -31,6 +29,7 @@ export type AfterInput = BeforeInput & {
 export type AfterOutput = {
   title?: string;
   output?: string;
+  status?: "completed" | "error";
   metadata?: unknown;
 };
 
@@ -97,16 +96,16 @@ export async function defaultRunProcess(
   });
 }
 
-function parseCommandResponse(stdout: string): string | null {
+function parseCompactedOutput(stdout: string): string | null {
   const line = String(stdout || "")
     .trim()
     .split("\n")
     .pop();
   if (!line) return null;
   try {
-    const parsed = JSON.parse(line) as { command?: unknown };
-    if (typeof parsed.command === "string" && parsed.command.trim()) {
-      return parsed.command;
+    const parsed = JSON.parse(line) as { output?: unknown };
+    if (typeof parsed.output === "string" && parsed.output.trim()) {
+      return parsed.output;
     }
   } catch {
     /* fail open */
@@ -114,47 +113,19 @@ function parseCommandResponse(stdout: string): string | null {
   return null;
 }
 
-export async function handleToolExecuteBefore(
-  input: BeforeInput,
-  output: BeforeOutput,
-  deps: { runProcess?: RunProcess; binary?: string; env?: NodeJS.ProcessEnv } = {},
-): Promise<void> {
-  if (!isShellTool(input.tool)) return;
-  const args = output.args;
-  if (args == null || typeof args !== "object") return;
-  const command = typeof args.command === "string" ? args.command : "";
-  if (!command.trim()) return;
-
-  const binary = deps.binary || resolveJevkitBinary(deps.env);
-  const run = deps.runProcess || defaultRunProcess;
-  const payload = JSON.stringify({ input, output });
-  let result: { stdout: string; exitCode: number };
-  try {
-    result = await run([binary, "hook", "opencode", "pre-tool"], {
-      stdin: payload,
-    });
-  } catch {
-    return;
-  }
-  if (result.exitCode !== 0) return;
-  const rewritten = parseCommandResponse(result.stdout);
-  if (rewritten) {
-    args.command = rewritten;
-  }
-}
-
 export async function handleToolExecuteAfter(
   input: AfterInput,
   output: AfterOutput,
   deps: { runProcess?: RunProcess; binary?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<void> {
-  // Telemetry only: shell out so Go records the hook invocation. Do not mutate
-  // output.output — SPIKE leaves model-visible mutation unproven.
+  if (!isShellTool(input.tool)) return;
   const binary = deps.binary || resolveJevkitBinary(deps.env);
   const run = deps.runProcess || defaultRunProcess;
   const payload = JSON.stringify({ input, output });
   try {
-    await run([binary, "hook", "opencode", "post-tool"], { stdin: payload });
+    const result = await run([binary, "_runtime", "dispatch", "--protocol", "1", "opencode", "post-tool"], { stdin: payload });
+    const compacted = parseCompactedOutput(result.stdout);
+    if (result.exitCode === 0 && compacted) output.output = compacted;
   } catch {
     /* fail open */
   }
@@ -163,9 +134,6 @@ export async function handleToolExecuteAfter(
 /** OpenCode auto-discovers exported async plugin factories from this file. */
 export const JevkitRuntimeHooks = async (_ctx?: { directory?: string }) => {
   return {
-    "tool.execute.before": async (input: BeforeInput, output: BeforeOutput) => {
-      await handleToolExecuteBefore(input, output);
-    },
     "tool.execute.after": async (input: AfterInput, output: AfterOutput) => {
       await handleToolExecuteAfter(input, output);
     },

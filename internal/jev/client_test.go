@@ -17,16 +17,14 @@ const testKey = "sk-test-SECRET-key-123"
 
 const okBody = `{"model":"jev-1.13.0","answers":{"pick":{"choice":"a","probabilities":{"a":0.9,"b":0.1},"confidence":0.9},"flag":{"type":"noul","noul":0.8},"rate":{"score":0.5}},"usage":{"input_tokens":3,"output_tokens":1}}`
 
-func str(s string) *string { return &s }
-
 func sampleRequest() Request {
 	return Request{
 		QuestionSetID: "test.set",
 		State:         "some state",
 		Questions: map[string]Question{
-			"pick": ChoiceQuestion{Instructions: "which?", Options: map[string]*string{"a": nil, "b": str("bee")}},
+			"pick": ChoiceQuestion{Instructions: "which?", Criteria: map[string]json.RawMessage{"a": Null(), "b": Str("bee")}},
 			"flag": NoulQuestion{Instructions: "is it?"},
-			"rate": ScoreQuestion{Instructions: "how much?"},
+			"rate": ScoreQuestion{Instructions: "how much?", Criteria: []json.RawMessage{Str("low"), Str("high")}},
 		},
 	}
 }
@@ -206,10 +204,10 @@ func TestMalformedBody(t *testing.T) {
 }
 
 func TestInputRejectedBeforeNetwork(t *testing.T) {
-	opts := func(n int) map[string]*string {
-		m := make(map[string]*string, n)
+	opts := func(n int) map[string]json.RawMessage {
+		m := make(map[string]json.RawMessage, n)
 		for i := range n {
-			m[string(rune('a'+i%26))+strings.Repeat("x", i)] = nil
+			m[string(rune('a'+i%26))+strings.Repeat("x", i)] = Null()
 		}
 		return m
 	}
@@ -220,7 +218,7 @@ func TestInputRejectedBeforeNetwork(t *testing.T) {
 			State:     strings.Repeat("x", budgetBytes-10),
 			Questions: map[string]Question{"q": NoulQuestion{Instructions: strings.Repeat("y", 100)}},
 		},
-		"256 options":  {State: "s", Questions: map[string]Question{"q": ChoiceQuestion{Instructions: "?", Options: opts(256)}}},
+		"256 options":  {State: "s", Questions: map[string]Question{"q": ChoiceQuestion{Instructions: "?", Criteria: opts(256)}}},
 		"nil question": {State: "s", Questions: map[string]Question{"q": nil}},
 		"no questions": {State: "s"},
 	}
@@ -241,7 +239,7 @@ func TestInputRejectedBeforeNetwork(t *testing.T) {
 	t.Run("255 options and exact budget accepted", func(t *testing.T) {
 		srv, _, _, _ := newServer(t, step{200, okBody})
 		c, _, _ := testClient(srv.URL)
-		req := Request{State: "s", Questions: map[string]Question{"q": ChoiceQuestion{Instructions: "?", Options: opts(255)}}}
+		req := Request{State: "s", Questions: map[string]Question{"q": ChoiceQuestion{Instructions: "?", Criteria: opts(255)}}}
 		if _, err := c.Ask(context.Background(), req); err != nil {
 			t.Fatal(err)
 		}
@@ -391,8 +389,8 @@ func TestConfigFromEnv(t *testing.T) {
 }
 
 func TestQuestionWireFormat(t *testing.T) {
-	b, err := json.Marshal(ChoiceQuestion{Instructions: "i", Options: map[string]*string{"a": nil}})
-	if err != nil || string(b) != `{"type":"choice","instructions":"i","options":{"a":null}}` {
+	b, err := json.Marshal(ChoiceQuestion{Instructions: "i", Criteria: map[string]json.RawMessage{"a": Null()}})
+	if err != nil || string(b) != `{"type":"choice","instructions":"i","criteria":{"a":null}}` {
 		t.Errorf("choice = %s err = %v", b, err)
 	}
 	b, _ = json.Marshal(NoulQuestion{Instructions: "i"})

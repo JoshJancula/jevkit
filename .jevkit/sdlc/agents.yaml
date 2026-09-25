@@ -1,0 +1,44 @@
+# Optional agent suggestions for people working on this project.
+# This file does NOT put agents on your team or give them permission to work.
+# To configure your own team directly, run: jevkit sdlc agents
+# That command shows the personal roster file you can edit instead.
+#
+# To share a suggestion here:
+# 1. Remove the leading "# " from every line of ONE example below.
+# 2. Replace YOUR_MODEL with a model supported by that CLI. Edit the rubric
+#    to describe when Jev should choose this agent.
+# 3. Run: jevkit sdlc agents discover
+# 4. Add the suggestion to your team using the command above its example.
+#
+# Each "- id:" starts one agent. Copy an entire example to suggest another.
+# Keep the spaces at the start of each line; use spaces, not tabs.
+# You may use the same runtime for several agents. These are just examples.
+# Roles are chosen when adding to your team, not in this suggestions file.
+# Later edits here do not update copies already in someone's personal roster.
+version: 1
+agents:
+  # Commented examples are inactive until uncommented.
+
+  # Planning example. After uncommenting and editing:
+  # jevkit sdlc agents add claude-architect --role planner
+#   - id: claude-architect
+#     via: runtime
+#     runtime: claude
+#     model: YOUR_MODEL
+#     rubric: Plan complex changes and clarify the approach before implementation.
+
+  # Implementation example. After uncommenting and editing:
+  # jevkit sdlc agents add codex-builder --role implementer
+#   - id: codex-builder
+#     via: runtime
+#     runtime: codex
+#     model: YOUR_MODEL
+#     rubric: Implement planned code changes and report the result.
+
+  # Review example. After uncommenting and editing:
+  # jevkit sdlc agents add opencode-reviewer --role assessor
+#   - id: opencode-reviewer
+#     via: runtime
+#     runtime: opencode
+#     model: YOUR_MODEL
+#     rubric: Assess code changes against the task and plan.

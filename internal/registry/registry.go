@@ -14,6 +14,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/OWNER/jevkit/internal/jev"
+
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -50,6 +52,63 @@ type Question struct {
 	Type         string          `json:"type"`
 	Instructions string          `json:"instructions"`
 	Criteria     json.RawMessage `json:"criteria,omitempty"`
+	CriteriaMode string          `json:"criteriaMode,omitempty"`
+}
+
+// JevQuestions turns registry rubrics into wire questions. Dynamic options are
+// accepted only for questions that explicitly declare call-time criteria.
+func (s *Set) JevQuestions(callTime map[string]map[string]json.RawMessage) (map[string]jev.Question, error) {
+	for id := range callTime {
+		if _, ok := s.Questions[id]; !ok {
+			return nil, fmt.Errorf("registry: undeclared call-time question %q", id)
+		}
+	}
+	out := make(map[string]jev.Question, len(s.Questions))
+	for id, q := range s.Questions {
+		if len(callTime[id]) > 0 && q.CriteriaMode != "call-time" {
+			return nil, fmt.Errorf("registry: %s.%s does not accept call-time criteria", s.ID, id)
+		}
+		switch q.Type {
+		case "choice", "noul":
+			var declared map[string]string
+			if len(q.Criteria) > 0 {
+				if err := json.Unmarshal(q.Criteria, &declared); err != nil {
+					return nil, err
+				}
+			}
+			criteria := make(map[string]json.RawMessage, len(declared)+len(callTime[id]))
+			for k, v := range declared {
+				criteria[k] = jev.Str(v)
+			}
+			for k, v := range callTime[id] {
+				if _, exists := criteria[k]; exists {
+					return nil, fmt.Errorf("registry: duplicate option %q", k)
+				}
+				criteria[k] = v
+			}
+			if q.Type == "choice" {
+				if len(criteria) == 0 || len(criteria) > jev.MaxChoiceOptions {
+					return nil, fmt.Errorf("registry: invalid choice count for %s", id)
+				}
+				out[id] = jev.ChoiceQuestion{Instructions: q.Instructions, Criteria: criteria}
+			} else {
+				out[id] = jev.NoulQuestion{Instructions: q.Instructions, Criteria: criteria}
+			}
+		case "score":
+			var legend []string
+			if err := json.Unmarshal(q.Criteria, &legend); err != nil {
+				return nil, err
+			}
+			criteria := make([]json.RawMessage, len(legend))
+			for i, v := range legend {
+				criteria[i] = jev.Str(v)
+			}
+			out[id] = jev.ScoreQuestion{Instructions: q.Instructions, Criteria: criteria}
+		default:
+			return nil, fmt.Errorf("registry: unknown question type %q", q.Type)
+		}
+	}
+	return out, nil
 }
 
 // Policy holds a set's decision thresholds.
@@ -188,6 +247,9 @@ func (r *Registry) validate() error {
 }
 
 func (q Question) validateCriteria() error {
+	if q.CriteriaMode != "" && q.CriteriaMode != "fixed" && q.CriteriaMode != "call-time" {
+		return fmt.Errorf("invalid criteriaMode %q", q.CriteriaMode)
+	}
 	raw := q.Criteria
 	if len(raw) == 0 || string(raw) == "null" {
 		if q.Type == "choice" || q.Type == "score" {
@@ -222,6 +284,9 @@ func (q Question) validateCriteria() error {
 				return fmt.Errorf("noul criteria key %q is not true or false", k)
 			}
 		}
+	}
+	if q.CriteriaMode == "call-time" && q.Type != "choice" {
+		return errors.New("call-time criteria require choice question")
 	}
 	return nil
 }

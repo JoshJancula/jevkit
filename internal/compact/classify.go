@@ -371,7 +371,7 @@ func isPurePipeline(cmd string) bool {
 	}
 	var b strings.Builder
 	for i := 0; i < len(cmd); i++ {
-		if cmd[i] == '|' && !(i > 0 && cmd[i-1] == '|') && !(i+1 < len(cmd) && cmd[i+1] == '|') {
+		if cmd[i] == '|' && (i == 0 || cmd[i-1] != '|') && (i+1 == len(cmd) || cmd[i+1] != '|') {
 			b.WriteByte(' ')
 			continue
 		}

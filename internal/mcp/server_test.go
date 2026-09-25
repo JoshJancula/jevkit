@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/OWNER/jevkit/internal/redact"
 	"github.com/OWNER/jevkit/internal/registry"
 )
 
@@ -78,15 +80,16 @@ func fixtureClient() Asker {
 // harness drives a Server in-process over io.Pipe, one JSON-RPC message per
 // line, like the ralph bats suite drove the shell server over stdin.
 type harness struct {
-	t      *testing.T
-	in     *io.PipeWriter
-	lines  chan string
-	stdout *lockedBuf
-	log    *lockedBuf
-	rec    *recorder
-	next   int
-	init   response
-	done   chan error
+	t        *testing.T
+	in       *io.PipeWriter
+	lines    chan string
+	stdout   *lockedBuf
+	log      *lockedBuf
+	rec      *recorder
+	next     int
+	init     response
+	done     chan error
+	auditDir string
 }
 
 type option func(*Config, *recorder)
@@ -96,12 +99,41 @@ func withUnavailable(reason string) option {
 }
 
 func withRedact(f func(string) (string, error)) option {
-	return func(c *Config, _ *recorder) { c.Redact = f }
+	return func(c *Config, _ *recorder) {
+		c.Redact = func(s string) (string, []redact.Hit, error) {
+			out, err := f(s)
+			return out, nil, err
+		}
+	}
+}
+
+func withRedactJSON(f func(json.RawMessage) (json.RawMessage, []redact.Hit, error)) option {
+	return func(c *Config, _ *recorder) { c.RedactJSON = f }
 }
 
 func withAskErr(err error) option { return func(_ *Config, r *recorder) { r.err = err } }
 
 func withInner(a Asker) option { return func(_ *Config, r *recorder) { r.inner = a } }
+
+func withAuditDir(dir string) option {
+	return func(c *Config, _ *recorder) { c.AuditDir = dir }
+}
+
+func withDecider(d *registry.Decider) option {
+	return func(c *Config, _ *recorder) { c.Decider = d }
+}
+
+// passthroughRedactJSON is the default fixture RedactJSON: it re-marshals
+// raw to normalize whitespace, matching how a real Redactor leaves
+// already-clean JSON alone, with no hits.
+func passthroughRedactJSON(raw json.RawMessage) (json.RawMessage, []redact.Hit, error) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, nil, err
+	}
+	b, err := json.Marshal(v)
+	return b, nil, err
+}
 
 func start(t *testing.T, opts ...option) *harness {
 	t.Helper()
@@ -112,14 +144,17 @@ func start(t *testing.T, opts ...option) *harness {
 	rec := &recorder{inner: fixtureClient()}
 	cfg := Config{
 		Decider:     &registry.Decider{Registry: reg, StateDir: t.TempDir()},
-		Redact:      func(s string) (string, error) { return s, nil },
+		Redact:      func(s string) (string, []redact.Hit, error) { return s, nil, nil },
+		RedactJSON:  passthroughRedactJSON,
 		Unavailable: func(context.Context) string { return "" },
+		AuditDir:    t.TempDir(),
 		Version:     "test",
 	}
 	h := &harness{t: t, rec: rec, log: &lockedBuf{}, stdout: &lockedBuf{}, lines: make(chan string, 64), done: make(chan error, 1)}
 	for _, o := range opts {
 		o(&cfg, rec)
 	}
+	h.auditDir = cfg.AuditDir
 	cfg.Client = rec
 	cfg.Log = h.log
 	srv, err := New(cfg)
@@ -318,9 +353,44 @@ func listNames(t *testing.T, h *harness) []string {
 func TestToolsListNamesSortedAndStableAcrossStarts(t *testing.T) {
 	a := listNames(t, start(t))
 	b := listNames(t, start(t))
-	want := []string{"jev_ask", "jev_classify_failure", "jev_classify_request", "jev_rank_relevance"}
+	want := []string{"jev_ask", "jev_classify_failure", "jev_classify_request", "jev_developer_assess", "jev_rank_relevance"}
 	if !slices.Equal(a, want) || !slices.Equal(b, want) {
 		t.Errorf("names = %v then %v, want %v", a, b, want)
+	}
+}
+
+// TestJevAskDescribesCriteriaNotOptions checks the tools/list catalog
+// documents "criteria" as the way to shape a jev_ask question, and only
+// mentions the legacy "options" alias as deprecated.
+func TestJevAskDescribesCriteriaNotOptions(t *testing.T) {
+	h := start(t)
+	r := h.request("tools/list", nil)
+	var res struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(r.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	var desc string
+	for _, tool := range res.Tools {
+		if tool.Name == "jev_ask" {
+			desc = tool.Description
+		}
+	}
+	if desc == "" {
+		t.Fatal("jev_ask not in tools/list")
+	}
+	if !strings.Contains(desc, "criteria") {
+		t.Errorf("description does not mention criteria: %q", desc)
+	}
+	if !strings.Contains(desc, "DEPRECATED") || !strings.Contains(desc, "options") {
+		t.Errorf("description does not mark options deprecated: %q", desc)
+	}
+	if idx := strings.Index(desc, "Detailed choice example"); idx == -1 || !strings.Contains(desc[idx:idx+300], "billing") {
+		t.Errorf("description missing copyable detailed choice example: %q", desc)
 	}
 }
 
@@ -398,7 +468,7 @@ func TestCuratedToolsReturnAnswerDecisionSetAndVersion(t *testing.T) {
 			if c.wantOpts != nil {
 				choice := req.Questions[c.answerKey].(jev.ChoiceQuestion)
 				var got []string
-				for k := range choice.Options {
+				for k := range choice.Criteria {
 					got = append(got, k)
 				}
 				slices.Sort(got)
@@ -605,36 +675,53 @@ type staticAsker struct{ resp *jev.Response }
 
 func (s staticAsker) Ask(context.Context, jev.Request) (*jev.Response, error) { return s.resp, nil }
 
-func TestJevAskIsRawAndUnversioned(t *testing.T) {
-	resp := &jev.Response{Answers: map[string]jev.Answer{
-		"pick": jev.ChoiceAnswer{Choice: "a", Probabilities: map[string]float64{"a": 0.9}, Confidence: 0.9},
-		"ok":   jev.NoulAnswer{Noul: 0.7},
-		"n":    jev.ScoreAnswer{Score: 3, Confidence: 0.5},
-	}}
+func TestJevAskIsRawAndUnregistered(t *testing.T) {
+	resp := &jev.Response{
+		Model: "jev-1.13.0",
+		Usage: jev.Usage{InputTokens: 42, OutputTokens: 7},
+		Answers: map[string]jev.Answer{
+			"pick": jev.ChoiceAnswer{Choice: "a", Probabilities: map[string]float64{"a": 0.9}, Confidence: 0.9},
+			"ok":   jev.NoulAnswer{Noul: 0.7},
+			"n":    jev.ScoreAnswer{Score: 3, Confidence: 0.5, Legend: []string{"none", "lots"}, Distribution: map[string]float64{"none": 0.2, "lots": 0.8}},
+		},
+	}
 	h := start(t, withInner(staticAsker{resp}))
 	tr, r := h.call("jev_ask", map[string]any{"state": "raw state", "questions": map[string]any{
-		"pick": map[string]any{"type": "choice", "instructions": "which?", "options": map[string]any{"a": nil, "b": "bee"}},
+		"pick": map[string]any{"type": "choice", "instructions": "which?", "criteria": map[string]any{"a": nil, "b": "bee"}},
 		"ok":   map[string]any{"type": "noul", "instructions": "fine?"},
 		"n":    map[string]any{"type": "score", "instructions": "how many?", "criteria": []string{"none", "lots"}},
 	}})
 	if r.Error != nil || tr.IsError {
 		t.Fatalf("error: %+v", r.Error)
 	}
-	if !mustGet[bool](t, tr.Structured, "unversioned") || !mustGet[bool](t, tr.Structured, "unaudited") {
+	if !mustGet[bool](t, tr.Structured, "unversioned") || !mustGet[bool](t, tr.Structured, "unaudited") || !mustGet[bool](t, tr.Structured, "unregistered") {
 		t.Errorf("flags = %v", tr.Structured)
 	}
 	if got := mustGet[string](t, tr.Structured, "answer", "pick", "choice"); got != "a" {
 		t.Errorf("choice = %q", got)
 	}
+	if got := mustGet[string](t, tr.Structured, "answer", "pick", "type"); got != "choice" {
+		t.Errorf("pick type = %q", got)
+	}
 	if got := mustGet[float64](t, tr.Structured, "answer", "ok", "noul"); got != 0.7 {
 		t.Errorf("noul = %v", got)
+	}
+	if got := mustGet[string](t, tr.Structured, "model"); got != "jev-1.13.0" {
+		t.Errorf("model = %q", got)
+	}
+	if got := mustGet[float64](t, tr.Structured, "usage", "input_tokens"); got != 42 {
+		t.Errorf("usage.input_tokens = %v", got)
+	}
+	legend := mustGet[[]any](t, tr.Structured, "answer", "n", "legend")
+	if len(legend) != 2 {
+		t.Errorf("legend = %v", legend)
 	}
 	for _, k := range []string{"decision", "questionSetId", "registryVersion"} {
 		if _, ok := tr.Structured[k]; ok {
 			t.Errorf("raw tool returned %q", k)
 		}
 	}
-	if len(tr.Content) != 1 || !strings.Contains(tr.Content[0].Text, "UNVERSIONED") {
+	if len(tr.Content) != 1 || !strings.Contains(tr.Content[0].Text, "unregistered") {
 		t.Errorf("content = %+v", tr.Content)
 	}
 	req := h.rec.last()
@@ -643,22 +730,368 @@ func TestJevAskIsRawAndUnversioned(t *testing.T) {
 	}
 }
 
+func TestJevAskOptionsAliasNormalizesToNullCriteria(t *testing.T) {
+	resp := &jev.Response{Answers: map[string]jev.Answer{"pick": jev.ChoiceAnswer{Choice: "a"}}}
+	h := start(t, withInner(staticAsker{resp}))
+	tr, r := h.call("jev_ask", map[string]any{"state": "s", "questions": map[string]any{
+		"pick": map[string]any{"type": "choice", "instructions": "which?", "options": []string{"a", "b"}},
+	}})
+	if r.Error != nil || tr.IsError {
+		t.Fatalf("error: %+v", r.Error)
+	}
+	cq, ok := h.rec.last().Questions["pick"].(jev.ChoiceQuestion)
+	if !ok {
+		t.Fatalf("question = %#v", h.rec.last().Questions["pick"])
+	}
+	if len(cq.Criteria) != 2 || string(cq.Criteria["a"]) != "null" || string(cq.Criteria["b"]) != "null" {
+		t.Errorf("criteria = %v", cq.Criteria)
+	}
+}
+
 func TestJevAskInvalidParams(t *testing.T) {
 	h := start(t, withInner(staticAsker{&jev.Response{}}))
 	q := map[string]any{"q": map[string]any{"type": "noul", "instructions": "i"}}
 	for name, args := range map[string]any{
-		"no arguments":     nil,
-		"missing state":    map[string]any{"questions": q},
-		"missing question": map[string]any{"state": "s"},
-		"questions array":  map[string]any{"state": "s", "questions": []any{}},
-		"empty questions":  map[string]any{"state": "s", "questions": map[string]any{}},
-		"unknown key":      map[string]any{"state": "s", "questions": q, "options": []string{"a"}},
-		"bad type":         map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "yesno", "instructions": "i"}}},
-		"unknown field":    map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "noul", "instructions": "i", "extra": 1}}},
-		"choice no opts":   map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "choice", "instructions": "i"}}},
-		"question string":  map[string]any{"state": "s", "questions": map[string]any{"q": "noul"}},
+		"no arguments":           nil,
+		"missing state":          map[string]any{"questions": q},
+		"blank state":            map[string]any{"state": "", "questions": q},
+		"numeric state":          map[string]any{"state": 1, "questions": q},
+		"missing question":       map[string]any{"state": "s"},
+		"questions array":        map[string]any{"state": "s", "questions": []any{}},
+		"empty questions":        map[string]any{"state": "s", "questions": map[string]any{}},
+		"unknown key":            map[string]any{"state": "s", "questions": q, "options": []string{"a"}},
+		"bad type":               map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "yesno", "instructions": "i"}}},
+		"unknown field":          map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "noul", "instructions": "i", "extra": 1}}},
+		"choice no criteria":     map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "choice", "instructions": "i"}}},
+		"score one level":        map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "score", "instructions": "i", "criteria": []string{"only"}}}},
+		"question string":        map[string]any{"state": "s", "questions": map[string]any{"q": "noul"}},
+		"blank instructions":     map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "noul", "instructions": ""}}},
+		"numeric instructions":   map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "noul", "instructions": 1}}},
+		"options on non-choice":  map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "noul", "instructions": "i", "options": []string{"a"}}}},
+		"options plus criteria":  map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "choice", "instructions": "i", "options": []string{"a"}, "criteria": map[string]any{"a": nil}}}},
+		"empty option label":     map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "choice", "instructions": "i", "options": []string{""}}}},
+		"invalid criteria shape": map[string]any{"state": "s", "questions": map[string]any{"q": map[string]any{"type": "choice", "instructions": "i", "criteria": []string{"a"}}}},
 	} {
 		t.Run(name, func(t *testing.T) { h.wantInvalid("jev_ask", args) })
+	}
+}
+
+func TestJevAskStructuredStateAndInstructions(t *testing.T) {
+	resp := &jev.Response{Answers: map[string]jev.Answer{"ok": jev.NoulAnswer{Noul: 0.5}}}
+	h := start(t, withInner(staticAsker{resp}))
+	tr, r := h.call("jev_ask", map[string]any{
+		"state": map[string]any{"summary": "structured state", "count": 3},
+		"questions": map[string]any{
+			"ok": map[string]any{"type": "noul", "instructions": []any{"step one", "step two"}},
+		},
+	})
+	if r.Error != nil || tr.IsError {
+		t.Fatalf("error: %+v", r.Error)
+	}
+	req := h.rec.last()
+	var state map[string]any
+	if err := json.Unmarshal([]byte(req.State), &state); err != nil {
+		t.Fatalf("state not JSON: %q: %v", req.State, err)
+	}
+	if state["summary"] != "structured state" {
+		t.Errorf("state = %v", state)
+	}
+	nq, ok := req.Questions["ok"].(jev.NoulQuestion)
+	if !ok {
+		t.Fatalf("question = %#v", req.Questions["ok"])
+	}
+	var instr []any
+	if err := json.Unmarshal([]byte(nq.Instructions), &instr); err != nil || len(instr) != 2 {
+		t.Errorf("instructions = %q (err=%v)", nq.Instructions, err)
+	}
+}
+
+func TestJevAskStructuredStateRedactedAndInvalidRejected(t *testing.T) {
+	h := start(t, withRedactJSON(func(raw json.RawMessage) (json.RawMessage, []redact.Hit, error) {
+		s := strings.ReplaceAll(string(raw), testKey, `"[REDACTED]"`)
+		return json.RawMessage(s), []redact.Hit{{RuleID: "builtin.key", Count: 1}}, nil
+	}), withInner(staticAsker{&jev.Response{Answers: map[string]jev.Answer{"ok": jev.NoulAnswer{Noul: 0.1}}}}))
+	q := map[string]any{"ok": map[string]any{"type": "noul", "instructions": "fine?"}}
+	tr, r := h.call("jev_ask", map[string]any{"state": map[string]any{"secret": testKey}, "questions": q})
+	if r.Error != nil || tr.IsError {
+		t.Fatalf("error: %+v", r.Error)
+	}
+	if strings.Contains(h.rec.last().State, testKey) {
+		t.Errorf("secret leaked into state: %q", h.rec.last().State)
+	}
+
+	h2 := start(t, withRedactJSON(func(json.RawMessage) (json.RawMessage, []redact.Hit, error) {
+		return nil, nil, errors.New("config invalid: " + testKey)
+	}))
+	h2.wantInvalid("jev_ask", map[string]any{"state": map[string]any{"a": 1}, "questions": q})
+	if strings.Contains(h2.log.String(), testKey) {
+		t.Errorf("redaction error detail logged: %q", h2.log.String())
+	}
+}
+
+func TestJevAskAuditEntry(t *testing.T) {
+	dir := t.TempDir()
+	resp := &jev.Response{Answers: map[string]jev.Answer{
+		"ok": jev.NoulAnswer{Noul: 0.5},
+	}}
+	h := start(t, withInner(staticAsker{resp}), withAuditDir(dir), withRedact(func(s string) (string, error) {
+		return strings.ReplaceAll(s, testKey, "[REDACTED]"), nil
+	}))
+	tr, r := h.call("jev_ask", map[string]any{
+		"state": "secret is " + testKey,
+		"questions": map[string]any{
+			"ok": map[string]any{"type": "noul", "instructions": "fine?"},
+		},
+	})
+	if r.Error != nil || tr.IsError {
+		t.Fatalf("error: %+v", r.Error)
+	}
+	data, err := os.ReadFile(AuditPath(dir))
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	if strings.Contains(string(data), testKey) {
+		t.Errorf("audit log leaked payload text: %q", data)
+	}
+	var entry AuditEntry
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &entry); err != nil {
+		t.Fatalf("bad audit line: %v", err)
+	}
+	if entry.Tool != "jev_ask" || !entry.Unregistered {
+		t.Errorf("entry = %+v", entry)
+	}
+	if entry.Caller != "test/1" {
+		t.Errorf("caller = %q", entry.Caller)
+	}
+	if entry.StateBytes == 0 || len(entry.Questions) != 1 || entry.Questions[0].ID != "ok" || entry.Questions[0].Type != "noul" {
+		t.Errorf("entry = %+v", entry)
+	}
+	if entry.Timestamp == "" {
+		t.Errorf("timestamp missing")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// jev_developer_assess
+// ---------------------------------------------------------------------------
+
+// TestDeveloperAssessToolDiscoverable checks tools/list documents every
+// built-in developer.* assessment, its shared state fields, and the
+// no-automatic-action guarantee, so the dispatcher is self-describing.
+func TestDeveloperAssessToolDiscoverable(t *testing.T) {
+	h := start(t)
+	r := h.request("tools/list", nil)
+	var res struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(r.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	var desc string
+	for _, tool := range res.Tools {
+		if tool.Name == "jev_developer_assess" {
+			desc = tool.Description
+		}
+	}
+	if desc == "" {
+		t.Fatal("jev_developer_assess not in tools/list")
+	}
+	for _, id := range developerAssessmentIDs() {
+		if !strings.Contains(desc, id) {
+			t.Errorf("description missing assessment %q: %q", id, desc)
+		}
+	}
+	for _, field := range []string{"diffSummary", "affectedAreas", "testOutput", "environment", "constraints"} {
+		if !strings.Contains(desc, field) {
+			t.Errorf("description missing state field %q", field)
+		}
+	}
+	if !strings.Contains(desc, "modifies code") {
+		t.Errorf("description does not state the no-automatic-action guarantee: %q", desc)
+	}
+}
+
+func developerAssessState(id string) map[string]any {
+	switch id {
+	case "developer.change-risk":
+		return map[string]any{"diffSummary": "widen auth token TTL", "affectedAreas": []string{"auth"}}
+	case "developer.failure-triage":
+		return map[string]any{"testOutput": "FAIL TestLogin: timeout after 30s"}
+	case "developer.test-priority":
+		return map[string]any{"diffSummary": "renamed internal helper, no behavior change"}
+	case "developer.review-disposition":
+		return map[string]any{"diffSummary": "removed dead code path"}
+	case "developer.release-readiness":
+		return map[string]any{"testOutput": "all tests passed", "constraints": "no DB migration"}
+	}
+	return nil
+}
+
+// TestDeveloperAssessRequestConstruction drives each built-in assessment end
+// to end: the right question set is called, the answer round-trips, and the
+// response carries only data (answer/decision/assessment/registryVersion),
+// never an action field.
+func TestDeveloperAssessRequestConstruction(t *testing.T) {
+	cases := []struct {
+		id       string
+		question string
+		answer   jev.Answer
+	}{
+		{"developer.change-risk", "risk", jev.ScoreAnswer{Score: 3, Confidence: 0.9}},
+		{"developer.failure-triage", "cause", jev.ChoiceAnswer{Choice: "regression", Confidence: 0.9}},
+		{"developer.test-priority", "priority", jev.ChoiceAnswer{Choice: "targeted-tests", Confidence: 0.9}},
+		{"developer.review-disposition", "disposition", jev.ChoiceAnswer{Choice: "no-finding", Confidence: 0.9}},
+		{"developer.release-readiness", "ready", jev.NoulAnswer{Noul: 0.9}},
+	}
+	if len(cases) != len(developerAssessments) {
+		t.Fatalf("cases cover %d assessments, want %d", len(cases), len(developerAssessments))
+	}
+	for _, c := range cases {
+		t.Run(c.id, func(t *testing.T) {
+			resp := &jev.Response{Answers: map[string]jev.Answer{c.question: c.answer}}
+			h := start(t, withInner(staticAsker{resp}))
+			tr, r := h.call("jev_developer_assess", map[string]any{"assessment": c.id, "state": developerAssessState(c.id)})
+			if r.Error != nil || tr.IsError {
+				t.Fatalf("error: %+v", r.Error)
+			}
+			if got := mustGet[string](t, tr.Structured, "assessment"); got != c.id {
+				t.Errorf("assessment = %q, want %q", got, c.id)
+			}
+			if got := mustGet[string](t, tr.Structured, "registryVersion"); got != "1" {
+				t.Errorf("registryVersion = %q", got)
+			}
+			switch mustGet[string](t, tr.Structured, "decision", "decision") {
+			case "act", "gather", "fallback":
+			default:
+				t.Errorf("decision = %v", tr.Structured["decision"])
+			}
+			for k := range tr.Structured {
+				switch k {
+				case "answer", "decision", "assessment", "registryVersion":
+				default:
+					t.Errorf("unexpected structured key %q (no automatic-action fields expected)", k)
+				}
+			}
+			req := h.rec.last()
+			if req.QuestionSetID != c.id {
+				t.Errorf("request set = %q, want %q", req.QuestionSetID, c.id)
+			}
+		})
+	}
+}
+
+// TestDeveloperAssessConfidenceThresholds checks the shared registry policy
+// (act >= 0.85, gather >= 0.6, else fallback) applies to a developer.*
+// assessment exactly like it does to the curated tools.
+func TestDeveloperAssessConfidenceThresholds(t *testing.T) {
+	for _, c := range []struct {
+		confidence float64
+		want       string
+	}{
+		{0.9, "act"},
+		{0.7, "gather"},
+		{0.3, "fallback"},
+	} {
+		t.Run(c.want, func(t *testing.T) {
+			resp := &jev.Response{Answers: map[string]jev.Answer{"risk": jev.ScoreAnswer{Score: 2, Confidence: c.confidence}}}
+			h := start(t, withInner(staticAsker{resp}))
+			tr, r := h.call("jev_developer_assess", map[string]any{
+				"assessment": "developer.change-risk",
+				"state":      developerAssessState("developer.change-risk"),
+			})
+			if r.Error != nil || tr.IsError {
+				t.Fatalf("error: %+v", r.Error)
+			}
+			if got := mustGet[string](t, tr.Structured, "decision", "decision"); got != c.want {
+				t.Errorf("confidence %v decision = %q, want %q", c.confidence, got, c.want)
+			}
+		})
+	}
+}
+
+// TestDeveloperAssessShadowLogsWouldHaveDecision checks JEVKIT_SHADOW=1
+// forces a fallback response while the logged decisions.jsonl record keeps
+// the would-have decision, the same shadow-rollout mechanism documented for
+// calibrating a new registry set before trusting it live.
+func TestDeveloperAssessShadowLogsWouldHaveDecision(t *testing.T) {
+	reg, err := registry.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir := t.TempDir()
+	dec := &registry.Decider{Registry: reg, StateDir: stateDir, Getenv: func(k string) string {
+		if k == "JEVKIT_SHADOW" {
+			return "1"
+		}
+		return ""
+	}}
+	resp := &jev.Response{Answers: map[string]jev.Answer{"risk": jev.ScoreAnswer{Score: 4, Confidence: 0.95}}}
+	h := start(t, withInner(staticAsker{resp}), withDecider(dec))
+	tr, r := h.call("jev_developer_assess", map[string]any{
+		"assessment": "developer.change-risk",
+		"state":      developerAssessState("developer.change-risk"),
+	})
+	if r.Error != nil || tr.IsError {
+		t.Fatalf("error: %+v", r.Error)
+	}
+	if got := mustGet[string](t, tr.Structured, "decision", "decision"); got != "fallback" {
+		t.Errorf("shadow-mode returned decision = %q, want fallback", got)
+	}
+	data, err := os.ReadFile(registry.DecisionsPath(stateDir))
+	if err != nil {
+		t.Fatalf("read decisions log: %v", err)
+	}
+	var logged registry.Decision
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &logged); err != nil {
+		t.Fatalf("bad decision line: %v", err)
+	}
+	if logged.Decision != "act" {
+		t.Errorf("logged would-have decision = %q, want act", logged.Decision)
+	}
+}
+
+// TestDeveloperAssessRedactedBeforeTransport checks structured state reaches
+// the wire only after JSON-aware redaction, the same guarantee jev_ask
+// carries.
+func TestDeveloperAssessRedactedBeforeTransport(t *testing.T) {
+	h := start(t, withRedactJSON(func(raw json.RawMessage) (json.RawMessage, []redact.Hit, error) {
+		s := strings.ReplaceAll(string(raw), testKey, `"[REDACTED]"`)
+		return json.RawMessage(s), []redact.Hit{{RuleID: "builtin.key", Count: 1}}, nil
+	}), withInner(staticAsker{&jev.Response{Answers: map[string]jev.Answer{"ready": jev.NoulAnswer{Noul: 0.9}}}}))
+	tr, r := h.call("jev_developer_assess", map[string]any{
+		"assessment": "developer.release-readiness",
+		"state":      map[string]any{"testOutput": "ok", "constraints": testKey},
+	})
+	if r.Error != nil || tr.IsError {
+		t.Fatalf("error: %+v", r.Error)
+	}
+	if strings.Contains(h.rec.last().State, testKey) {
+		t.Errorf("secret leaked into state: %q", h.rec.last().State)
+	}
+}
+
+// TestDeveloperAssessInvalidParams checks unknown assessments, unknown state
+// keys, missing required state, and non-structured state are all rejected
+// before Jev is called.
+func TestDeveloperAssessInvalidParams(t *testing.T) {
+	h := start(t, withInner(staticAsker{&jev.Response{}}))
+	for name, args := range map[string]any{
+		"no arguments":            nil,
+		"missing assessment":      map[string]any{"state": map[string]any{"diffSummary": "x", "affectedAreas": []string{"a"}}},
+		"unknown assessment":      map[string]any{"assessment": "developer.nope", "state": map[string]any{"diffSummary": "x"}},
+		"missing state":           map[string]any{"assessment": "developer.change-risk"},
+		"state not object":        map[string]any{"assessment": "developer.change-risk", "state": "diff"},
+		"unknown state key":       map[string]any{"assessment": "developer.change-risk", "state": map[string]any{"diffSummary": "x", "affectedAreas": []string{"a"}, "bogus": 1}},
+		"missing required key":    map[string]any{"assessment": "developer.change-risk", "state": map[string]any{"diffSummary": "x"}},
+		"registry set not a dev.": map[string]any{"assessment": "graph.failure-class", "state": map[string]any{"diffSummary": "x"}},
+		"unknown top-level key":   map[string]any{"assessment": "developer.change-risk", "state": developerAssessState("developer.change-risk"), "options": []string{"a"}},
+	} {
+		t.Run(name, func(t *testing.T) { h.wantInvalid("jev_developer_assess", args) })
 	}
 }
 
@@ -681,7 +1114,8 @@ func TestNewRequiresDependencies(t *testing.T) {
 	full := Config{
 		Decider:     &registry.Decider{Registry: reg},
 		Client:      staticAsker{},
-		Redact:      func(s string) (string, error) { return s, nil },
+		Redact:      func(s string) (string, []redact.Hit, error) { return s, nil, nil },
+		RedactJSON:  passthroughRedactJSON,
 		Unavailable: func(context.Context) string { return "" },
 	}
 	if _, err := New(full); err != nil {
@@ -692,6 +1126,7 @@ func TestNewRequiresDependencies(t *testing.T) {
 		"registry":    func(c *Config) { c.Decider = &registry.Decider{} },
 		"client":      func(c *Config) { c.Client = nil },
 		"redact":      func(c *Config) { c.Redact = nil },
+		"redactJSON":  func(c *Config) { c.RedactJSON = nil },
 		"unavailable": func(c *Config) { c.Unavailable = nil },
 	} {
 		c := full

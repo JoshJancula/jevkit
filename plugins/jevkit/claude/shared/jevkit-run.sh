@@ -7,11 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOTSTRAP="$ROOT/jevkit-plugin-bootstrap.sh"
 
 fail_open() {
-  case " $* " in
-    *" hook cursor pre-tool "*) printf '%s\n' '{"permission":"allow"}' ;;
-    *" hook antigravity "*) printf '%s\n' '{"decision":"allow"}' ;;
-    *) printf '%s\n' '{}' ;;
-  esac
+  printf '%s\n' '{}'
   exit 0
 }
 

@@ -11,8 +11,13 @@ import (
 	"testing"
 
 	"github.com/OWNER/jevkit/internal/agents"
+	"github.com/OWNER/jevkit/internal/jev"
 	"github.com/OWNER/jevkit/internal/usage"
 )
+
+type codexAsker struct{ response *jev.Response }
+
+func (a codexAsker) Ask(context.Context, jev.Request) (*jev.Response, error) { return a.response, nil }
 
 func TestCodexLookupRegistered(t *testing.T) {
 	got := agents.Lookup(agents.CodexName)
@@ -23,21 +28,16 @@ func TestCodexLookupRegistered(t *testing.T) {
 	if !caps.PreTool || !caps.PreToolRewrite || !caps.PostTool {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
-	if caps.OutputReplace {
-		t.Fatalf("codex PostToolUse replace is unproven: %+v", caps)
+	if !caps.OutputReplace {
+		t.Fatalf("codex PostToolUse replacement must be enabled: %+v", caps)
 	}
 }
 
-func TestCodexPreToolRewritesBashToJevkitExec(t *testing.T) {
+func TestCodexPreToolRewritesBash(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "codex", "pretooluse-bash.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "codex", "pretooluse-bash-response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	c := agents.NewCodex()
 	resp, err := c.HandlePreTool(context.Background(), agents.Request{
 		Raw:   json.RawMessage(raw),
@@ -47,18 +47,11 @@ func TestCodexPreToolRewritesBashToJevkitExec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got, want map[string]any
+	var got map[string]any
 	if err := json.Unmarshal(resp.Body, &got); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if err := json.Unmarshal(wantRaw, &want); err != nil {
-		t.Fatal(err)
-	}
 	gotCmd := nestedString(got, "hookSpecificOutput", "updatedInput", "command")
-	wantCmd := nestedString(want, "hookSpecificOutput", "updatedInput", "command")
-	if gotCmd != wantCmd {
-		t.Fatalf("command\n got %q\nwant %q", gotCmd, wantCmd)
-	}
 	hso, _ := got["hookSpecificOutput"].(map[string]any)
 	if hso["permissionDecision"] != "allow" {
 		t.Fatalf("permissionDecision %v", hso["permissionDecision"])
@@ -66,8 +59,8 @@ func TestCodexPreToolRewritesBashToJevkitExec(t *testing.T) {
 	if hso["hookEventName"] != "PreToolUse" {
 		t.Fatalf("hookEventName %v", hso["hookEventName"])
 	}
-	if !strings.HasPrefix(gotCmd, "jevkit exec -- ") {
-		t.Fatalf("expected jevkit exec rewrite, got %q", gotCmd)
+	if !strings.Contains(gotCmd, "_runtime shell-wrapper") || !strings.Contains(gotCmd, "go test ./...") {
+		t.Fatalf("pre-tool must rewrite, got %q", gotCmd)
 	}
 }
 
@@ -76,6 +69,7 @@ func TestCodexPreToolRewritesCommandExecution(t *testing.T) {
 		"hook_event_name": "PreToolUse",
 		"tool_name":       "command_execution",
 		"tool_input":      map[string]any{"command": "npm test"},
+		"cwd":             "/tmp/proj",
 	}
 	raw, _ := json.Marshal(payload)
 	c := agents.NewCodex()
@@ -91,16 +85,17 @@ func TestCodexPreToolRewritesCommandExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := nestedString(got, "hookSpecificOutput", "updatedInput", "command")
-	if cmd != "jevkit exec -- npm test" {
-		t.Fatalf("command_execution rewrite: %q", cmd)
+	if !strings.Contains(cmd, "_runtime shell-wrapper") {
+		t.Fatalf("command_execution must rewrite: %q", cmd)
 	}
 }
 
-func TestCodexPreToolIdempotentAlreadyRewritten(t *testing.T) {
+func TestCodexPreToolDoesNotMutateExistingCommand(t *testing.T) {
 	payload := map[string]any{
 		"hook_event_name": "PreToolUse",
 		"tool_name":       "Bash",
-		"tool_input":      map[string]any{"command": "jevkit exec -- go test ./..."},
+		"tool_input":      map[string]any{"command": "jevkit _runtime shell-wrapper --command 'go test ./...'"},
+		"cwd":             "/tmp/proj",
 	}
 	raw, _ := json.Marshal(payload)
 	c := agents.NewCodex()
@@ -116,11 +111,8 @@ func TestCodexPreToolIdempotentAlreadyRewritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := nestedString(got, "hookSpecificOutput", "updatedInput", "command")
-	if cmd != "jevkit exec -- go test ./..." {
-		t.Fatalf("double-wrapped: %q", cmd)
-	}
-	if strings.Count(cmd, "jevkit exec --") != 1 {
-		t.Fatalf("expected single wrap: %q", cmd)
+	if cmd != "" {
+		t.Fatalf("pre-tool must not mutate wrapper: %q", cmd)
 	}
 }
 
@@ -152,15 +144,34 @@ func TestCodexPreToolNonShellPassthrough(t *testing.T) {
 	}
 }
 
-func TestCodexPostToolTelemetryOnlyNoMutation(t *testing.T) {
+func TestCodexPostToolCompactsWithReplacementFeedback(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "codex", "posttooluse-bash.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["tool_response"] = map[string]any{
+		"stdout": strings.Repeat("Downloading dependency package\n", 100),
+		"stderr": "",
+	}
+	raw, err = json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var mu sync.Mutex
 	var recs []usage.HookInvocation
-	c := agents.NewCodex()
+	c := &agents.Codex{
+		Getenv:         envMap{"JEVKIT_COMPACT": "1"}.Getenv,
+		ThresholdBytes: 200,
+		Asker: codexAsker{response: &jev.Response{Answers: map[string]jev.Answer{
+			"disposition": jev.ChoiceAnswer{Choice: "deterministic-compact", Confidence: 0.99},
+			"outcome":     jev.ChoiceAnswer{Choice: "success", Confidence: 0.99},
+		}}},
+	}
 	code := agents.Run(context.Background(), c, agents.EventPostTool, bytes.NewReader(raw), &bytes.Buffer{}, agents.Options{
 		StateDir: t.TempDir(),
 		AppendHook: func(_ string, rec usage.HookInvocation) error {
@@ -193,8 +204,23 @@ func TestCodexPostToolTelemetryOnlyNoMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if string(resp.Body) != "{}" {
+		t.Fatalf("post tool must not halt the turn: %s", resp.Body)
+	}
+}
+
+func TestCodexPostToolFailsOpenWithoutJev(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "codex", "posttooluse-bash.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &agents.Codex{Getenv: envMap{"JEVKIT_COMPACT": "1"}.Getenv}
+	resp, err := c.HandlePostTool(context.Background(), agents.Request{Raw: raw, Event: agents.EventPostTool})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(bytes.TrimSpace(resp.Body)) != `{}` {
-		t.Fatalf("post-tool must be telemetry-only {}, got %s", resp.Body)
+		t.Fatalf("no Jev client must preserve output, got %s", resp.Body)
 	}
 }
 
@@ -227,12 +253,7 @@ func TestCodexInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preCount := strings.Count(string(data), agents.CodexPreToolMarker)
 	postCount := strings.Count(string(data), agents.CodexPostToolMarker)
-	// Bash + command_execution for each event.
-	if preCount != 2 {
-		t.Fatalf("expected two pre-tool entries, found %d in:\n%s", preCount, data)
-	}
 	if postCount != 2 {
 		t.Fatalf("expected two post-tool entries, found %d in:\n%s", postCount, data)
 	}
@@ -248,8 +269,8 @@ func TestCodexInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if !strings.Contains(string(data), `"./my-stop.sh"`) {
 		t.Fatalf("lost unrelated Stop hook: %s", data)
 	}
-	if !strings.Contains(string(data), "/opt/jevkit "+agents.CodexPreToolMarker) {
-		t.Fatalf("missing pre command: %s", data)
+	if strings.Count(string(data), agents.CodexPreToolMarker) != 2 {
+		t.Fatalf("expected two pre-tool commands: %s", data)
 	}
 	if !strings.Contains(string(data), `"type": "command"`) {
 		t.Fatalf("missing type command: %s", data)
@@ -310,7 +331,7 @@ func TestCodexInstallUserScopeAndAbsentRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(data), agents.CodexPreToolMarker) != 2 {
+	if strings.Count(string(data), agents.CodexPostToolMarker) != 2 {
 		t.Fatalf("not idempotent: %s", data)
 	}
 	if err := c.Uninstall(opts); err != nil {

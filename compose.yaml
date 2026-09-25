@@ -1,0 +1,9 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /src
+    volumes:
+      - .:/src
+    command: ["make", "test"]

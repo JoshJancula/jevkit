@@ -1,0 +1,13 @@
+{
+  "name": "other-synthetic",
+  "kind": "other",
+  "command": "custom-tool execute",
+  "exit": 0,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "SUMMARY: operation complete\n",
+  "gold": [
+    "SUMMARY: operation complete"
+  ]
+}

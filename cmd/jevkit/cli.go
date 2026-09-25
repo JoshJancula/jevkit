@@ -39,9 +39,14 @@ func codeErr(code int) error {
 // Cobra's own errors (unknown command, bad flag, bad arguments) are usage
 // errors.
 func (a *App) Run(args []string) int {
+	return a.RunContext(context.Background(), args)
+}
+
+// RunContext dispatches a command with a caller-owned cancellation context.
+func (a *App) RunContext(ctx context.Context, args []string) int {
 	root := a.rootCmd()
 	root.SetArgs(args)
-	err := root.ExecuteContext(context.Background())
+	err := root.ExecuteContext(ctx)
 	if err == nil {
 		return exitOK
 	}
@@ -58,8 +63,22 @@ func (a *App) Run(args []string) int {
 
 func (a *App) rootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "jevkit",
-		Short:         "jevkit: a Jev (TypeSafe AI) toolkit for coding agents",
+		Use:   "jevkit",
+		Short: "jevkit: a Jev (TypeSafe AI) toolkit for coding agents",
+		Long: `jevkit provides typed Jev decisions, safe redaction, agent integrations,
+and SDLC runs with agents you enroll. Ask commands send questions to Jev;
+SDLC run commands can assign agents to work on your project.`,
+		Example: `  # Check local configuration without sending a request.
+  jevkit doctor
+
+  # Ask a typed question from the terminal.
+  jevkit ask choice --state "HTTP status: 503" --question "What should happen?" --options "retry,fail"
+
+  # See redaction rules before connecting an agent.
+  jevkit redact list
+
+  # Set up agents for an SDLC run.
+  jevkit sdlc agents`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -70,17 +89,34 @@ func (a *App) rootCmd() *cobra.Command {
 	root.SetOut(a.Stdout)
 	root.SetErr(a.Stderr)
 	root.SetIn(a.Stdin)
+	root.PersistentFlags().BoolVar(&a.Yolo, "yolo", a.Yolo, "lift path guard only; killswitch and Jev scoring still apply")
+	root.PersistentFlags().StringVar(&a.SecurityPolicy, "security-policy", a.SecurityPolicy, "select a named security policy (env: JEVKIT_SECURITY_POLICY)")
+	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
+		w := cmd.OutOrStdout()
+		description := cmd.Long
+		if description == "" {
+			description = cmd.Short
+		}
+		if description != "" {
+			_, _ = fmt.Fprintf(w, "%s\n\n", a.helpText(w, description))
+		}
+		_, _ = fmt.Fprint(w, a.helpText(w, cmd.UsageString()))
+	})
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(
 		a.keyCmd(),
+		a.modelCmd(),
 		a.usageCmd(),
 		a.doctorCmd(),
 		a.versionCmd(),
-		a.migrateCmd(),
+		a.upgradeCmd(),
 		a.mcpCmd(),
+		a.askCmd(),
+		a.compactCmd(),
 		a.redactCmd(),
-		a.execCmd(),
-		a.hookCmd(),
+		a.securityCmd(),
+		a.sdlcCmd(),
+		a.runtimeCmd(),
 		a.installCmd(),
 		a.uninstallCmd(),
 	)

@@ -1,0 +1,53 @@
+version: 1
+name: release
+description: |
+  WHEN: cutting a release and deciding whether it is ready to ship.
+  NOT FOR: implementing new work (use feature) or investigating and fixing a
+  bug (use bugfix).
+
+budgets:
+  maxNodeAttempts: 3
+  maxReroutes: 2
+
+nodes:
+  - id: begin
+    kind: work
+    agent: self
+    objective: "Confirm the release candidate commit or tag to evaluate."
+    next: tests
+
+  - id: tests
+    kind: check
+    command: "go test ./..."
+    routes: { pass: readiness, fail: triage }
+
+  - id: triage
+    kind: decide
+    questionSet: graph.failure-class
+    state: { from: [tests.output], maxBytes: 2048 }
+    routes:
+      transient-runtime:   tests
+      agent-correctable:   human-scope
+      plan-contract:       human-scope
+      operator-permission: human-scope
+    default: human-scope
+
+  - id: readiness
+    kind: gate
+    questionSet: sdlc.handoff-readiness
+    state: { from: [task, tests.output], maxBytes: 4000 }
+    routes: { ready: done, not-ready: human-scope }
+    trueRoute: ready
+    default: human-scope
+
+  - id: human-scope
+    kind: human
+    prompt: "Release is not clearly ready. Continue, revise (rerun tests), or abort?"
+    routes: { continue: done, revise: tests, abort: aborted }
+
+  - id: done
+    kind: terminal
+    outcome: succeeded
+  - id: aborted
+    kind: terminal
+    outcome: aborted

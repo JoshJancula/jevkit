@@ -38,7 +38,7 @@ TCP connect only. Exits 1 when the redaction config is invalid.`,
 // doctor reports the local setup.
 func (a *App) doctor(ctx context.Context) int {
 	a.doctorKey(ctx)
-	a.doctorEndpoint(ctx)
+	modelValid := a.doctorEndpoint(ctx)
 	a.doctorBreaker()
 	a.doctorAgents()
 	a.outf("redaction\n")
@@ -64,6 +64,9 @@ func (a *App) doctor(ctx context.Context) int {
 	}
 	a.outf("  config:        ok\n  active layers: %s\n  mode:          %s\n", active, mode)
 	a.outf("  rules:         %d built-in, %d custom, %d disabled\n", len(redact.Rules()), len(cfg.Options.Custom), len(cfg.Options.DisableSoft))
+	if !modelValid {
+		return exitFail
+	}
 	return exitOK
 }
 
@@ -87,31 +90,37 @@ func (a *App) doctorKey(ctx context.Context) {
 	a.outf("  source:        %s\n", src)
 }
 
-func (a *App) doctorEndpoint(ctx context.Context) {
-	cfg := jev.ConfigFromEnv(a.getenv)
+func (a *App) doctorEndpoint(ctx context.Context) bool {
+	cfg, err := a.jevConfig()
 	a.outf("endpoint\n  url:           %s\n", cfg.Endpoint)
+	if err != nil {
+		a.outf("  model:         INVALID (%v)\n", err)
+		return false
+	}
+	a.outf("  model:         %s\n", cfg.Model)
 	switch {
 	case cfg.Transport == jev.TransportFixture:
 		a.outf("  reachability:  not checked (fixture transport, offline)\n")
-		return
+		return true
 	case a.Dial == nil:
 		a.outf("  reachability:  not checked\n")
-		return
+		return true
 	}
 	addr, err := dialAddr(cfg.Endpoint)
 	if err != nil {
 		a.outf("  reachability:  unreachable (%v)\n", err)
-		return
+		return true
 	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 	conn, err := a.Dial(ctx, "tcp", addr)
 	if err != nil {
 		a.outf("  reachability:  unreachable (tcp %s)\n", addr)
-		return
+		return true
 	}
 	_ = conn.Close()
 	a.outf("  reachability:  reachable (tcp connect to %s; no request sent)\n", addr)
+	return true
 }
 
 // dialAddr is host:port for an endpoint URL, defaulting the port by scheme.

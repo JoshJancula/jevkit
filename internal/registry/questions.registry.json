@@ -1,6 +1,38 @@
 {
   "registryVersion": "1",
   "questionSets": {
+    "compaction.triage.v2": {
+      "id": "compaction.triage.v2", "version": 1, "surface": "compaction",
+      "description": "Classify observable diagnostic structure in redacted shell output; labels only.",
+      "questions": {
+        "evidence_locus": {"type":"choice","instructions":"Where in the output does evidence needed to understand the outcome live?", "criteria":{"throughout":"Distinct information throughout the output","head":"Opening lines explain the outcome","tail":"Ending lines explain the outcome","first-failure":"One first failure site explains the outcome","scattered":"Several separated lines explain the outcome","nowhere":"No output lines are needed beyond the recorded exit status"}},
+        "outcome": {"type":"choice","instructions":"Classify the observed command outcome.","criteria":{"success":"Completed successfully","success-with-warnings":"Completed with warnings","no-op":"Completed without changing anything","partial-failure":"Some work failed and some succeeded","failure":"Failed","blocked-environment":"Blocked by environment or permissions","interrupted":"Interrupted before completion","unknown":"Insufficient evidence"}},
+        "content_kind": {"type":"choice","instructions":"Classify what this output describes.","criteria":{"test-run":"Test execution","build-compile":"Build or compile","typecheck":"Type checking","lint-format":"Linting or formatting","dependency-install":"Dependency installation","migration-schema":"Schema or migration","deploy-infra":"Deployment or infrastructure","data-query":"Query results or retrieved data","log-stream":"Log records","help-usage":"Help or usage information","version-probe":"Version information","other":"Other command output"}},
+        "retention_budget": {"type":"score","instructions":"Rate the information density of the original text from sparse to mostly distinct, independent of byte size.","criteria":["Almost no lines carry distinct information","A few lines carry distinct information","Several lines carry distinct information","Many lines carry distinct information","Most lines carry distinct information","Nearly all lines carry distinct information"]},
+        "tail_explains": {"type":"noul","instructions":"Do the ending lines explain the observed outcome?"},
+        "head_explains": {"type":"noul","instructions":"Do the opening lines explain the observed outcome?"},
+        "middle_omission_safe": {"type":"noul","instructions":"Can the middle be omitted while preserving the diagnosis?"},
+        "single_failure_site": {"type":"noul","instructions":"Is there one local failure site that explains the outcome?"}
+      },
+      "policy":{"primaryQuestion":"evidence_locus","actThreshold":0.85,"escalateThreshold":0.6,"fallback":"deterministic"},
+      "calibration":"placeholder - uncalibrated"
+    },
+    "compaction.salient-lines.v2": {
+      "id":"compaction.salient-lines.v2","version":1,"surface":"compaction",
+      "description":"Select global original line IDs by diagnostic role from a bounded redacted candidate set.",
+      "questions": {
+        "outcome_line":{"type":"choice","instructions":"Choose the line reporting the final outcome, or NONE.","criteria":{"NONE":"No candidate reports the outcome"},"criteriaMode":"call-time"},
+        "cause_line":{"type":"choice","instructions":"Choose the line explaining the cause, or NONE.","criteria":{"NONE":"No candidate explains the cause"},"criteriaMode":"call-time"},
+        "location_line":{"type":"choice","instructions":"Choose the line locating the issue, or NONE.","criteria":{"NONE":"No candidate locates the issue"},"criteriaMode":"call-time"},
+        "tally_line":{"type":"choice","instructions":"Choose the line with an outcome tally, or NONE.","criteria":{"NONE":"No candidate gives a tally"},"criteriaMode":"call-time"},
+        "next_step_line":{"type":"choice","instructions":"Choose the line with an actionable next step, or NONE.","criteria":{"NONE":"No candidate gives a next step"},"criteriaMode":"call-time"},
+        "second_site_line":{"type":"choice","instructions":"Choose a second independent diagnostic site, or NONE.","criteria":{"NONE":"No second site"},"criteriaMode":"call-time"},
+        "has_failure":{"type":"noul","instructions":"Is a failure present?"},
+        "selection_covers":{"type":"noul","instructions":"Do the selected lines cover the diagnostic evidence?"}
+      },
+      "policy":{"primaryQuestion":"outcome_line","actThreshold":0.85,"escalateThreshold":0.6,"fallback":"deterministic"},
+      "calibration":"placeholder - uncalibrated"
+    },
     "compaction.line-relevance": {
       "id": "compaction.line-relevance",
       "version": 1,
@@ -10,7 +42,7 @@
         "relevant_lines": {
           "type": "choice",
           "instructions": "Which line of the output would a developer need in order to diagnose what happened?",
-          "criteria": {}
+          "criteria": {}, "criteriaMode": "call-time"
         },
         "has_failure": {
           "type": "noul",
@@ -25,6 +57,26 @@
       },
       "calibration": "placeholder - uncalibrated"
     },
+    "compaction.disposition.v1": {
+      "id": "compaction.disposition.v1",
+      "version": 1,
+      "surface": "compaction",
+      "description": "Classify bounded, redacted diagnostic tool output. Jev selects an outcome and disposition from closed sets; it never summarizes or generates output.",
+      "questions": {
+        "outcome": {
+          "type": "choice",
+          "instructions": "Classify the observed tool outcome only.",
+          "criteria": {"success":"completed successfully", "failure":"completed with a diagnostic failure", "unknown":"insufficient evidence"}
+        },
+        "disposition": {
+          "type": "choice",
+          "instructions": "Choose how to retain existing evidence without summarizing it.",
+          "criteria": {"full":"retain all output", "deterministic-compact":"collapse only deterministic repeated noise", "ranked-diagnostic":"retain ranked existing diagnostic lines"}
+        }
+      },
+      "policy": {"primaryQuestion":"disposition", "actThreshold":0.85, "escalateThreshold":0.6, "fallback":"full"},
+      "calibration": "conservative closed-set policy"
+    },
     "graph.router-confidence": {
       "id": "graph.router-confidence",
       "version": 1,
@@ -34,7 +86,7 @@
         "target": {
           "type": "choice",
           "instructions": "Which allowed target should receive this request?",
-          "criteria": {}
+          "criteria": {}, "criteriaMode": "call-time"
         },
         "sufficiently_specified": {
           "type": "noul",
@@ -87,7 +139,7 @@
         "owner": {
           "type": "choice",
           "instructions": "Which candidate repair lane owns this finding?",
-          "criteria": {}
+          "criteria": {}, "criteriaMode": "call-time"
         }
       },
       "policy": {
@@ -95,6 +147,298 @@
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
         "fallback": "leave finding ambiguous"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "security.command-risk": {
+      "id": "security.command-risk",
+      "version": 1,
+      "surface": "security",
+      "description": "Classify the risk of executing a shell command in a coding workspace.",
+      "questions": {
+        "risk": {
+          "type": "score",
+          "instructions": "Rate the command's destructive, data exfiltration, or supply-chain risk from low to critical. Rate only the supplied command.",
+          "criteria": [
+            "low - routine read-only or local development command",
+            "moderate - limited local changes with clear scope",
+            "high - broad changes, remote code, or unverified package installation",
+            "severe - likely destructive operation or sensitive data transfer",
+            "critical - catastrophic deletion, exfiltration, or hostile execution"
+          ]
+        }
+      },
+      "policy": {"primaryQuestion":"risk","actThreshold":0.85,"escalateThreshold":0.6,"fallback":"allow"},
+      "calibration": "placeholder - uncalibrated"
+    },
+    "developer.change-risk": {
+      "id": "developer.change-risk",
+      "version": 1,
+      "surface": "mcp",
+      "description": "Decision support only: score the overall risk of a code change reaching production, from low to critical. Expects state.diffSummary and state.affectedAreas; state.testOutput, state.environment and state.constraints sharpen the rating when available. Thresholds are placeholders pending shadow-mode calibration and must not be treated as validated.",
+      "questions": {
+        "risk": {
+          "type": "score",
+          "instructions": "Rate the overall risk of this change reaching production, from low to critical, based on the diff summary, affected areas, and any test output, environment or constraints provided in state.",
+          "criteria": [
+            "low - isolated change, small blast radius, strong test coverage, easily reverted",
+            "moderate - contained change with reasonable coverage and limited blast radius",
+            "high - touches shared or critical-path code, or has notable coverage gaps",
+            "severe - broad blast radius, weak verification, or hard to reverse without mitigation",
+            "critical - could plausibly cause an outage, data loss, or security exposure"
+          ]
+        }
+      },
+      "policy": {
+        "primaryQuestion": "risk",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "escalate to human review"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "developer.failure-triage": {
+      "id": "developer.failure-triage",
+      "version": 1,
+      "surface": "mcp",
+      "description": "Decision support only: classify a test/build failure's most likely root-cause category. Expects state.testOutput; state.diffSummary and state.environment sharpen the classification when available. Thresholds are placeholders pending shadow-mode calibration and must not be treated as validated.",
+      "questions": {
+        "cause": {
+          "type": "choice",
+          "instructions": "Classify the most likely root-cause category of this failure given the test/build output and any diff summary or environment provided in state.",
+          "criteria": {
+            "regression": "Previously passing behavior now fails; the diff plausibly introduced the defect.",
+            "dependency-toolchain": "Failure traces to a dependency version, build tool, or toolchain issue unrelated to the diff's own logic.",
+            "configuration-environment": "Failure traces to environment or configuration differences (missing env var, wrong runtime version, infra) rather than code logic.",
+            "test-defect-flake": "The test itself is flaky, order-dependent, or incorrectly asserts; the production code is likely fine.",
+            "unknown": "No structured or text evidence maps confidently to one of the above categories."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "cause",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "unknown"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "developer.test-priority": {
+      "id": "developer.test-priority",
+      "version": 1,
+      "surface": "mcp",
+      "description": "Decision support only: decide how much testing a change needs before merge. Expects state.diffSummary; state.affectedAreas, state.testOutput, state.environment and state.constraints sharpen the decision when available. Thresholds are placeholders pending shadow-mode calibration and must not be treated as validated.",
+      "questions": {
+        "priority": {
+          "type": "choice",
+          "instructions": "Given the diff summary, affected areas, and any test output, environment or constraints in state, decide how much testing this change needs before merge.",
+          "criteria": {
+            "block": "Do not merge until failing or missing tests are addressed; current evidence is insufficient or contradicts the change.",
+            "targeted-tests": "Run tests scoped to the affected areas before merge; full-suite coverage is not required.",
+            "full-suite": "Run the full test suite before merge; the change's blast radius or risk is not well contained.",
+            "no-additional-tests": "Existing coverage is sufficient; no additional test run is needed before merge."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "priority",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "full-suite"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "developer.review-disposition": {
+      "id": "developer.review-disposition",
+      "version": 1,
+      "surface": "mcp",
+      "description": "Decision support only: decide the review disposition for a change. Expects state.diffSummary; state.affectedAreas, state.testOutput, state.environment and state.constraints sharpen the decision when available. Thresholds are placeholders pending shadow-mode calibration and must not be treated as validated.",
+      "questions": {
+        "disposition": {
+          "type": "choice",
+          "instructions": "Given the diff summary and any affected areas, test output, environment or constraints in state, decide the review disposition for this change.",
+          "criteria": {
+            "block": "The change must not proceed; it has a disqualifying defect, risk, or policy violation.",
+            "needs-review": "A human reviewer should look at this change before it proceeds.",
+            "informational": "Notable but non-blocking; surface it to a human without requiring action.",
+            "no-finding": "No review-worthy concern found."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "disposition",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "needs-review"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "developer.release-readiness": {
+      "id": "developer.release-readiness",
+      "version": 1,
+      "surface": "mcp",
+      "description": "Decision support only: decide whether a change is ready to release. Expects state.testOutput and state.constraints; state.diffSummary, state.affectedAreas and state.environment sharpen the decision when available. Thresholds are placeholders pending shadow-mode calibration and must not be treated as validated.",
+      "questions": {
+        "ready": {
+          "type": "noul",
+          "instructions": "Given test output and any stated release constraints, diff summary, affected areas or environment in state, decide whether this change is ready to release.",
+          "criteria": {
+            "true": "All required tests pass, stated release constraints and environment checks are satisfied, and no blocking review or risk finding remains outstanding.",
+            "false": "Tests are failing or missing, a stated constraint or environment check is unmet, or a blocking finding remains outstanding."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "ready",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "not ready - escalate to human release owner"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.session-strategy": {
+      "id": "sdlc.session-strategy",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Choose whether a run-local agent session should be resumed or started fresh.",
+      "questions": {
+        "strategy": {
+          "type": "choice",
+          "instructions": "Given the current role, revision, and previous session, choose a session strategy. Preserve useful context while avoiding stale context.",
+          "criteria": {}, "criteriaMode": "call-time"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "strategy",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "resume the explicit run-local session"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.agent-selection": {
+      "id": "sdlc.agent-selection",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Choose which candidate agent should run a select node's assigned work, from the closed set of agent ids declared by that node's candidates. Option keys for agent are populated at call time from the node's candidates and each candidate's catalog rubric, mirroring how graph.router-confidence fills target from allowedTargets. Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "agent": {
+          "type": "choice",
+          "instructions": "Given the task and any spec or artifacts in state, which candidate agent's rubric best matches this work?",
+          "criteria": {}, "criteriaMode": "call-time"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "agent",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "select node's declared default agent"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.workflow-selection": {
+      "id": "sdlc.workflow-selection",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Choose which workflow should handle a bare `sdlc start --task` with no workflow named, from the closed set of available workflows. Option keys for workflow are populated at call time from every available workflow's name and its own description rubric, the same call-time criteria assembly sdlc.agent-selection uses for a node's candidates. Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "workflow": {
+          "type": "choice",
+          "instructions": "Given the task text, which available workflow's description rubric best matches what it asks for?",
+          "criteria": {}, "criteriaMode": "call-time"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "workflow",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "refuse and list candidate workflows with their confidences"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.specialist-need": {
+      "id": "sdlc.specialist-need",
+      "version": 2,
+      "surface": "sdlc",
+      "description": "Decide whether an enrolled specialist focus is needed for the current plan or diff.",
+      "questions": {
+        "need": {
+          "type": "choice",
+          "instructions": "Does this exact plan or diff need the offered specialist focus?",
+          "criteria": {}, "criteriaMode": "call-time"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "need",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "continue the core role in advisory mode; pause only when project policy requires a specialist decision"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.builtin-delegation": {
+      "id": "sdlc.builtin-delegation",
+      "version": 2,
+      "surface": "sdlc",
+      "description": "Choose an allowed built-in child workflow or continue in the parent.",
+      "questions": {
+        "target": {
+          "type": "choice",
+          "instructions": "Would one of these built-in workflows better execute the current plan, or should the parent continue?",
+          "criteria": {}, "criteriaMode": "call-time"
+        }
+      },
+      "policy": {
+        "primaryQuestion": "target",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "continue implementation in the parent run"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.needs-delegation": {
+      "id": "sdlc.needs-delegation",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Gate: decide whether a workflow step is warranted enough to delegate to a selected agent, versus the orchestrator doing it inline. Expects state built from the node's declared state.from (typically the task and any spec produced so far). Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "delegate": {
+          "type": "noul",
+          "instructions": "Given the task and any spec or artifacts in state, does this step warrant delegating to a selected agent rather than the orchestrator doing it inline?",
+          "criteria": {
+            "true": "The step is substantial enough, or specialized enough, that a dedicated agent should do it.",
+            "false": "The step is small enough that the orchestrator should just do it inline."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "delegate",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "gate node's declared default route"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "sdlc.handoff-readiness": {
+      "id": "sdlc.handoff-readiness",
+      "version": 1,
+      "surface": "sdlc",
+      "description": "Gate: decide whether a produced artifact is fit to hand on to the next step, versus looping back to redo the work that produced it. Expects state built from the node's declared state.from (typically the spec and the artifact just produced). Thresholds are placeholders pending shadow-mode calibration against jevkit's own run history and must not be treated as validated.",
+      "questions": {
+        "ready": {
+          "type": "noul",
+          "instructions": "Given the spec and the artifact just produced in state, is the artifact fit to hand on to the next step?",
+          "criteria": {
+            "true": "The artifact satisfies the spec well enough for the next step to depend on it.",
+            "false": "The artifact is incomplete, inconsistent with the spec, or otherwise not fit to build on yet."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "ready",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "gate node's declared default route"
       },
       "calibration": "placeholder - uncalibrated"
     }

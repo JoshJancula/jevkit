@@ -19,6 +19,47 @@ import (
 
 const secretKey = "sk-test-SECRET-0123456789"
 
+func TestPublicHelpHidesRuntimePlumbing(t *testing.T) {
+	a, _, _ := cliApp(t)
+	code, out, _ := run(a, "", "--help")
+	if code != exitOK {
+		t.Fatalf("help exit = %d", code)
+	}
+	for _, forbidden := range []string{"\nhook", "\nexec", "_runtime"} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("public help exposes %q:\n%s", forbidden, out)
+		}
+	}
+	code, _, _ = run(a, "", "hook")
+	if code != exitUsage {
+		t.Fatalf("legacy hook command exit = %d, want usage", code)
+	}
+	for _, command := range a.rootCmd().Commands() {
+		if !command.IsAvailableCommand() && command.Name() == "_runtime" {
+			continue // Cobra omits hidden commands from generated completions.
+		}
+		if command.Name() == "hook" || command.Name() == "exec" || command.Name() == "_runtime" {
+			t.Fatalf("completion-visible command is not public: %s", command.Name())
+		}
+	}
+}
+
+func TestInstallComponentsRejectUnknownValue(t *testing.T) {
+	a, _, _ := cliApp(t)
+	code, _, errs := run(a, "", "install", "claude", "--components", "unknown")
+	if code != exitUsage || !strings.Contains(errs, "unknown component") {
+		t.Fatalf("unknown component: code=%d stderr=%q", code, errs)
+	}
+}
+
+func TestPrivateRuntimeProtocolMismatchFailsOpen(t *testing.T) {
+	a, _, _ := cliApp(t)
+	code, out, _ := run(a, `{}`, "_runtime", "dispatch", "--protocol", "999", "claude", "post-tool")
+	if code != exitOK || strings.TrimSpace(out) != "{}" {
+		t.Fatalf("mismatch must fail open: code=%d out=%q", code, out)
+	}
+}
+
 // fakeKeyring is an in-memory keychain.
 type fakeKeyring struct {
 	items       map[string]string
@@ -59,6 +100,8 @@ type fakeJev struct {
 	calls int
 	keys  []string
 	err   error
+	resp  *jev.Response
+	req   jev.Request
 }
 
 func (f *fakeJev) factory(t *testing.T) func(jev.Config, func() (string, error)) Asker {
@@ -72,10 +115,14 @@ func (f *fakeJev) factory(t *testing.T) func(jev.Config, func() (string, error))
 	}
 }
 
-func (f *fakeJev) Ask(context.Context, jev.Request) (*jev.Response, error) {
+func (f *fakeJev) Ask(_ context.Context, req jev.Request) (*jev.Response, error) {
 	f.calls++
+	f.req = req
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.resp != nil {
+		return f.resp, nil
 	}
 	return &jev.Response{}, nil
 }
@@ -251,6 +298,60 @@ func TestKeyTest(t *testing.T) {
 	})
 }
 
+func TestAsk(t *testing.T) {
+	t.Run("noul redacts and prints JSON", func(t *testing.T) {
+		a, _, fj := cliApp(t)
+		mustRun(t, a, secretKey+"\n", 0, "key", "set")
+		fj.resp = &jev.Response{Answers: map[string]jev.Answer{"answer": jev.NoulAnswer{Noul: 0.75}}}
+		out, errOut := mustRun(t, a, "", 0, "ask", "noul", "--state", "token="+secretKey, "--question", "Is this safe?", "--format", "json")
+		if !strings.Contains(out, `"noul":0.75`) || errOut != "" {
+			t.Fatalf("out=%q err=%q", out, errOut)
+		}
+		if strings.Contains(fj.req.State, secretKey) || !strings.Contains(fj.req.State, "[REDACTED]") {
+			t.Fatalf("unredacted state: %q", fj.req.State)
+		}
+	})
+	t.Run("choice validates options and prints answer", func(t *testing.T) {
+		a, _, fj := cliApp(t)
+		mustRun(t, a, secretKey+"\n", 0, "key", "set")
+		fj.resp = &jev.Response{Answers: map[string]jev.Answer{"answer": jev.ChoiceAnswer{Choice: "pass", Confidence: 0.9}}}
+		out, _ := mustRun(t, a, "", 0, "ask", "choice", "--state", "grade this", "--question", "result?", "--options", "pass,fail")
+		if !strings.Contains(out, "choice: pass") {
+			t.Fatalf("out=%q", out)
+		}
+		choice, ok := fj.req.Questions["answer"].(jev.ChoiceQuestion)
+		if !ok {
+			t.Fatalf("wrong question: %#v", fj.req.Questions)
+		}
+		if len(choice.Criteria) != 2 || string(choice.Criteria["pass"]) != "null" || string(choice.Criteria["fail"]) != "null" {
+			t.Fatalf("wrong choice criteria: %#v", choice.Criteria)
+		}
+		if code, _, _ := run(a, "", "ask", "choice", "--state", "x", "--question", "q"); code != exitUsage {
+			t.Fatalf("missing options exit=%d", code)
+		}
+		if code, _, _ := run(a, "", "ask", "choice", "--state", "x", "--question", "q", "--options", "pass,,fail"); code != exitUsage {
+			t.Fatalf("empty option exit=%d", code)
+		}
+	})
+	t.Run("score requires levels and sends criteria", func(t *testing.T) {
+		a, _, fj := cliApp(t)
+		mustRun(t, a, secretKey+"\n", 0, "key", "set")
+		fj.resp = &jev.Response{Answers: map[string]jev.Answer{"answer": jev.ScoreAnswer{Score: 1.5, Confidence: 0.9}}}
+		out, _ := mustRun(t, a, "", 0, "ask", "score", "--state", "grade this", "--question", "risk?", "--levels", "low,medium,high")
+		if !strings.Contains(out, "score: 1.500000") {
+			t.Fatalf("out=%q", out)
+		}
+		score, ok := fj.req.Questions["answer"].(jev.ScoreQuestion)
+		b, _ := json.Marshal(score.Criteria)
+		if !ok || string(b) != `["low","medium","high"]` {
+			t.Fatalf("wrong score criteria: %#v", fj.req.Questions["answer"])
+		}
+		if code, _, _ := run(a, "", "ask", "score", "--state", "x", "--question", "q"); code != exitUsage {
+			t.Fatalf("missing levels exit=%d", code)
+		}
+	})
+}
+
 // Every command except `key test` must stay offline.
 func TestOnlyKeyTestCallsJev(t *testing.T) {
 	a, _, fj := cliApp(t)
@@ -258,7 +359,7 @@ func TestOnlyKeyTestCallsJev(t *testing.T) {
 	run(a, secretKey+"\n", "key", "set")
 	for _, args := range [][]string{
 		{"key", "status"}, {"key", "clear"}, {"usage"}, {"usage", "--format", "json"},
-		{"doctor"}, {"version"}, {"migrate-from-ralph"},
+		{"doctor"}, {"version"},
 		{"install", "claude", "--dry-run"}, {"uninstall", "claude", "--dry-run"},
 	} {
 		run(a, "", args...)
@@ -384,108 +485,6 @@ func TestUsage(t *testing.T) {
 	}
 	if code, _, errs := run(a, "", "usage", "--format", "xml"); code != exitUsage || !strings.Contains(errs, "xml") {
 		t.Errorf("bad format: %d %q", code, errs)
-	}
-}
-
-// ralphFixture lays out ralph's config dir and keychain entry.
-func ralphFixture(t *testing.T, a *App, creds string, keyFile string, keychainKey string, kr *fakeKeyring) {
-	t.Helper()
-	dir := filepath.Join(t.TempDir(), "ralph")
-	a.Environ = append(a.Environ, "RALPH_CONFIG_HOME="+dir)
-	if creds != "" {
-		writeFile(t, filepath.Join(dir, "jev-credentials.json"), creds)
-	}
-	if keyFile != "" {
-		writeFile(t, filepath.Join(dir, "jev-api-key"), keyFile)
-	}
-	if keychainKey != "" {
-		_ = kr.Set("ralph.jev", "TYPESAFE_API_KEY", keychainKey)
-	}
-}
-
-func TestMigrateFromRalphKeychainAndCommand(t *testing.T) {
-	a, kr, _ := cliApp(t)
-	ralphFixture(t, a, `{"schema_version":1,"command":"pass show typesafe","keychain":true,"file":false}`, "", secretKey, kr)
-	code, out, errs := run(a, "", "migrate-from-ralph")
-	if code != exitOK {
-		t.Fatalf("exit %d: %s%s", code, out, errs)
-	}
-	noSecret(t, "migrate-from-ralph", out, errs)
-	if kr.items["jevkit/TYPESAFE_API_KEY"] != secretKey {
-		t.Errorf("key not copied to jevkit keychain: %v", kr.items)
-	}
-	if kr.items["ralph.jev/TYPESAFE_API_KEY"] != secretKey {
-		t.Error("ralph's keychain entry was removed")
-	}
-	_, out, _ = run(a, "", "key", "status")
-	if !strings.Contains(out, "command: pass show typesafe") {
-		t.Errorf("command not copied:\n%s", out)
-	}
-	noSecret(t, "status", out)
-}
-
-func TestMigrateFromRalphKeyFile(t *testing.T) {
-	a, kr, _ := cliApp(t)
-	kr.unavailable = true
-	ralphFixture(t, a, `{"schema_version":1,"command":"","keychain":false,"file":true}`, secretKey+"\n", "", kr)
-	code, out, errs := run(a, "", "migrate-from-ralph")
-	if code != exitOK {
-		t.Fatalf("exit %d: %s%s", code, out, errs)
-	}
-	noSecret(t, "migrate-from-ralph", out, errs)
-	if got := readFile(t, filepath.Join(a.ConfigDir, "jev-api-key")); got != secretKey {
-		t.Errorf("file holds %q", got)
-	}
-	if !strings.Contains(out, "ralph's key file") {
-		t.Errorf("origin not named: %s", out)
-	}
-}
-
-func TestMigrateIsOneTimeUnlessForced(t *testing.T) {
-	a, kr, _ := cliApp(t)
-	ralphFixture(t, a, `{"command":"","keychain":true}`, "", secretKey, kr)
-	if code, out, errs := run(a, "", "migrate-from-ralph"); code != exitOK {
-		t.Fatalf("first: %d %s%s", code, out, errs)
-	}
-	kr.items["ralph.jev/TYPESAFE_API_KEY"] = "sk-rotated-000"
-	code, out, errs := run(a, "", "migrate-from-ralph")
-	if code != exitFail || !strings.Contains(errs, "--force") {
-		t.Fatalf("second: %d %q %q", code, out, errs)
-	}
-	if kr.items["jevkit/TYPESAFE_API_KEY"] != secretKey {
-		t.Error("second run overwrote the key without --force")
-	}
-	if code, _, errs := run(a, "", "migrate-from-ralph", "--force"); code != exitOK {
-		t.Fatalf("forced: %d %s", code, errs)
-	}
-	if kr.items["jevkit/TYPESAFE_API_KEY"] != "sk-rotated-000" {
-		t.Error("--force did not replace the key")
-	}
-}
-
-func TestMigrateNothingToDo(t *testing.T) {
-	a, _, _ := cliApp(t)
-	ralphFixture(t, a, "", "", "", &fakeKeyring{})
-	code, _, errs := run(a, "", "migrate-from-ralph")
-	if code != exitFail || !strings.Contains(errs, "nothing to migrate") {
-		t.Errorf("exit %d: %q", code, errs)
-	}
-	ralphFixture(t, a, "{not json", "", "", &fakeKeyring{})
-	if code, _, _ := run(a, "", "migrate-from-ralph"); code != exitFail {
-		t.Errorf("corrupt credentials: exit %d", code)
-	}
-}
-
-func TestMigrateDefaultsToHomeConfigRalph(t *testing.T) {
-	a, kr, _ := cliApp(t)
-	home := filepath.Join(t.TempDir(), "h")
-	a.Environ = []string{"HOME=" + home}
-	writeFile(t, filepath.Join(home, ".config", "ralph", "jev-credentials.json"), `{"command":"echo k"}`)
-	if code, _, errs := run(a, "", "migrate-from-ralph"); code != exitOK {
-		t.Fatalf("exit %d: %s", code, errs)
-	}
-	if len(kr.items) != 0 {
-		t.Errorf("unexpected keychain writes: %v", kr.items)
 	}
 }
 

@@ -1,0 +1,13 @@
+{
+  "name": "data-query-synthetic",
+  "kind": "data-query",
+  "command": "psql -c select",
+  "exit": 0,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "SUMMARY: 250 rows returned\n",
+  "gold": [
+    "SUMMARY: 250 rows returned"
+  ]
+}

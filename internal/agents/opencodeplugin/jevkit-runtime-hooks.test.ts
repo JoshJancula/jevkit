@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 
 import {
   handleToolExecuteAfter,
-  handleToolExecuteBefore,
   isShellTool,
   resolveJevkitBinary,
   type RunProcess,
@@ -31,60 +30,13 @@ describe("isShellTool", () => {
   });
 });
 
-describe("handleToolExecuteBefore", () => {
-  it("rewrites bash command from jevkit hook stdout", async () => {
-    const calls: { argv: string[]; stdin?: string }[] = [];
-    const runProcess: RunProcess = async (argv, options) => {
-      calls.push({ argv, stdin: options?.stdin });
-      return {
-        stdout: JSON.stringify({ command: "jevkit exec -- go test ./..." }) + "\n",
-        exitCode: 0,
-      };
-    };
-    const output = { args: { command: "go test ./..." } };
-    await handleToolExecuteBefore(
-      { tool: "bash", sessionID: "ses", callID: "call" },
-      output,
-      { runProcess, binary: "jevkit" },
-    );
-    assert.equal(output.args.command, "jevkit exec -- go test ./...");
-    assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].argv, ["jevkit", "hook", "opencode", "pre-tool"]);
-    assert.ok(calls[0].stdin?.includes('"tool":"bash"'));
-  });
-
-  it("skips non-shell tools without calling jevkit", async () => {
-    let called = false;
-    const runProcess: RunProcess = async () => {
-      called = true;
-      return { stdout: "", exitCode: 0 };
-    };
-    const output = { args: { path: "README.md" } };
-    await handleToolExecuteBefore({ tool: "read" }, output, { runProcess });
-    assert.equal(called, false);
-  });
-
-  it("fails open when jevkit exits non-zero", async () => {
-    const runProcess: RunProcess = async () => ({
-      stdout: "",
-      exitCode: 2,
-    });
-    const output = { args: { command: "go test ./..." } };
-    await handleToolExecuteBefore({ tool: "bash" }, output, { runProcess });
-    assert.equal(output.args.command, "go test ./...");
-  });
-});
-
 describe("handleToolExecuteAfter", () => {
-  it("shells out for telemetry and does not mutate output", async () => {
+  it("replaces output when jevkit returns a compacted result", async () => {
     const calls: { argv: string[]; stdin?: string }[] = [];
     const runProcess: RunProcess = async (argv, options) => {
       calls.push({ argv, stdin: options?.stdin });
       return {
-        stdout: JSON.stringify({
-          title: "mutated",
-          output: "SHOULD_NOT_APPLY",
-        }),
+        stdout: JSON.stringify({ output: "COMPACTED" }),
         exitCode: 0,
       };
     };
@@ -104,8 +56,8 @@ describe("handleToolExecuteAfter", () => {
       { runProcess, binary: "jevkit" },
     );
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].argv, ["jevkit", "hook", "opencode", "post-tool"]);
-    assert.equal(output.output, "ok  example/pkg\n");
+    assert.deepEqual(calls[0].argv, ["jevkit", "_runtime", "dispatch", "--protocol", "1", "opencode", "post-tool"]);
+    assert.equal(output.output, "COMPACTED");
     assert.equal(output.title, "go test ./...");
   });
 });

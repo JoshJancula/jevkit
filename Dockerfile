@@ -2,7 +2,7 @@
 # Build: docker build -t jevkit-dev .
 # Test:  docker run --rm jevkit-dev make test
 
-FROM golangci/golangci-lint:v2.5.0 AS golangci-lint
+FROM golangci/golangci-lint:v2.13.2 AS golangci-lint
 FROM goreleaser/goreleaser:v2.12.0 AS goreleaser
 FROM ghcr.io/orhun/git-cliff/git-cliff:2.10.1 AS git-cliff
 

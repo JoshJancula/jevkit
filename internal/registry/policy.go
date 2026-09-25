@@ -48,6 +48,13 @@ type Decision struct {
 	FallbackUsed       bool                   `json:"fallbackUsed"`
 	Answers            map[string]interface{} `json:"answers,omitempty"`
 	RegistryVersion    string                 `json:"registryVersion"`
+	CommandFamily      string                 `json:"commandFamily,omitempty"`
+	PolicyRuleID       string                 `json:"policyRuleId,omitempty"`
+	Runtime            string                 `json:"runtime,omitempty"`
+	BytesBefore        int                    `json:"bytesBefore,omitempty"`
+	BytesAfter         int                    `json:"bytesAfter,omitempty"`
+	LinesBefore        int                    `json:"linesBefore,omitempty"`
+	LinesAfter         int                    `json:"linesAfter,omitempty"`
 }
 
 // Decider applies a registry's policy and logs each decision.
@@ -85,6 +92,22 @@ func (p Policy) Classify(confidence float64) string {
 // not among a non-empty criteria set is a fallback. With JEVKIT_SHADOW=1 the
 // would-have decision is logged and the returned decision is fallback.
 func (d *Decider) Decide(id string, answers map[string]jev.Answer) (Decision, error) {
+	return d.DecideWith(id, answers, nil)
+}
+
+// DecideWith validates primary choices against declared and call-time options.
+func (d *Decider) DecideWith(id string, answers map[string]jev.Answer, callTime map[string]map[string]json.RawMessage) (Decision, error) {
+	return d.decideWith(id, answers, callTime, nil)
+}
+
+// DecideWithConfidence applies the registered thresholds to a conservative
+// confidence derived from the primary answer's probability distribution. The
+// original answer, including its distribution, is kept in the decision log.
+func (d *Decider) DecideWithConfidence(id string, answers map[string]jev.Answer, callTime map[string]map[string]json.RawMessage, confidence float64) (Decision, error) {
+	return d.decideWith(id, answers, callTime, &confidence)
+}
+
+func (d *Decider) decideWith(id string, answers map[string]jev.Answer, callTime map[string]map[string]json.RawMessage, confidence *float64) (Decision, error) {
 	set, ok := d.Registry.Set(id)
 	if !ok {
 		return Decision{}, fmt.Errorf("%w: %q", ErrUnknownSet, id)
@@ -94,7 +117,13 @@ func (d *Decider) Decide(id string, answers map[string]jev.Answer) (Decision, er
 		return Decision{}, fmt.Errorf("%w: no answer for primary question %q", ErrNoDecision, set.Policy.PrimaryQuestion)
 	}
 	conf, chosen, hasChoice := primary(ans)
-	if math.IsNaN(conf) || math.IsInf(conf, 0) {
+	if math.IsNaN(conf) || math.IsInf(conf, 0) || conf < 0 || conf > 1 {
+		return Decision{}, fmt.Errorf("%w: primary confidence is invalid", ErrNoDecision)
+	}
+	if confidence != nil {
+		conf = *confidence
+	}
+	if math.IsNaN(conf) || math.IsInf(conf, 0) || conf < 0 || conf > 1 {
 		return Decision{}, fmt.Errorf("%w: confidence is not a finite number", ErrNoDecision)
 	}
 
@@ -113,7 +142,8 @@ func (d *Decider) Decide(id string, answers map[string]jev.Answer) (Decision, er
 		RegistryVersion:    d.Registry.RegistryVersion,
 	}
 	dec.Reason = dec.Decision
-	if hasChoice && chosen != nil && !offered(set.Questions[set.Policy.PrimaryQuestion], *chosen) {
+	dec.Answers = plainAnswers(answers)
+	if hasChoice && chosen != nil && !offeredWith(set.Questions[set.Policy.PrimaryQuestion], *chosen, callTime[set.Policy.PrimaryQuestion]) {
 		dec.Decision, dec.Reason = Fallback, ReasonOptionNotOffered
 	}
 	dec.FallbackUsed = dec.Decision == Fallback
@@ -128,7 +158,6 @@ func (d *Decider) Decide(id string, answers map[string]jev.Answer) (Decision, er
 	}
 	shadow := dec
 	shadow.Shadow, shadow.FallbackUsed = true, true
-	shadow.Answers = plainAnswers(answers)
 	d.log(shadow)
 	returned := shadow
 	returned.Decision, returned.Reason, returned.Answers = Fallback, ReasonShadow, nil
@@ -149,14 +178,15 @@ func primary(a jev.Answer) (conf float64, chosen *string, hasChoice bool) {
 	return math.NaN(), nil, false
 }
 
-// offered reports whether choice is a declared option. A question with no
-// declared options takes them at call time, so anything is offered.
-func offered(q Question, choice string) bool {
+func offeredWith(q Question, choice string, dynamic map[string]json.RawMessage) bool {
 	var m map[string]string
-	if err := json.Unmarshal(q.Criteria, &m); err != nil || len(m) == 0 {
-		return true
+	if err := json.Unmarshal(q.Criteria, &m); err != nil {
+		return false
 	}
 	_, ok := m[choice]
+	if !ok && q.CriteriaMode == "call-time" {
+		_, ok = dynamic[choice]
+	}
 	return ok
 }
 
@@ -167,9 +197,9 @@ func plainAnswers(answers map[string]jev.Answer) map[string]interface{} {
 		case jev.NoulAnswer:
 			out[k] = map[string]interface{}{"type": "noul", "noul": v.Noul}
 		case jev.ChoiceAnswer:
-			out[k] = map[string]interface{}{"type": "choice", "choice": v.Choice, "confidence": v.Confidence}
+			out[k] = map[string]interface{}{"type": "choice", "choice": v.Choice, "confidence": v.Confidence, "probabilities": v.Probabilities}
 		case jev.ScoreAnswer:
-			out[k] = map[string]interface{}{"type": "score", "score": v.Score, "confidence": v.Confidence}
+			out[k] = map[string]interface{}{"type": "score", "score": v.Score, "confidence": v.Confidence, "distribution": v.Distribution, "legendRaw": v.RawLegend, "distributionRaw": v.RawDistribution}
 		}
 	}
 	return out

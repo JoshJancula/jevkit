@@ -1,0 +1,13 @@
+{
+  "name": "test-run-synthetic",
+  "kind": "test-run",
+  "command": "go test ./...",
+  "exit": 1,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "FAIL: TestParser expected token\n",
+  "gold": [
+    "FAIL: TestParser expected token"
+  ]
+}

@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -225,6 +226,72 @@ func New(opts Options) (*Redactor, error) {
 		}
 	}
 	return &Redactor{rules: rules, secrets: secrets, mark: mark}, nil
+}
+
+// ApplyJSON recursively redacts a JSON value: string leaves and object keys
+// are each passed through Apply, while numbers, booleans and null are left
+// untouched. The result is guaranteed to remain valid JSON of the same
+// shape. Redacting two sibling object keys to the same text would silently
+// drop one entry, changing the meaning of the value (for example a Choice or
+// Noul criteria map); ApplyJSON instead fails closed with a *jev.Error in
+// that case, exactly like a survived secret.
+func (r *Redactor) ApplyJSON(raw []byte) (out []byte, hits []Hit, err error) {
+	var v any
+	if uerr := json.Unmarshal(raw, &v); uerr != nil {
+		return nil, nil, reject(fmt.Errorf("not valid JSON: %w", uerr))
+	}
+	red, err := r.redactValue(v, &hits)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, merr := json.Marshal(red)
+	if merr != nil {
+		return nil, nil, reject(merr)
+	}
+	return b, hits, nil
+}
+
+func (r *Redactor) redactValue(v any, hits *[]Hit) (any, error) {
+	switch t := v.(type) {
+	case string:
+		res, err := r.Apply(t)
+		if err != nil {
+			return nil, err
+		}
+		*hits = append(*hits, res.Hits...)
+		return res.Text, nil
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			rk, err := r.Apply(k)
+			if err != nil {
+				return nil, err
+			}
+			*hits = append(*hits, rk.Hits...)
+			if _, collide := out[rk.Text]; collide {
+				return nil, reject(fmt.Errorf("redaction collided on key %q", rk.Text))
+			}
+			rv, err := r.redactValue(val, hits)
+			if err != nil {
+				return nil, err
+			}
+			out[rk.Text] = rv
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			rv, err := r.redactValue(val, hits)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = rv
+		}
+		return out, nil
+	default:
+		// number, bool, nil: nothing to redact.
+		return v, nil
+	}
 }
 
 // secretPieces splits secrets on newlines (redaction is per line), drops

@@ -30,9 +30,9 @@ func loadFixture(t *testing.T, name string) fixtureCase {
 		t.Fatalf("exit_status: %v", err)
 	}
 	return fixtureCase{
-		Command: strings.TrimSuffix(read("command.txt"), "\n"),
-		Stdout:  read("stdout.txt"),
-		Stderr:  read("stderr.txt"),
+		Command: strings.TrimSuffix(strings.ReplaceAll(read("command.txt"), "\r\n", "\n"), "\n"),
+		Stdout:  strings.ReplaceAll(read("stdout.txt"), "\r\n", "\n"),
+		Stderr:  strings.ReplaceAll(read("stderr.txt"), "\r\n", "\n"),
 		Exit:    exit,
 	}
 }

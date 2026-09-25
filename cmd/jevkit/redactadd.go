@@ -140,6 +140,135 @@ func (a *App) redactAdd(args []string) int {
 	return exitOK
 }
 
+// redactRemove removes one user-selected entry and validates the complete
+// layered result before committing it. Project-layer restrictions are enforced
+// by config.Load exactly as they are for redact add.
+func (a *App) redactRemove(args []string) int {
+	fs := a.newFlagSet("redact remove")
+	rule := fs.String("rule", "", "custom rule id to remove")
+	literal := fs.String("literal", "", "literal entry to remove")
+	env := fs.String("env", "", "env_values entry to remove")
+	never := fs.String("never-send", "", "never_send entry to remove")
+	project := fs.Bool("project", false, "edit .jevkit/redact.yaml")
+	pos, code, done := parseFlags(fs, args)
+	if done {
+		return code
+	}
+	if len(pos) != 0 {
+		return exitUsage
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	count := 0
+	for _, k := range []string{"rule", "literal", "env", "never-send"} {
+		if set[k] {
+			count++
+		}
+	}
+	if count != 1 {
+		a.errf("usage: jevkit redact remove --rule|--literal|--env|--never-send <value> [--project]\n")
+		return exitUsage
+	}
+	path, err := a.target(*project)
+	if err != nil {
+		a.errf("jevkit redact remove: %v\n", err)
+		return exitFail
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		a.errf("jevkit redact remove: %v\n", err)
+		return exitFail
+	}
+	key, value := "", ""
+	if set["rule"] {
+		key, value = "rules", *rule
+	} else if set["literal"] {
+		key, value = "literals", *literal
+	} else if set["env"] {
+		key, value = "env_values", *env
+	} else {
+		key, value = "never_send", *never
+	}
+	updated, found, err := removeEntry(old, key, value, key == "rules")
+	if err != nil {
+		a.errf("jevkit redact remove: %v\n", err)
+		return exitFail
+	}
+	if !found {
+		a.errf("jevkit redact remove: entry not found\n")
+		return exitFail
+	}
+	perm := os.FileMode(0o600)
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm()
+	}
+	tmp, err := stage(path, updated, perm)
+	if err != nil {
+		return exitFail
+	}
+	opts := a.loadOptions()
+	if *project {
+		opts.ProjectPath = tmp
+	} else {
+		opts.UserPath = tmp
+	}
+	if _, err := config.Load(opts); err != nil {
+		_ = os.Remove(tmp)
+		a.errf("jevkit redact remove: rejected: %s\n", strings.ReplaceAll(unwrapReason(err).Error(), tmp, path))
+		return exitFail
+	}
+	if err := commit(tmp, path); err != nil {
+		return exitFail
+	}
+	if key == "literals" {
+		a.outf("removed 1 literal from %s\n", path)
+	} else {
+		a.outf("removed %s %q from %s\n", key, value, path)
+	}
+	return exitOK
+}
+
+func removeEntry(data []byte, key, value string, rule bool) ([]byte, bool, error) {
+	doc, root, err := rootMapping(data)
+	if err != nil {
+		return nil, false, err
+	}
+	seq := findKey(root, key)
+	if seq == nil || seq.Kind != yaml.SequenceNode {
+		return data, false, nil
+	}
+	out := make([]*yaml.Node, 0, len(seq.Content))
+	found := false
+	for _, n := range seq.Content {
+		match := false
+		if rule && n.Kind == yaml.MappingNode {
+			id := findKey(n, "id")
+			match = id != nil && id.Value == value
+		} else {
+			match = n.Kind == yaml.ScalarNode && n.Value == value
+		}
+		if match {
+			found = true
+			continue
+		}
+		out = append(out, n)
+	}
+	if !found {
+		return data, false, nil
+	}
+	seq.Content = out
+	var b bytes.Buffer
+	enc := yaml.NewEncoder(&b)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil {
+		return nil, false, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, false, err
+	}
+	return b.Bytes(), true, nil
+}
+
 func scalar(v string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
 
 func mapPairs(kv ...string) []*yaml.Node {

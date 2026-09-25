@@ -2,8 +2,11 @@
 .env.*
 !.env.example
 bin/
+/jevkit
 dist/
 coverage.out
 .DS_Store
-.ralph-workspace/
 node_modules/
+.ralph-workspace
+.jevkit/compact-corpus/local/
+.jevkit-review-*.diff

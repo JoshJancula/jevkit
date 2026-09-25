@@ -14,8 +14,8 @@ const CommandName = "jevkit"
 // ModulePath is the Go module path used in install remediation hints.
 const ModulePath = "github.com/OWNER/jevkit"
 
-// Hosts are the agent runtimes that receive a generated package.
-var Hosts = []string{"claude", "cursor", "antigravity", "opencode"}
+// Hosts are the supported agent runtimes that receive a generated package.
+var Hosts = []string{"claude", "opencode", "cursor", "antigravity"}
 
 // InstallCommand returns the remediation users should run when jevkit is
 // missing from PATH. Pinned when Version is a release tag; otherwise @latest.

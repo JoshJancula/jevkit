@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {"const": 1},
+    "killswitch": {"type": "array", "items": {"type": "string"}},
+    "jev_scoring": {"type": "boolean"},
+    "mode": {"enum": ["enforce", "shadow"]},
+    "sandbox": {"type": "object", "additionalProperties": false, "properties": {
+      "allow_read": {"type": "array", "items": {"type": "string"}}
+    }},
+    "tests": {"type": "array", "items": {"type": "object", "required": ["command", "deny"], "additionalProperties": false, "properties": {
+      "command": {"type": "string"}, "deny": {"type": "boolean"}
+    }}}
+  }
+}

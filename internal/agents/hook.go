@@ -17,6 +17,8 @@ type Options struct {
 	// StateDir is the usage/telemetry state home (see usage.Path). Empty
 	// disables telemetry unless AppendHook is set.
 	StateDir string
+	// LoadError is a policy-load failure recorded with this invocation.
+	LoadError string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 	// AppendHook records one invocation; nil uses usage.AppendHook when
@@ -196,6 +198,7 @@ func safePassthrough(agent Agent, event Event) []byte {
 }
 
 func writeOutcome(out io.Writer, body []byte, code int, opts Options, rec usage.HookInvocation) int {
+	rec.LoadError = opts.LoadError
 	if out == nil {
 		out = io.Discard
 	}

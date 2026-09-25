@@ -1,0 +1,27 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "disposition": {
+      "choice": "ranked-diagnostic",
+      "probabilities": {
+        "ranked-diagnostic": 0.93,
+        "deterministic-compact": 0.05,
+        "full": 0.02
+      },
+      "confidence": 0.93
+    },
+    "outcome": {
+      "choice": "failure",
+      "probabilities": {
+        "failure": 0.96,
+        "unknown": 0.03,
+        "success": 0.01
+      },
+      "confidence": 0.96
+    }
+  },
+  "usage": {
+    "input_tokens": 256,
+    "output_tokens": 32
+  }
+}

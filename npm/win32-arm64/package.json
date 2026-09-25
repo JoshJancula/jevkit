@@ -1,0 +1,1 @@
+{"name":"@jevkit/win32-arm64","version":"0.0.0-development","license":"MIT","os":["win32"],"cpu":["arm64"],"files":["bin"]}

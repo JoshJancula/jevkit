@@ -1,0 +1,13 @@
+{
+  "name": "dependency-install-synthetic",
+  "kind": "dependency-install",
+  "command": "npm install",
+  "exit": 1,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "npm ERR! E404 package unavailable\n",
+  "gold": [
+    "npm ERR! E404 package unavailable"
+  ]
+}

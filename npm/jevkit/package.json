@@ -1,0 +1,17 @@
+{
+  "name": "jevkit",
+  "version": "0.0.0-development",
+  "description": "Jevkit CLI binary launcher",
+  "license": "MIT",
+  "bin": { "jevkit": "bin/jevkit.js" },
+  "files": ["bin", "lib"],
+  "optionalDependencies": {
+    "@jevkit/darwin-amd64": "0.0.0-development",
+    "@jevkit/darwin-arm64": "0.0.0-development",
+    "@jevkit/linux-amd64": "0.0.0-development",
+    "@jevkit/linux-arm64": "0.0.0-development",
+    "@jevkit/win32-amd64": "0.0.0-development",
+    "@jevkit/win32-arm64": "0.0.0-development"
+  },
+  "scripts": { "test": "node --test test/*.test.js" }
+}

@@ -1,0 +1,66 @@
+version: 2
+
+project_name: jevkit
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: jevkit
+    main: ./cmd/jevkit
+    binary: jevkit
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    builds: [jevkit]
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    args: ["sign-blob", "--yes", "--output-signature", "${signature}", "${artifact}"]
+
+release:
+  github:
+    owner: JoshJancula
+    name: jevkit
+  prerelease: auto
+  name_template: "{{ .ProjectName }} {{ .Version }}"
+
+# Publishing integrations are intentionally disabled for local/snapshot
+# releases. Future release automation should enable them only when its required
+# secrets are present, keeping contributors from accidentally publishing.
+brews:
+  - name: jevkit
+    repository:
+      owner: JoshJancula
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    skip_upload: "{{ if not .Env.HOMEBREW_TAP_GITHUB_TOKEN }}true{{ end }}"
+
+scoops:
+  - repository:
+      owner: JoshJancula
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    skip_upload: "{{ if not .Env.SCOOP_BUCKET_GITHUB_TOKEN }}true{{ end }}"

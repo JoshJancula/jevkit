@@ -4,18 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+
+	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/OWNER/jevkit/internal/security/config"
 )
 
-// Antigravity adapter name as used on the CLI: `jevkit hook antigravity ...`.
+// Antigravity adapter name used by installed runtime integrations.
 const AntigravityName = "antigravity"
 
 // AntigravityHookMarker is the idempotency substring for managed entries in
 // .agents/hooks.json. Installer matching is substring-based so a binary-path
 // change still replaces the prior entry instead of duplicating.
-const AntigravityHookMarker = "hook antigravity"
+const AntigravityHookMarker = "_runtime dispatch --protocol 1 antigravity"
+const legacyAntigravityHookMarker = "hook antigravity"
 
-// AntigravityPreToolMarker is the full pre-tool event token.
-const AntigravityPreToolMarker = "hook antigravity pre-tool"
+const AntigravityPreToolMarker = "_runtime dispatch --protocol 1 antigravity pre-tool"
+
+// AntigravityPostToolMarker is retained for removal of old telemetry hooks.
+const AntigravityPostToolMarker = "_runtime dispatch --protocol 1 antigravity post-tool"
 
 // AntigravityHooksGroup is the top-level group key written into .agents/hooks.json
 // (ralph uses "ralph-native"; jevkit owns its own group).
@@ -37,7 +43,9 @@ var antigravityAllowPassthrough = []byte(`{"decision":"allow"}`)
 type Antigravity struct {
 	// Binary is the jevkit executable name/path used in rewrites and install
 	// commands. Empty means "jevkit".
-	Binary string
+	Binary          string
+	Security        *config.Config
+	SecurityDecider *registry.Decider
 }
 
 func init() {
@@ -55,8 +63,8 @@ func (a *Antigravity) Capabilities() Capabilities {
 	return Capabilities{
 		PreTool:        true,
 		PreToolRewrite: true,
-		// PostTool is false: agy PostToolUse has no command/output to observe;
-		// framework telemetry is recorded on the PreToolUse rewrite invocation.
+		// Antigravity's PostToolUse payload has no command or output, so the
+		// installed integration uses no post-tool hook at all.
 		PostTool:      false,
 		OutputReplace: false,
 	}
@@ -67,33 +75,30 @@ func (a *Antigravity) Passthrough(event Event) []byte {
 	return append([]byte(nil), antigravityAllowPassthrough...)
 }
 
-// HandlePreTool rewrites run_command CommandLine to `jevkit exec -- <cmd>`
-// so the wrapper sees the real exit code and can compact. Non-run_command
-// tools and already-rewritten commands fail open with decision allow.
 func (a *Antigravity) HandlePreTool(ctx context.Context, req Request) (Response, error) {
-	passthrough := Response{Body: a.Passthrough(EventPreTool)}
-
-	var payload antigravityPrePayload
-	if err := json.Unmarshal(req.Raw, &payload); err != nil {
-		return passthrough, nil
+	var payload struct {
+		ToolCall struct {
+			Name string `json:"name"`
+			Args struct {
+				CommandLine string `json:"CommandLine"`
+			} `json:"args"`
+		} `json:"toolCall"`
+		WorkspacePaths []string `json:"workspacePaths"`
 	}
-	if payload.ToolCall.Name != "" && payload.ToolCall.Name != antigravityRunCommandMatcher {
-		return passthrough, nil
+	if err := json.Unmarshal(req.Raw, &payload); err != nil || payload.ToolCall.Name != antigravityRunCommandMatcher ||
+		strings.TrimSpace(payload.ToolCall.Args.CommandLine) == "" || IsShellWrapperCommand(payload.ToolCall.Args.CommandLine) ||
+		len(payload.WorkspacePaths) == 0 || strings.TrimSpace(payload.WorkspacePaths[0]) == "" {
+		return Response{Body: a.Passthrough(EventPreTool)}, nil
 	}
-	command := strings.TrimSpace(payload.ToolCall.Args.CommandLine)
-	if command == "" {
-		return passthrough, nil
+	if response, deny := securityDecision(ctx, a.Security, a.SecurityDecider, payload.ToolCall.Args.CommandLine, payload.WorkspacePaths[0], payload.WorkspacePaths[0], AntigravityName); deny {
+		return response, nil
 	}
-
-	rewritten := rewriteAntigravityCommand(a.binary(), command)
-	body, err := json.Marshal(antigravityPreResponse{
-		Decision: "allow",
-		Overwrite: antigravityOverwrite{
-			CommandLine: rewritten,
-		},
+	body, err := json.Marshal(map[string]any{
+		"decision":  "allow",
+		"overwrite": map[string]string{"CommandLine": buildSecurityShellWrapperCommand(a.binary(), payload.WorkspacePaths[0], payload.ToolCall.Args.CommandLine, AntigravityName, a.Security != nil && a.Security.Yolo, securityPolicyName(a.Security))},
 	})
 	if err != nil {
-		return passthrough, nil
+		return Response{Body: a.Passthrough(EventPreTool)}, nil
 	}
 	return Response{Body: body}, nil
 }
@@ -111,38 +116,4 @@ func (a *Antigravity) binary() string {
 		return strings.TrimSpace(a.Binary)
 	}
 	return "jevkit"
-}
-
-type antigravityPrePayload struct {
-	ToolCall struct {
-		Name string `json:"name"`
-		Args struct {
-			CommandLine string `json:"CommandLine"`
-		} `json:"args"`
-	} `json:"toolCall"`
-	WorkspacePaths []string `json:"workspacePaths"`
-}
-
-type antigravityPreResponse struct {
-	Decision  string               `json:"decision"`
-	Overwrite antigravityOverwrite `json:"overwrite"`
-}
-
-type antigravityOverwrite struct {
-	CommandLine string `json:"CommandLine"`
-}
-
-func rewriteAntigravityCommand(binary, command string) string {
-	if alreadyAntigravityJevkitExec(command, binary) {
-		return command
-	}
-	return binary + " exec -- " + command
-}
-
-func alreadyAntigravityJevkitExec(command, binary string) bool {
-	if strings.Contains(command, binary+" exec -- ") {
-		return true
-	}
-	return strings.Contains(command, "jevkit exec -- ") ||
-		strings.Contains(command, "jevkit.exe exec -- ")
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/OWNER/jevkit/internal/agents"
+	"github.com/OWNER/jevkit/internal/jev"
 	"github.com/OWNER/jevkit/internal/usage"
 )
 
@@ -20,24 +21,19 @@ func TestOpenCodeLookupRegistered(t *testing.T) {
 		t.Fatalf("opencode not registered: %+v", got)
 	}
 	caps := got.Capabilities()
-	if !caps.PreTool || !caps.PreToolRewrite || !caps.PostTool {
+	if caps.PreTool || caps.PreToolRewrite || !caps.PostTool {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
-	if caps.OutputReplace {
-		t.Fatalf("SPIKE: output replace must be false: %+v", caps)
+	if !caps.OutputReplace {
+		t.Fatalf("post-tool output replacement must be enabled: %+v", caps)
 	}
 }
 
-func TestOpenCodePreToolRewritesBashToJevkitExec(t *testing.T) {
+func TestOpenCodePreToolDoesNotRewriteBash(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "opencode", "tool-execute-before.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "opencode", "tool-execute-before-response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	o := agents.NewOpenCode()
 	resp, err := o.HandlePreTool(context.Background(), agents.Request{
 		Raw:   json.RawMessage(raw),
@@ -47,24 +43,17 @@ func TestOpenCodePreToolRewritesBashToJevkitExec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got, want map[string]any
+	var got map[string]any
 	if err := json.Unmarshal(resp.Body, &got); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if err := json.Unmarshal(wantRaw, &want); err != nil {
-		t.Fatal(err)
-	}
 	gotCmd, _ := got["command"].(string)
-	wantCmd, _ := want["command"].(string)
-	if gotCmd != wantCmd {
-		t.Fatalf("command\n got %q\nwant %q", gotCmd, wantCmd)
-	}
-	if !strings.HasPrefix(gotCmd, "jevkit exec -- ") {
-		t.Fatalf("expected jevkit exec rewrite, got %q", gotCmd)
+	if gotCmd != "" {
+		t.Fatalf("pre-tool must not rewrite, got %q", gotCmd)
 	}
 }
 
-func TestOpenCodePreToolIdempotentAlreadyRewritten(t *testing.T) {
+func TestOpenCodePreToolDoesNotMutateExistingCommand(t *testing.T) {
 	payload := map[string]any{
 		"input":  map[string]any{"tool": "bash", "sessionID": "s", "callID": "c"},
 		"output": map[string]any{"args": map[string]any{"command": "jevkit exec -- go test ./..."}},
@@ -83,11 +72,8 @@ func TestOpenCodePreToolIdempotentAlreadyRewritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd, _ := got["command"].(string)
-	if cmd != "jevkit exec -- go test ./..." {
-		t.Fatalf("double-wrapped: %q", cmd)
-	}
-	if strings.Count(cmd, "jevkit exec --") != 1 {
-		t.Fatalf("expected single wrap: %q", cmd)
+	if cmd != "" {
+		t.Fatalf("pre-tool must not mutate: %q", cmd)
 	}
 }
 
@@ -110,15 +96,27 @@ func TestOpenCodePreToolNonShellPassthrough(t *testing.T) {
 	}
 }
 
-func TestOpenCodePostToolTelemetryOnlyNoMutation(t *testing.T) {
+func TestOpenCodePostToolCompactsOutput(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "opencode", "tool-execute-after.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["output"] = map[string]any{"title": "go test ./...", "output": strings.Repeat("Downloading dependency package\n", 100), "metadata": map[string]any{}}
+	raw, err = json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var mu sync.Mutex
 	var recs []usage.HookInvocation
-	o := agents.NewOpenCode()
+	o := &agents.OpenCode{Getenv: envMap{"JEVKIT_COMPACT": "1"}.Getenv, ThresholdBytes: 1, StateDir: t.TempDir(), Asker: codexAsker{response: &jev.Response{Answers: map[string]jev.Answer{
+		"disposition": jev.ChoiceAnswer{Choice: "deterministic-compact", Confidence: 0.99},
+		"outcome":     jev.ChoiceAnswer{Choice: "success", Confidence: 0.99},
+	}}}}
 	code := agents.Run(context.Background(), o, agents.EventPostTool, bytes.NewReader(raw), &bytes.Buffer{}, agents.Options{
 		StateDir: t.TempDir(),
 		AppendHook: func(_ string, rec usage.HookInvocation) error {
@@ -144,7 +142,6 @@ func TestOpenCodePostToolTelemetryOnlyNoMutation(t *testing.T) {
 		t.Fatalf("outcome: %q", recs[0].Outcome)
 	}
 
-	// Direct handler: empty body, never an updated output carrier.
 	resp, err := o.HandlePostTool(context.Background(), agents.Request{
 		Raw:   json.RawMessage(raw),
 		Event: agents.EventPostTool,
@@ -152,8 +149,9 @@ func TestOpenCodePostToolTelemetryOnlyNoMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(bytes.TrimSpace(resp.Body)) != `{}` {
-		t.Fatalf("post-tool must be telemetry-only {}, got %s", resp.Body)
+	var got map[string]string
+	if err := json.Unmarshal(resp.Body, &got); err != nil || got["output"] == "" {
+		t.Fatalf("post-tool replacement %s: %v", resp.Body, err)
 	}
 }
 

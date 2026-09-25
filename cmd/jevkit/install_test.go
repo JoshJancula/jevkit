@@ -118,3 +118,15 @@ func TestInstallUnknownAgent(t *testing.T) {
 		t.Fatalf("exit %d errs %q", code, errs)
 	}
 }
+
+func TestInstallSupportsHookRewriteAgents(t *testing.T) {
+	for _, name := range []string{"cursor", "antigravity"} {
+		t.Run(name, func(t *testing.T) {
+			a, _, _ := cliApp(t)
+			code, out, errs := run(a, "", "install", name, "--components", "hooks")
+			if code != exitOK || !strings.Contains(out, "install "+name) {
+				t.Fatalf("exit %d errs %q", code, errs)
+			}
+		})
+	}
+}

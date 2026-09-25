@@ -120,8 +120,7 @@ func mergeCodexHooks(existing []byte, binary string) ([]byte, error) {
 
 	hooksObj["PreToolUse"] = upsertCodexMatcherHooks(
 		stripManagedCodexHooks(asSlice(hooksObj["PreToolUse"])),
-		[]string{codexBashMatcher, codexCommandMatcher},
-		preCmd,
+		[]string{codexBashMatcher, codexCommandMatcher}, preCmd,
 	)
 	hooksObj["PostToolUse"] = upsertCodexMatcherHooks(
 		stripManagedCodexHooks(asSlice(hooksObj["PostToolUse"])),
@@ -229,7 +228,7 @@ func codexMatcherHasCommand(groups []any, matcher, command string) bool {
 }
 
 func isManagedCodexCommand(command string) bool {
-	return strings.Contains(command, CodexHookMarker)
+	return strings.Contains(command, CodexHookMarker) || strings.Contains(command, legacyCodexHookMarker)
 }
 
 func ensureCodexBackup(hooksPath string, existing []byte) error {

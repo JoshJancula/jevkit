@@ -1,0 +1,13 @@
+{
+  "name": "log-stream-synthetic",
+  "kind": "log-stream",
+  "command": "kubectl logs app",
+  "exit": 1,
+  "prefix": "",
+  "repeat": "detail line with repetitive padding lorem ipsum dolor sit amet consectetur adipiscing elit\n",
+  "repeatCount": 250,
+  "suffix": "ERROR: service unavailable\n",
+  "gold": [
+    "ERROR: service unavailable"
+  ]
+}

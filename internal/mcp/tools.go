@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/OWNER/jevkit/internal/redact"
 	"github.com/OWNER/jevkit/internal/registry"
 )
 
@@ -81,17 +83,26 @@ func (s *Server) curatedTool(name, setID, blurb string) (*sdk.Tool, error) {
 func (s *Server) askTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name: "jev_ask",
-		Description: "UNVERSIONED and UNAUDITED raw escape hatch for exploration. Accepts arbitrary state plus a questions object; " +
-			"prefer curated tools (jev_classify_request, jev_classify_failure, jev_rank_relevance) for auditable versioned decisions. " +
-			"Same redaction and request-size policy as curated tools; it escapes the registry only, not the data policy.",
+		Description: `Send an unregistered, unversioned SystemOne request: a state value plus one or more independently-answered named questions. Prefer the curated tools (jev_classify_request, jev_classify_failure, jev_rank_relevance) for auditable, versioned decisions; jev_ask escapes the registry only, not the data policy. The same redaction (JSON-aware for structured input) and request-size limits apply, every call is marked unregistered, and a privacy-safe local audit line is recorded (timestamp, caller, question ids/types, byte counts and redaction rule counts, never payload text). Arbitrary answers are returned as data only; jevkit never turns a jev_ask answer into an automatic tool action.
+
+state and each question's instructions accept a plain string, or literal JSON (an object or array) for structured context. Each question is {type: "noul"|"choice"|"score", instructions, criteria}: criteria is required for choice (1-255 entries) and score (2-10 ordered levels, low to high), optional for noul ("true"/"false" entries); each criteria value may itself be a string, object, array or null.
+
+Detailed choice example (a criteria object with a rubric per option, not just bare labels):
+{"state": "Customer says the invoice total looks wrong", "questions": {"route": {"type": "choice", "instructions": "Which team should handle this?", "criteria": {"billing": "Payment, invoice or refund issues", "technical": "Product defects or errors", "sales": "Pricing or new purchase questions"}}}}
+
+DEPRECATED: a question's "options" field (an array of bare choice labels) is a compatibility alias that expands to null-valued Choice criteria; do not use it in new integrations, never combine it with criteria on the same question (that call is rejected), and it will be removed in a future breaking release. Use "criteria" for new calls, even for bare labels ({"a": null, "b": null}).
+
+For large context (long logs, multi-file diffs), load and redact the content into state/instructions/criteria from a file rather than pasting megabytes inline; jevkit's CLI equivalent, "jevkit ask request --file <path|->", shows the same file/stdin pattern for a human operator.`,
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"state": map[string]any{"type": "string", "description": "State text passed through redaction and size estimation before transport."},
+				"state": map[string]any{
+					"description": "State text or context for the questions: a plain string, or literal JSON (an object or array) for structured state. Redacted (JSON-aware when structured) before transport.",
+				},
 				"questions": map[string]any{
 					"type":        "object",
-					"description": "Arbitrary SystemOne questions: name to {type: noul|choice|score, instructions, options?, criteria?}. Not a registry question-set id.",
+					"description": "One or more named questions: id to {type, instructions, criteria, options?}. See the tool description for the wire shape and the deprecated 'options' alias. Not a registry question-set id.",
 				},
 			},
 			"required": []string{"state", "questions"},
@@ -170,7 +181,7 @@ func (s *Server) handleCurated(ctx context.Context, tool, setID string, req *sdk
 	if err != nil {
 		return nil, rpcErr(codeServer, "failed to apply options to %s", setID)
 	}
-	redacted, err := s.cfg.Redact(state)
+	redacted, _, err := s.cfg.Redact(state)
 	if err != nil {
 		s.logf("tool=%s rejected=redaction", tool)
 		return nil, invalid(msgStateRejected)
@@ -179,7 +190,13 @@ func (s *Server) handleCurated(ctx context.Context, tool, setID string, req *sdk
 	if res != nil || err != nil {
 		return res, err
 	}
-	dec, derr := s.cfg.Decider.Decide(setID, resp.Answers)
+	callTime := make(map[string]map[string]json.RawMessage)
+	for id, q := range questions {
+		if choice, ok := q.(jev.ChoiceQuestion); ok && set.Questions[id].CriteriaMode == "call-time" {
+			callTime[id] = choice.Criteria
+		}
+	}
+	dec, derr := s.cfg.Decider.DecideWith(setID, resp.Answers, callTime)
 	if derr != nil {
 		s.logf("tool=%s policy-decide-failed", tool)
 		return nil, rpcErr(codeServer, "policy decide failed for %s", setID)
@@ -224,25 +241,29 @@ func buildQuestions(set *registry.Set, options []string) (map[string]jev.Questio
 	for id, q := range set.Questions {
 		switch q.Type {
 		case "choice":
-			opts := map[string]*string{}
+			criteria := map[string]json.RawMessage{}
 			if emptyCriteria(q.Criteria) {
 				for _, o := range options {
-					opts[o] = nil
+					criteria[o] = jev.Null()
 				}
-			} else {
-				var m map[string]string
-				if err := json.Unmarshal(q.Criteria, &m); err != nil {
+			} else if err := json.Unmarshal(q.Criteria, &criteria); err != nil {
+				return nil, err
+			}
+			out[id] = jev.ChoiceQuestion{Instructions: q.Instructions, Criteria: criteria}
+		case "score":
+			var levels []json.RawMessage
+			if err := json.Unmarshal(q.Criteria, &levels); err != nil {
+				return nil, err
+			}
+			out[id] = jev.ScoreQuestion{Instructions: q.Instructions, Criteria: levels}
+		case "noul":
+			criteria := map[string]json.RawMessage{}
+			if len(q.Criteria) > 0 {
+				if err := json.Unmarshal(q.Criteria, &criteria); err != nil {
 					return nil, err
 				}
-				for k, v := range m {
-					opts[k] = &v
-				}
 			}
-			out[id] = jev.ChoiceQuestion{Instructions: q.Instructions, Options: opts}
-		case "score":
-			out[id] = jev.ScoreQuestion{Instructions: q.Instructions, Criteria: q.Criteria}
-		case "noul":
-			out[id] = jev.NoulQuestion{Instructions: q.Instructions, Criteria: q.Criteria}
+			out[id] = jev.NoulQuestion{Instructions: q.Instructions, Criteria: criteria}
 		default:
 			return nil, fmt.Errorf("unknown question type %q", q.Type)
 		}
@@ -305,12 +326,105 @@ func answersJSON(answers map[string]jev.Answer) map[string]any {
 	return out
 }
 
-// askQuestion is one raw jev_ask question.
+// answerKind names an answer's SystemOne type.
+func answerKind(a jev.Answer) string {
+	switch a.(type) {
+	case jev.NoulAnswer:
+		return "noul"
+	case jev.ChoiceAnswer:
+		return "choice"
+	case jev.ScoreAnswer:
+		return "score"
+	default:
+		return ""
+	}
+}
+
+// fullAnswerJSON renders one answer with every field SystemOne returned:
+// type, confidence, probabilities and (for Score) legend/distribution.
+func fullAnswerJSON(a jev.Answer) map[string]any {
+	out := map[string]any{"type": answerKind(a)}
+	switch v := a.(type) {
+	case jev.NoulAnswer:
+		out["noul"] = v.Noul
+	case jev.ChoiceAnswer:
+		out["choice"] = v.Choice
+		out["confidence"] = v.Confidence
+		if len(v.Probabilities) > 0 {
+			out["probabilities"] = v.Probabilities
+		}
+	case jev.ScoreAnswer:
+		out["score"] = v.Score
+		out["confidence"] = v.Confidence
+		if len(v.Legend) > 0 {
+			out["legend"] = v.Legend
+		}
+		if len(v.Distribution) > 0 {
+			out["distribution"] = v.Distribution
+		}
+	}
+	return out
+}
+
+// fullAnswersJSON renders every answer via [fullAnswerJSON].
+func fullAnswersJSON(answers map[string]jev.Answer) map[string]any {
+	out := make(map[string]any, len(answers))
+	for name, a := range answers {
+		out[name] = fullAnswerJSON(a)
+	}
+	return out
+}
+
+// askQuestion is one jev_ask question. Options is a DEPRECATED shorthand for
+// Criteria (a bare closed set of choice labels, Choice-only, expanding to
+// null-valued criteria); a caller must not supply both.
 type askQuestion struct {
-	Type         string             `json:"type"`
-	Instructions string             `json:"instructions"`
-	Options      map[string]*string `json:"options"`
-	Criteria     json.RawMessage    `json:"criteria"`
+	Type         string          `json:"type"`
+	Instructions json.RawMessage `json:"instructions"`
+	Options      []string        `json:"options"`
+	Criteria     json.RawMessage `json:"criteria"`
+}
+
+// resolveText classifies raw as the documented state/instructions shape: a
+// non-empty JSON string (plain text) or literal JSON (an object or array,
+// structured content). Anything else (number, bool, null, empty, invalid)
+// is not ok.
+func resolveText(raw json.RawMessage) (plain string, structured json.RawMessage, ok bool) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "", nil, false
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", nil, false
+	}
+	switch t := v.(type) {
+	case string:
+		if t == "" {
+			return "", nil, false
+		}
+		return t, nil, true
+	case map[string]any, []any:
+		return "", bytes.TrimSpace(raw), true
+	default:
+		return "", nil, false
+	}
+}
+
+// callerID names the connected MCP client for audit entries, from its
+// initialize handshake; "unknown" when the session or handshake is absent
+// (e.g. a fixture test harness that skips initialize).
+func callerID(req *sdk.CallToolRequest) string {
+	if req == nil || req.Session == nil {
+		return "unknown"
+	}
+	init := req.Session.InitializeParams()
+	if init == nil || init.ClientInfo == nil || init.ClientInfo.Name == "" {
+		return "unknown"
+	}
+	if init.ClientInfo.Version != "" {
+		return init.ClientInfo.Name + "/" + init.ClientInfo.Version
+	}
+	return init.ClientInfo.Name
 }
 
 func (s *Server) handleAsk(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
@@ -322,11 +436,11 @@ func (s *Server) handleAsk(ctx context.Context, req *sdk.CallToolRequest) (*sdk.
 	if err := checkKeys(args, "state", "questions"); err != nil {
 		return nil, err
 	}
-	state, err := stateArg(args)
-	if err != nil {
-		return nil, err
+	statePlain, stateStructured, ok := resolveText(args["state"])
+	if !ok {
+		return nil, invalid("state is required: a non-empty string, object or array")
 	}
-	questions, err := parseQuestions(args["questions"])
+	questions, auditQs, err := s.parseAskQuestions(args["questions"])
 	if err != nil {
 		return nil, err
 	}
@@ -334,62 +448,194 @@ func (s *Server) handleAsk(ctx context.Context, req *sdk.CallToolRequest) (*sdk.
 		s.logf("tool=%s available=false reason=%s", tool, reason)
 		return unavailable(reason), nil
 	}
-	redacted, err := s.cfg.Redact(state)
+	redactedState, hits, err := s.redactText(statePlain, stateStructured)
 	if err != nil {
 		s.logf("tool=%s rejected=redaction", tool)
 		return nil, invalid(msgStateRejected)
 	}
-	resp, res, err := s.ask(ctx, tool, jev.Request{State: redacted, Questions: questions}, tool)
+
+	wireQuestions := make(map[string]jev.Question, len(questions))
+	for name, bq := range questions {
+		q, qhits, err := s.buildAskQuestion(name, bq)
+		if err != nil {
+			return nil, err
+		}
+		wireQuestions[name] = q
+		hits = append(hits, qhits...)
+	}
+	built := jev.Request{State: redactedState, Questions: wireQuestions}
+	if err := built.Validate(); err != nil {
+		return nil, invalid("%v", err)
+	}
+
+	s.audit(tool, AuditEntry{
+		Tool:          tool,
+		Caller:        callerID(req),
+		Unregistered:  true,
+		StateBytes:    len(args["state"]),
+		Questions:     auditQs,
+		RedactionHits: mergeHits(hits),
+	})
+
+	resp, res, err := s.ask(ctx, tool, built, tool)
 	if res != nil || err != nil {
 		return res, err
 	}
-	s.logf("tool=%s answered", tool)
+	s.logf("tool=%s answered unregistered=true", tool)
 	return &sdk.CallToolResult{
-		Content: []sdk.Content{&sdk.TextContent{Text: "jev_ask UNVERSIONED/UNAUDITED answer returned (prefer curated tools for auditable decisions)"}},
+		Content: []sdk.Content{&sdk.TextContent{Text: "jev_ask unregistered answer returned (prefer curated tools for auditable, versioned decisions)"}},
 		StructuredContent: map[string]any{
-			"answer":      answersJSON(resp.Answers),
-			"unversioned": true,
-			"unaudited":   true,
+			"answer":       fullAnswersJSON(resp.Answers),
+			"model":        resp.Model,
+			"usage":        map[string]any{"input_tokens": resp.Usage.InputTokens, "output_tokens": resp.Usage.OutputTokens},
+			"unversioned":  true,
+			"unaudited":    true,
+			"unregistered": true,
 		},
 	}, nil
 }
 
-func parseQuestions(raw json.RawMessage) (map[string]jev.Question, error) {
+// audit records a privacy-safe local audit entry; failures are logged, not
+// returned, since a missing/broken audit log must not block a call.
+func (s *Server) audit(tool string, e AuditEntry) {
+	if s.cfg.AuditDir == "" {
+		return
+	}
+	if err := AppendAudit(s.cfg.AuditDir, e); err != nil {
+		s.logf("tool=%s audit-write-failed", tool)
+	}
+}
+
+// redactText applies plain or JSON-aware redaction per [resolveText]'s
+// classification, returning the wire-ready text and the rules that fired.
+func (s *Server) redactText(plain string, structured json.RawMessage) (string, []redact.Hit, error) {
+	if structured != nil {
+		b, hits, err := s.cfg.RedactJSON(structured)
+		return string(b), hits, err
+	}
+	return s.cfg.Redact(plain)
+}
+
+// parseAskQuestions decodes the questions object, and builds the
+// privacy-safe audit shape (ids, types, byte counts) alongside it; question
+// bodies are validated and redacted separately in buildAskQuestion so a
+// caller can compute the audit entry before any state reaches the wire.
+func (s *Server) parseAskQuestions(raw json.RawMessage) (map[string]askQuestion, []AuditQuestion, error) {
 	var in map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &in); err != nil || in == nil {
-		return nil, invalid("questions must be an object")
+		return nil, nil, invalid("questions must be an object")
 	}
 	if len(in) == 0 {
-		return nil, invalid("questions must not be empty")
+		return nil, nil, invalid("questions must not be empty")
 	}
-	out := make(map[string]jev.Question, len(in))
+	out := make(map[string]askQuestion, len(in))
+	audit := make([]AuditQuestion, 0, len(in))
 	for name, r := range in {
 		var q askQuestion
 		dec := json.NewDecoder(bytes.NewReader(r))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&q); err != nil {
-			return nil, invalid("question %q must be {type, instructions, options?, criteria?}", name)
+			return nil, nil, invalid("question %q must be {type, instructions, criteria?, options?}", name)
 		}
-		switch q.Type {
-		case "noul":
-			out[name] = jev.NoulQuestion{Instructions: q.Instructions, Criteria: q.Criteria}
-		case "score":
-			out[name] = jev.ScoreQuestion{Instructions: q.Instructions, Criteria: q.Criteria}
-		case "choice":
-			opts := q.Options
-			if len(opts) == 0 && len(q.Criteria) > 0 {
-				// Accept the criteria object as the option set.
-				if err := json.Unmarshal(q.Criteria, &opts); err != nil {
-					return nil, invalid("question %q: choice options must be an object", name)
-				}
-			}
-			if len(opts) == 0 || len(opts) > jev.MaxChoiceOptions {
-				return nil, invalid("question %q needs options: 1-%d entries", name, jev.MaxChoiceOptions)
-			}
-			out[name] = jev.ChoiceQuestion{Instructions: q.Instructions, Options: opts}
-		default:
-			return nil, invalid("question %q: type must be noul, choice or score", name)
-		}
+		out[name] = q
+		audit = append(audit, AuditQuestion{
+			ID: name, Type: q.Type,
+			InstructionsLen: len(q.Instructions),
+			CriteriaLen:     len(q.Criteria),
+		})
 	}
-	return out, nil
+	sort.Slice(audit, func(i, j int) bool { return audit[i].ID < audit[j].ID })
+	return out, audit, nil
+}
+
+// buildAskQuestion validates, redacts and constructs one wire question. The
+// deprecated Options alias (Choice-only, bare labels) expands to null-valued
+// criteria and is rejected in combination with Criteria.
+func (s *Server) buildAskQuestion(name string, q askQuestion) (jev.Question, []redact.Hit, error) {
+	plain, structured, ok := resolveText(q.Instructions)
+	if !ok {
+		return nil, nil, invalid("question %q: instructions is required (a non-empty string, object or array)", name)
+	}
+	instructions, hits, err := s.redactText(plain, structured)
+	if err != nil {
+		return nil, nil, invalid(msgStateRejected)
+	}
+
+	if len(q.Options) > 0 && len(q.Criteria) > 0 {
+		return nil, nil, invalid("question %q: options and criteria are conflicting shorthand for the same field; supply only one", name)
+	}
+	if len(q.Options) > 0 && q.Type != "choice" {
+		return nil, nil, invalid("question %q: options is a choice-only shorthand", name)
+	}
+
+	criteria := q.Criteria
+	if len(q.Options) > 0 {
+		if len(q.Options) > jev.MaxChoiceOptions {
+			return nil, nil, invalid("question %q: options has %d entries, cap is %d", name, len(q.Options), jev.MaxChoiceOptions)
+		}
+		m := make(map[string]json.RawMessage, len(q.Options))
+		for _, o := range q.Options {
+			if o == "" {
+				return nil, nil, invalid("question %q: options entries must not be empty", name)
+			}
+			m[o] = jev.Null()
+		}
+		b, err := json.Marshal(m)
+		if err != nil {
+			return nil, nil, rpcErr(codeServer, "failed to expand options for %q", name)
+		}
+		criteria = b
+	}
+
+	redactCriteria := func() (json.RawMessage, error) {
+		rc, chits, err := s.cfg.RedactJSON(criteria)
+		if err != nil {
+			return nil, invalid(msgStateRejected)
+		}
+		hits = append(hits, chits...)
+		return rc, nil
+	}
+
+	switch q.Type {
+	case "noul":
+		crit := map[string]json.RawMessage{}
+		if len(criteria) > 0 {
+			rc, err := redactCriteria()
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := json.Unmarshal(rc, &crit); err != nil {
+				return nil, nil, invalid("question %q: noul criteria must be an object", name)
+			}
+		}
+		return jev.NoulQuestion{Instructions: instructions, Criteria: crit}, hits, nil
+	case "score":
+		if len(criteria) == 0 {
+			return nil, nil, invalid("question %q needs criteria: an array of 2-10 levels", name)
+		}
+		rc, err := redactCriteria()
+		if err != nil {
+			return nil, nil, err
+		}
+		var levels []json.RawMessage
+		if err := json.Unmarshal(rc, &levels); err != nil {
+			return nil, nil, invalid("question %q: score criteria must be an array of 2-10 levels", name)
+		}
+		return jev.ScoreQuestion{Instructions: instructions, Criteria: levels}, hits, nil
+	case "choice":
+		if len(criteria) == 0 {
+			return nil, nil, invalid("question %q needs criteria: 1-%d entries", name, jev.MaxChoiceOptions)
+		}
+		rc, err := redactCriteria()
+		if err != nil {
+			return nil, nil, err
+		}
+		crit := map[string]json.RawMessage{}
+		if err := json.Unmarshal(rc, &crit); err != nil {
+			return nil, nil, invalid("question %q: choice criteria must be an object", name)
+		}
+		return jev.ChoiceQuestion{Instructions: instructions, Criteria: crit}, hits, nil
+	default:
+		return nil, nil, invalid("question %q: type must be noul, choice or score", name)
+	}
 }

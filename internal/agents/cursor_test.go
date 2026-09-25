@@ -23,16 +23,11 @@ func TestCursorLookupRegistered(t *testing.T) {
 	}
 }
 
-func TestCursorPreToolRewritesShellToJevkitExec(t *testing.T) {
+func TestCursorPreToolRewritesShell(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "cursor", "pretooluse-shell.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "cursor", "pretooluse-shell-response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	c := agents.NewCursor()
 	resp, err := c.HandlePreTool(context.Background(), agents.Request{
 		Raw:   json.RawMessage(raw),
@@ -42,31 +37,25 @@ func TestCursorPreToolRewritesShellToJevkitExec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got, want map[string]any
+	var got map[string]any
 	if err := json.Unmarshal(resp.Body, &got); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if err := json.Unmarshal(wantRaw, &want); err != nil {
-		t.Fatal(err)
-	}
 	gotCmd := nestedString(got, "updated_input", "command")
-	wantCmd := nestedString(want, "updated_input", "command")
-	if gotCmd != wantCmd {
-		t.Fatalf("command\n got %q\nwant %q", gotCmd, wantCmd)
-	}
 	if got["permission"] != "allow" {
 		t.Fatalf("permission %v", got["permission"])
 	}
-	if !strings.HasPrefix(gotCmd, "jevkit exec -- ") {
-		t.Fatalf("expected jevkit exec rewrite, got %q", gotCmd)
+	if !strings.Contains(gotCmd, "_runtime shell-wrapper") || !strings.Contains(gotCmd, "go test ./...") {
+		t.Fatalf("pre-tool must rewrite, got %q", gotCmd)
 	}
 }
 
-func TestCursorPreToolIdempotentAlreadyRewritten(t *testing.T) {
+func TestCursorPreToolDoesNotMutateExistingCommand(t *testing.T) {
 	payload := map[string]any{
 		"hook_event_name": "preToolUse",
 		"tool_name":       "Shell",
-		"tool_input":      map[string]any{"command": "jevkit exec -- go test ./..."},
+		"tool_input":      map[string]any{"command": "jevkit _runtime shell-wrapper --command 'go test ./...'"},
+		"cwd":             "/tmp/proj",
 	}
 	raw, _ := json.Marshal(payload)
 	c := agents.NewCursor()
@@ -82,11 +71,8 @@ func TestCursorPreToolIdempotentAlreadyRewritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := nestedString(got, "updated_input", "command")
-	if cmd != "jevkit exec -- go test ./..." {
-		t.Fatalf("double-wrapped: %q", cmd)
-	}
-	if strings.Count(cmd, "jevkit exec --") != 1 {
-		t.Fatalf("expected single wrap: %q", cmd)
+	if cmd != "" {
+		t.Fatalf("pre-tool must not mutate wrapper: %q", cmd)
 	}
 }
 
@@ -131,7 +117,7 @@ func TestCursorPostToolShellTelemetryPassthrough(t *testing.T) {
 	}
 }
 
-func TestCursorPostToolNativeResultCompact(t *testing.T) {
+func TestCursorPostToolNativeResultIsTelemetryOnly(t *testing.T) {
 	text := largeCompactableOutput(80)
 	payload := map[string]any{
 		"hook_event_name": "postToolUse",
@@ -157,16 +143,8 @@ func TestCursorPostToolNativeResultCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out struct {
-		UpdatedToolOutput struct {
-			Content string `json:"content"`
-		} `json:"updated_tool_output"`
-	}
-	if err := json.Unmarshal(resp.Body, &out); err != nil {
-		t.Fatalf("body %s: %v", resp.Body, err)
-	}
-	if out.UpdatedToolOutput.Content == "" || len(out.UpdatedToolOutput.Content) >= len(text) {
-		t.Fatalf("expected compacted native content, len=%d body=%s", len(out.UpdatedToolOutput.Content), resp.Body)
+	if string(bytes.TrimSpace(resp.Body)) != "{}" {
+		t.Fatalf("native result replacement is not documented, got %s", resp.Body)
 	}
 }
 
@@ -207,12 +185,8 @@ func TestCursorPostToolMCPResultCompact(t *testing.T) {
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if len(out.UpdatedMCPToolOutput.Content) == 0 {
-		t.Fatalf("missing mcp content: %s", resp.Body)
-	}
-	got := out.UpdatedMCPToolOutput.Content[0].Text
-	if got == "" || len(got) >= len(text) {
-		t.Fatalf("expected compacted MCP text, len=%d body=%s", len(got), resp.Body)
+	if len(out.UpdatedMCPToolOutput.Content) != 0 {
+		t.Fatalf("missing Jev classifier must preserve MCP output, body=%s", resp.Body)
 	}
 }
 
@@ -272,11 +246,7 @@ func TestCursorInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preCount := strings.Count(string(data), agents.CursorPreToolMarker)
 	postCount := strings.Count(string(data), agents.CursorPostToolMarker)
-	if preCount != 1 {
-		t.Fatalf("expected one pre-tool entry, found %d in:\n%s", preCount, data)
-	}
 	// Shell + native + MCP + afterShellExecution = 4 post-tool commands.
 	if postCount != 4 {
 		t.Fatalf("expected four post-tool entries, found %d in:\n%s", postCount, data)
@@ -290,8 +260,8 @@ func TestCursorInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if !strings.Contains(string(data), `"./my-stop.sh"`) {
 		t.Fatalf("lost unrelated stop hook: %s", data)
 	}
-	if !strings.Contains(string(data), "/opt/jevkit "+agents.CursorPreToolMarker) {
-		t.Fatalf("missing pre command: %s", data)
+	if strings.Count(string(data), agents.CursorPreToolMarker) != 1 {
+		t.Fatalf("expected one pre-tool command: %s", data)
 	}
 
 	if err := c.Uninstall(opts); err != nil {
@@ -349,7 +319,7 @@ func TestCursorInstallUserScopeAndAbsentRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(data), agents.CursorPreToolMarker) != 1 {
+	if strings.Count(string(data), agents.CursorPostToolMarker) != 4 || strings.Count(string(data), agents.CursorPreToolMarker) != 1 {
 		t.Fatalf("not idempotent: %s", data)
 	}
 	if err := c.Uninstall(opts); err != nil {

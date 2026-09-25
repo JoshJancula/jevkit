@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -34,14 +35,15 @@ func newApp(t *testing.T) *App {
 		t.Fatal(err)
 	}
 	return &App{
-		Stdin:     strings.NewReader(""),
-		Environ:   []string{"HOME=" + home},
-		WorkDir:   work,
-		HomeDir:   home,
-		ConfigDir: filepath.Join(root, "cfg"),
-		StateDir:  filepath.Join(root, "state"),
-		Version:   "test",
-		Binary:    "jevkit",
+		Stdin:              strings.NewReader(""),
+		Environ:            []string{"HOME=" + home},
+		WorkDir:            work,
+		HomeDir:            home,
+		ConfigDir:          filepath.Join(root, "cfg"),
+		StateDir:           filepath.Join(root, "state"),
+		Version:            "test",
+		Binary:             "jevkit",
+		SdlcSpecialistNeed: func(context.Context, string, string, string) (bool, error) { return false, nil },
 	}
 }
 
@@ -329,18 +331,21 @@ func TestListShowsClassSourceAndState(t *testing.T) {
 		"custom.proj-rule":     {"HARD", "project", "enabled"},
 	}
 	for id, cols := range want {
-		var line string
+		var got []string
 		for _, l := range strings.Split(out, "\n") {
-			if strings.HasPrefix(l, id+" ") {
-				line = l
+			if strings.Contains(l, "│ "+id+" ") {
+				cells := strings.Split(l, "│")
+				for _, cell := range cells[1 : len(cells)-1] {
+					got = append(got, strings.TrimSpace(cell))
+				}
 			}
 		}
-		if line == "" {
+		if len(got) == 0 {
 			t.Errorf("no row for %s in:\n%s", id, out)
 			continue
 		}
-		if got := strings.Fields(line); strings.Join(got[1:], " ") != strings.Join(cols, " ") {
-			t.Errorf("%s: row %q, want %v", id, line, cols)
+		if strings.Join(got[1:], " ") != strings.Join(cols, " ") {
+			t.Errorf("%s: row %q, want %v", id, got, cols)
 		}
 	}
 	if !strings.Contains(out, "mode: standard") {

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -149,10 +150,10 @@ func TestDefaultStateDir(t *testing.T) {
 	if got := defaultStateDir(env(map[string]string{"JEVKIT_STATE_DIR": "/s"}), "linux"); got != "/s" {
 		t.Errorf("override: %q", got)
 	}
-	if got := defaultStateDir(env(map[string]string{"XDG_STATE_HOME": "/x"}), "linux"); got != "/x/jevkit" {
+	if got := defaultStateDir(env(map[string]string{"XDG_STATE_HOME": "/x"}), "linux"); got != filepath.Join("/x", "jevkit") {
 		t.Errorf("xdg: %q", got)
 	}
-	if got := defaultStateDir(env(map[string]string{"LOCALAPPDATA": "/l"}), "windows"); got != "/l/jevkit" {
+	if got := defaultStateDir(env(map[string]string{"LOCALAPPDATA": "/l"}), "windows"); got != filepath.Join("/l", "jevkit") {
 		t.Errorf("windows: %q", got)
 	}
 }

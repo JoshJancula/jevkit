@@ -18,7 +18,7 @@ func TestAntigravityLookupRegistered(t *testing.T) {
 		t.Fatalf("antigravity not registered: %+v", got)
 	}
 	caps := got.Capabilities()
-	if !caps.PreTool || !caps.PreToolRewrite {
+	if !caps.PreTool || !caps.PreToolRewrite || caps.PostTool {
 		t.Fatalf("unexpected caps: %+v", caps)
 	}
 	if caps.OutputReplace {
@@ -26,16 +26,11 @@ func TestAntigravityLookupRegistered(t *testing.T) {
 	}
 }
 
-func TestAntigravityPreToolRewritesRunCommandToJevkitExec(t *testing.T) {
+func TestAntigravityPreToolRewritesRunCommand(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "antigravity", "pretooluse-run-command.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "hooks", "antigravity", "pretooluse-run-command-response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	a := agents.NewAntigravity()
 	resp, err := a.HandlePreTool(context.Background(), agents.Request{
 		Raw:   json.RawMessage(raw),
@@ -45,31 +40,24 @@ func TestAntigravityPreToolRewritesRunCommandToJevkitExec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got, want map[string]any
+	var got map[string]any
 	if err := json.Unmarshal(resp.Body, &got); err != nil {
 		t.Fatalf("body %s: %v", resp.Body, err)
 	}
-	if err := json.Unmarshal(wantRaw, &want); err != nil {
-		t.Fatal(err)
-	}
 	gotCmd := nestedString(got, "overwrite", "CommandLine")
-	wantCmd := nestedString(want, "overwrite", "CommandLine")
-	if gotCmd != wantCmd {
-		t.Fatalf("CommandLine\n got %q\nwant %q", gotCmd, wantCmd)
-	}
 	if got["decision"] != "allow" {
 		t.Fatalf("decision %v", got["decision"])
 	}
-	if !strings.HasPrefix(gotCmd, "jevkit exec -- ") {
-		t.Fatalf("expected jevkit exec rewrite, got %q", gotCmd)
+	if !strings.Contains(gotCmd, "_runtime shell-wrapper") || !strings.Contains(gotCmd, "go test ./...") {
+		t.Fatalf("pre-tool must rewrite, got %q", gotCmd)
 	}
 }
 
-func TestAntigravityPreToolIdempotentAlreadyRewritten(t *testing.T) {
+func TestAntigravityPreToolDoesNotMutateExistingCommand(t *testing.T) {
 	payload := map[string]any{
 		"toolCall": map[string]any{
 			"name": "run_command",
-			"args": map[string]any{"CommandLine": "jevkit exec -- go test ./..."},
+			"args": map[string]any{"CommandLine": "jevkit _runtime shell-wrapper --command 'go test ./...'"},
 		},
 		"workspacePaths": []string{"/tmp/proj"},
 	}
@@ -87,11 +75,8 @@ func TestAntigravityPreToolIdempotentAlreadyRewritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := nestedString(got, "overwrite", "CommandLine")
-	if cmd != "jevkit exec -- go test ./..." {
-		t.Fatalf("double-wrapped: %q", cmd)
-	}
-	if strings.Count(cmd, "jevkit exec --") != 1 {
-		t.Fatalf("expected single wrap: %q", cmd)
+	if cmd != "" {
+		t.Fatalf("pre-tool must not mutate wrapper: %q", cmd)
 	}
 }
 

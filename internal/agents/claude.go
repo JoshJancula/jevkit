@@ -7,16 +7,20 @@ import (
 	"strings"
 
 	"github.com/OWNER/jevkit/internal/compact"
+	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/OWNER/jevkit/internal/security/config"
 )
 
-// Claude adapter name as used on the CLI: `jevkit hook claude ...`.
+// Claude adapter name used by installed runtime integrations.
 const ClaudeName = "claude"
 
 // Managed hook command token used as an idempotency marker inside
 // .claude/settings.json. Installer matching is substring-based on this token
 // so a binary-path change still replaces the prior entry instead of duplicating.
-// Full command is `<binary> hook claude post-tool`.
-const ClaudeHookMarker = "hook claude post-tool"
+// Full command is `<binary> _runtime dispatch --protocol 1 claude post-tool`.
+const ClaudeHookMarker = "_runtime dispatch --protocol 1 claude post-tool"
+const ClaudePreHookMarker = "_runtime dispatch --protocol 1 claude pre-tool"
+const legacyClaudeHookMarker = "hook claude post-tool"
 
 // claudePostPassthrough is the fail-open PostToolUse body (do nothing).
 var claudePostPassthrough = []byte("{}")
@@ -37,7 +41,10 @@ type Claude struct {
 	Asker compact.Asker
 	// StateDir is forwarded to compact shadow logging (unused when shadow
 	// passthrough skips compaction).
-	StateDir string
+	StateDir        string
+	Policy          *compact.Policy
+	Security        *config.Config
+	SecurityDecider *registry.Decider
 }
 
 func init() {
@@ -53,6 +60,7 @@ func (c *Claude) Name() string { return ClaudeName }
 
 func (c *Claude) Capabilities() Capabilities {
 	return Capabilities{
+		PreTool:       true,
 		PostTool:      true,
 		OutputReplace: true,
 	}
@@ -68,6 +76,20 @@ func (c *Claude) Passthrough(event Event) []byte {
 }
 
 func (c *Claude) HandlePreTool(ctx context.Context, req Request) (Response, error) {
+	var payload struct {
+		HookEventName string `json:"hook_event_name"`
+		ToolName      string `json:"tool_name"`
+		CWD           string `json:"cwd"`
+		ToolInput     struct {
+			Command string `json:"command"`
+		} `json:"tool_input"`
+	}
+	if json.Unmarshal(req.Raw, &payload) == nil && strings.EqualFold(payload.HookEventName, "PreToolUse") &&
+		payload.ToolName == "Bash" && strings.TrimSpace(payload.ToolInput.Command) != "" {
+		if response, deny := securityDecision(ctx, c.Security, c.SecurityDecider, payload.ToolInput.Command, payload.CWD, payload.CWD, ClaudeName); deny {
+			return response, nil
+		}
+	}
 	return Response{Body: c.Passthrough(EventPreTool)}, nil
 }
 
@@ -80,7 +102,7 @@ func (c *Claude) HandleStop(ctx context.Context, req Request) (Response, error) 
 // is off. Everything else fails open with `{}`.
 func (c *Claude) HandlePostTool(ctx context.Context, req Request) (Response, error) {
 	passthrough := Response{Body: c.Passthrough(EventPostTool)}
-	if !c.compactEnabled() || c.shadow() {
+	if !c.compactEnabled() {
 		return passthrough, nil
 	}
 
@@ -98,20 +120,28 @@ func (c *Claude) HandlePostTool(ctx context.Context, req Request) (Response, err
 	command := payload.ToolInput.Command
 	stdout := payload.ToolResponse.Stdout
 	stderr := payload.ToolResponse.Stderr
+	pointer, err := storeRawResult(c.StateDir, ClaudeName, joinToolStreams(stdout, stderr))
+	if err != nil {
+		return passthrough, nil
+	}
 	// Spike confirmed PostToolUse has no exit code; success-only path uses 0.
 	const exitStatus = 0
 
 	opts := compact.JevOptions{
-		Enabled:        true,
-		ThresholdBytes: c.ThresholdBytes,
-		StateDir:       c.StateDir,
+		Enabled:           true,
+		Shadow:            c.shadow(),
+		ThresholdBytes:    c.ThresholdBytes,
+		StateDir:          c.StateDir,
+		RawPointer:        pointer,
+		Runtime:           ClaudeName,
+		AuthoritativeExit: false,
+		Policy:            c.Policy,
 	}
 	_, result := compact.JevCompact(command, stdout, stderr, exitStatus, c.Asker, opts)
-	if !result.Compacted {
+	if !result.Compacted || c.shadow() {
 		return passthrough, nil
 	}
-
-	body, err := marshalClaudeUpdatedOutput(result.Stdout, result.Stderr, payload.ToolResponse)
+	body, err := marshalClaudeUpdatedOutput(rawResultTrailer(result.Stdout, pointer), result.Stderr, payload.ToolResponse)
 	if err != nil {
 		return passthrough, nil
 	}
@@ -164,11 +194,9 @@ func (c *Claude) getenv(key string) string {
 }
 
 func (c *Claude) compactEnabled() bool {
-	v := c.getenv("JEVKIT_COMPACT")
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+	return compactEnvEnabled(c.getenv, "JEVKIT_COMPACT")
 }
 
 func (c *Claude) shadow() bool {
-	v := c.getenv("JEVKIT_COMPACT_SHADOW")
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") || strings.EqualFold(v, "on")
+	return compactEnvEnabled(c.getenv, "JEVKIT_COMPACT_SHADOW")
 }

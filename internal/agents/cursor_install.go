@@ -125,9 +125,7 @@ func mergeCursorHooks(existing []byte, binary string) ([]byte, error) {
 
 	hooksObj["preToolUse"] = upsertCursorHookEntries(
 		stripManagedCursorHooks(asSlice(hooksObj["preToolUse"])),
-		[]map[string]any{
-			{"command": preCmd, "matcher": cursorShellMatcher},
-		},
+		[]map[string]any{{"command": preCmd, "matcher": cursorShellMatcher}},
 	)
 	hooksObj["postToolUse"] = upsertCursorHookEntries(
 		stripManagedCursorHooks(asSlice(hooksObj["postToolUse"])),
@@ -198,7 +196,7 @@ func cursorEntryPresent(entries []any, want map[string]any) bool {
 }
 
 func isManagedCursorCommand(command string) bool {
-	return strings.Contains(command, CursorHookMarker)
+	return strings.Contains(command, CursorHookMarker) || strings.Contains(command, legacyCursorHookMarker)
 }
 
 func ensureCursorBackup(hooksPath string, existing []byte) error {
