@@ -210,8 +210,6 @@ func Replace(target, candidate string) error {
 func Managed(path string) string {
 	p := strings.ToLower(path)
 	switch {
-	case strings.Contains(p, "node_modules"):
-		return "npm update -g jevkit"
 	case strings.Contains(p, "homebrew") || strings.Contains(p, "/cellar/"):
 		return "brew upgrade jevkit"
 	case strings.Contains(p, "scoop"):

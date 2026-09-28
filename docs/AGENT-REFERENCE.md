@@ -41,7 +41,7 @@ binary/source-data, redaction, confidence, or runtime-capability safeguards.
 version: 1
 rules:
   - id: preserve-generated-files
-    command: '^npm run generate'
+    command: '^go generate'
     action: never-compact
   - id: focused-tests
     command: '^go test'

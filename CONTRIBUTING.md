@@ -21,6 +21,6 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-The tag starts the [release workflow](.github/workflows/release.yml), which builds six macOS, Linux, and Windows archives, produces SBOMs, signs the checksum file, and publishes a GitHub Release. It also runs the macOS/Linux installer as a smoke test. The workflow does not publish npm packages.
+The tag starts the [release workflow](.github/workflows/release.yml), which builds six macOS, Linux, and Windows archives, produces SBOMs, signs the checksum file, and publishes a GitHub Release. It also runs the macOS/Linux installer as a smoke test.
 
 Review the version and commit before pushing the tag: the GitHub Release becomes public when the workflow runs. Afterward, check the six archives, `checksums.txt`, `checksums.txt.sigstore.json`, and the installer step in the workflow log. The workflow uses `GITHUB_TOKEN` and GitHub OIDC; it needs no custom publishing secret.
