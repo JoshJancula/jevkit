@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/filelock"
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/filelock"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 // Decisions.

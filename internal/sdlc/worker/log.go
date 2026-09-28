@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/OWNER/jevkit/internal/filelock"
+	"github.com/JoshJancula/jevkit/internal/filelock"
 	"os"
 	"path/filepath"
 	"strings"

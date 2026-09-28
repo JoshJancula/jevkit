@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 )
 
 func sdlcLimitSummary(p enrollment.Policy) string {

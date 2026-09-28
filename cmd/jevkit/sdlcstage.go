@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/breaker"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/keystore"
-	"github.com/OWNER/jevkit/internal/redact/config"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/breaker"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/keystore"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 // A question is one drive step. The run lock ensures two drivers cannot ask

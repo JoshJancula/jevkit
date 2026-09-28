@@ -3,8 +3,8 @@ package engine
 import (
 	"fmt"
 
-	"github.com/OWNER/jevkit/internal/sdlc/graph"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/graph"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 // FirstUnsatisfiedNode walks forward from g.Entry, skipping over a work node

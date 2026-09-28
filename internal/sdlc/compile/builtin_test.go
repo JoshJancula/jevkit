@@ -3,7 +3,7 @@ package compile
 import (
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 // TestBuiltinsCompile compiles every embedded built-in workflow: each must

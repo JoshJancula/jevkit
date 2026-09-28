@@ -3,7 +3,7 @@ package agents
 import (
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 // BuildShellWrapperCommand returns a shell-safe invocation of the private

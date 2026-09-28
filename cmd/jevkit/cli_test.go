@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/breaker"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/keystore"
-	"github.com/OWNER/jevkit/internal/usage"
+	"github.com/JoshJancula/jevkit/internal/breaker"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/keystore"
+	"github.com/JoshJancula/jevkit/internal/usage"
 )
 
 const secretKey = "sk-test-SECRET-0123456789"

@@ -12,10 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/catalog"
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/catalog"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 // sdlcCmd groups the SDLC workflow commands.

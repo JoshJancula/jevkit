@@ -16,7 +16,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 // FileArg is one parsed `--file` value.

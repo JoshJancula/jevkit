@@ -9,7 +9,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 // developerAssessment describes one built-in developer.* question set the

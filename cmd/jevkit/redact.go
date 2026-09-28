@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/redact"
-	"github.com/OWNER/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
 )
 
 // maxTestInput bounds what `redact test` reads.

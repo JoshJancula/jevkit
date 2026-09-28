@@ -31,8 +31,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/sdlc/graph"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/graph"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 // Compile validates w, then builds and freezes the DAG.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/agents"
+	"github.com/JoshJancula/jevkit/internal/agents"
 )
 
 func TestRuntimeCapabilityAuditCoversEveryAdapter(t *testing.T) {
@@ -32,7 +32,7 @@ func TestRuntimeCapabilityAuditCoversEveryAdapter(t *testing.T) {
 }
 
 func TestRuntimeCapabilityAuditIsDocumented(t *testing.T) {
-	doc, err := os.ReadFile("../../docs/AGENT-INTEGRATIONS.md")
+	doc, err := os.ReadFile("../../docs/AGENT-REFERENCE.md")
 	if err != nil {
 		t.Fatal(err)
 	}

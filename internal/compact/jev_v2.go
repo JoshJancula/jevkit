@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/redact"
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 var budgetLines = [6]int{8, 20, 48, 140, 400, 0}

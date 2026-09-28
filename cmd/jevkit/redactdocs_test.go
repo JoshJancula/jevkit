@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
 )
 
-const redactionDoc = "../../docs/REDACTION.md"
+const redactionDoc = "../../docs/REDACTION-REFERENCE.md"
 
 // fence is one fenced code block of the doc.
 type fence struct {
@@ -43,7 +43,7 @@ func fences(t *testing.T) []fence {
 	return out
 }
 
-// TestRedactionDocYAMLValid checks that every yaml fence parses and passes
+// TestRedactionDocYAMLValid checks that every reference yaml fence parses and passes
 // schema and semantic validation. A fence tagged "yaml project" is checked as
 // an untrusted project file.
 func TestRedactionDocYAMLValid(t *testing.T) {

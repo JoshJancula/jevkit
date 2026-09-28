@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/compact"
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/compact"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 // Cursor adapter name used by installed runtime integrations.

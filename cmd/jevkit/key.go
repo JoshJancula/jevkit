@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/keystore"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/keystore"
 )
 
 // Asker is the slice of the jev client `key test` uses.

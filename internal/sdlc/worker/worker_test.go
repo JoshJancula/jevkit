@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 )
 
 func requireUnixShellFixture(t *testing.T) {

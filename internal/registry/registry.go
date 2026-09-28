@@ -14,7 +14,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )

@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/globmatch"
+	"github.com/JoshJancula/jevkit/internal/globmatch"
 )
 
 // Guard is a path-reference heuristic, not an operating-system sandbox.

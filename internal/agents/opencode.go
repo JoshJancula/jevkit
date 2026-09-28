@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/compact"
+	"github.com/JoshJancula/jevkit/internal/compact"
 )
 
 // OpenCode adapter name used by the installed plugin.

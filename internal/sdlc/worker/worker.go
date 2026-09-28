@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
-	securityconfig "github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
+	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 type Request struct {

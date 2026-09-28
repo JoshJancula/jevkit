@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 const boundedFlow = `version: 1

@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/redact"
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 const testKey = "jev-mcp-secret-key-NEVER-EMIT"

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 func TestCompactStatsCountsOneOutputPerTriage(t *testing.T) {

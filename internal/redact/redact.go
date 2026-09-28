@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 // Options configures a Redactor. Only SOFT rules are tunable.

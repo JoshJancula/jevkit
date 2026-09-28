@@ -8,13 +8,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OWNER/jevkit/internal/breaker"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/keystore"
-	jevmcp "github.com/OWNER/jevkit/internal/mcp"
-	"github.com/OWNER/jevkit/internal/redact"
-	"github.com/OWNER/jevkit/internal/redact/config"
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/breaker"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/keystore"
+	jevmcp "github.com/JoshJancula/jevkit/internal/mcp"
+	"github.com/JoshJancula/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 func (a *App) mcpCmd() *cobra.Command {

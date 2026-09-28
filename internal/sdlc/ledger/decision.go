@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/OWNER/jevkit/internal/filelock"
+	"github.com/JoshJancula/jevkit/internal/filelock"
 )
 
 // Decision is recorded evidence about a routing or lifecycle choice. Detail is

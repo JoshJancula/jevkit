@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 var modelNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`)

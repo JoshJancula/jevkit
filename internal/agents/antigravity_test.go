@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/agents"
+	"github.com/JoshJancula/jevkit/internal/agents"
 )
 
 func TestAntigravityLookupRegistered(t *testing.T) {

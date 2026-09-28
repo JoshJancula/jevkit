@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 func mustLoad(t *testing.T, y string) *spec.Workflow {

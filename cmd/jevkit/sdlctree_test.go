@@ -4,11 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
-	"github.com/OWNER/jevkit/internal/sdlc/stageflow"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/stageflow"
 )
 
 func TestDirectChildChargesRootAndUsesRootDeadline(t *testing.T) {

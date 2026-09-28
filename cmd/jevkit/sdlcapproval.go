@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 )
 
 // A run only needs a gate when it is about to assign implementation work.

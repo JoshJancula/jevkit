@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OWNER/jevkit/internal/agents"
+	"github.com/JoshJancula/jevkit/internal/agents"
 )
 
 func (a *App) installCmd() *cobra.Command {

@@ -10,9 +10,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/OWNER/jevkit/internal/redact/config"
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 	"golang.org/x/term"
 )
 

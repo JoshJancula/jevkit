@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/globmatch"
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/globmatch"
+	"github.com/JoshJancula/jevkit/internal/jev"
 	"gopkg.in/yaml.v3"
 )
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/redact/audit"
+	"github.com/JoshJancula/jevkit/internal/redact/audit"
 )
 
 var t0 = time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)

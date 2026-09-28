@@ -1,4 +1,4 @@
-module github.com/OWNER/jevkit
+module github.com/JoshJancula/jevkit
 
 go 1.26
 

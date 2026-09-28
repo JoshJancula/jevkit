@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
-	"github.com/OWNER/jevkit/internal/sdlc/worker"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
 
 func TestWatchAndLogFollowersDetachWithoutChangingRun(t *testing.T) {

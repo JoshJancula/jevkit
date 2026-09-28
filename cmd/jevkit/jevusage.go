@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/usage"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/usage"
 )
 
 type runIDContextKey struct{}

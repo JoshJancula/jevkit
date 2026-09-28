@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	securityconfig "github.com/OWNER/jevkit/internal/security/config"
+	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 func (a *App) securityCmd() *cobra.Command {

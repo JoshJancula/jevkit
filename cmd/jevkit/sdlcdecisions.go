@@ -3,8 +3,8 @@ package main
 import (
 	"time"
 
-	"github.com/OWNER/jevkit/internal/redact/config"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 )
 
 func (a *App) recordDecision(store *ledger.Store, d ledger.Decision) error {

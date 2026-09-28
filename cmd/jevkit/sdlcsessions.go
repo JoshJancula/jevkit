@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
-	"github.com/OWNER/jevkit/internal/sdlc/route"
-	"github.com/OWNER/jevkit/internal/sdlc/worker"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/sdlc/route"
+	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
 
 func validateSessionStrategy(v string) error {

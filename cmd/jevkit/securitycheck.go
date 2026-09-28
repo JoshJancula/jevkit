@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/security"
-	securityconfig "github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/security"
+	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 func (a *App) securityCheckCmd() *cobra.Command {

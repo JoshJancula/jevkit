@@ -11,13 +11,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/breaker"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/keystore"
-	"github.com/OWNER/jevkit/internal/redact/audit"
-	"github.com/OWNER/jevkit/internal/redact/config"
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
-	"github.com/OWNER/jevkit/internal/sdlc/worker"
+	"github.com/JoshJancula/jevkit/internal/breaker"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/keystore"
+	"github.com/JoshJancula/jevkit/internal/redact/audit"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
 
 // Exit codes.

@@ -10,8 +10,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/OWNER/jevkit/internal/redact"
-	"github.com/OWNER/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
 )
 
 // finding is one lint result.

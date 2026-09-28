@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/OWNER/jevkit/internal/upgrade"
+	"github.com/JoshJancula/jevkit/internal/upgrade"
 	"github.com/spf13/cobra"
 )
 

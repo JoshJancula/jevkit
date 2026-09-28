@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/OWNER/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
 )
 
 // sdlcLiveOutput presents bounded runtime activity while the saved log keeps

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 )
 
 func (a *App) rootRun(run ledger.Run) (ledger.Run, error) {

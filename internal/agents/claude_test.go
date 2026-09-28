@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/agents"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/agents"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 func TestClaudeLookupRegistered(t *testing.T) {

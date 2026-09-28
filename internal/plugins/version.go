@@ -12,7 +12,7 @@ const PluginID = "jevkit"
 const CommandName = "jevkit"
 
 // ModulePath is the Go module path used in install remediation hints.
-const ModulePath = "github.com/OWNER/jevkit"
+const ModulePath = "github.com/JoshJancula/jevkit"
 
 // Hosts are the supported agent runtimes that receive a generated package.
 var Hosts = []string{"claude", "opencode", "cursor", "antigravity"}

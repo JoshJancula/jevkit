@@ -12,12 +12,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OWNER/jevkit/internal/agents"
-	"github.com/OWNER/jevkit/internal/breaker"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/keystore"
-	"github.com/OWNER/jevkit/internal/redact"
-	"github.com/OWNER/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/agents"
+	"github.com/JoshJancula/jevkit/internal/breaker"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/keystore"
+	"github.com/JoshJancula/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
 )
 
 func (a *App) doctorCmd() *cobra.Command {

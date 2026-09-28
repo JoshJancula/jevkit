@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/agents"
-	securityconfig "github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/agents"
+	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 func TestRuntimeSpecificSecurityDenyBodies(t *testing.T) {

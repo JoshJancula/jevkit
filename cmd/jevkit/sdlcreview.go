@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
-	"github.com/OWNER/jevkit/internal/sdlc/worker"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
 
 func (a *App) saveReviewRecovery(store *ledger.Store, assignment adaptive.Assignment, model string, reply worker.Reply) error {

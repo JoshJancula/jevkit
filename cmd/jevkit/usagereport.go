@@ -6,8 +6,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
-	"github.com/OWNER/jevkit/internal/usage"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/usage"
 )
 
 type runtimeTotals struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/redact/audit"
+	"github.com/JoshJancula/jevkit/internal/redact/audit"
 )
 
 // parseSince accepts a duration back from now ("36h", "7d"), a date

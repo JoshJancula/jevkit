@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/engine"
+	"github.com/JoshJancula/jevkit/internal/sdlc/engine"
 )
 
 func TestNewRunAndReadRun(t *testing.T) {

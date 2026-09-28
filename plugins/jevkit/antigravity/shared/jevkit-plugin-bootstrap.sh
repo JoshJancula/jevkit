@@ -4,7 +4,7 @@ set -euo pipefail
 
 EXPECTED_COMMAND="jevkit"
 PINNED_VERSION="dev"
-INSTALL_COMMAND="go install github.com/OWNER/jevkit/cmd/jevkit@latest"
+INSTALL_COMMAND="go install github.com/JoshJancula/jevkit/cmd/jevkit@latest"
 
 usage() {
   cat <<'USAGE'
@@ -66,7 +66,7 @@ bootstrap_pinned() {
   if ! command -v go >/dev/null 2>&1; then
     return 1
   fi
-  GOBIN="$dest" go install "github.com/OWNER/jevkit/cmd/jevkit@latest"
+  GOBIN="$dest" go install "github.com/JoshJancula/jevkit/cmd/jevkit@latest"
   if [[ -x "$dest/jevkit" ]]; then
     PATH="$dest:$PATH"
     export PATH

@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 )
 
 func (a *App) sdlcPolicyPath() string {

@@ -6,11 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OWNER/jevkit/internal/breaker"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/keystore"
-	jevmcp "github.com/OWNER/jevkit/internal/mcp"
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/breaker"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/keystore"
+	jevmcp "github.com/JoshJancula/jevkit/internal/mcp"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 // mcpPreflight lists reasons the server would answer available:false or fail.

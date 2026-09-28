@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 type fakeAsker struct {

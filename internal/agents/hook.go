@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/usage"
+	"github.com/JoshJancula/jevkit/internal/usage"
 )
 
 // Options configures a single hook dispatch.

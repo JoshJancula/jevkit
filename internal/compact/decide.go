@@ -3,8 +3,8 @@ package compact
 import (
 	"math"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 var locusOrder = []string{"throughout", "first-failure", "scattered", "tail", "head", "nowhere"}

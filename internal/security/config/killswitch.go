@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/OWNER/jevkit/internal/globmatch"
+	"github.com/JoshJancula/jevkit/internal/globmatch"
 )
 
 type Killswitch struct {

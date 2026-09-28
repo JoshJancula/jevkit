@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 )
 
 const startWorkflowYAML = `version: 1

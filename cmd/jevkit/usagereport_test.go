@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/sdlc/ledger"
-	"github.com/OWNER/jevkit/internal/usage"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/usage"
 )
 
 func TestUsageReportSeparatesJevAndRuntimeAndLinksRun(t *testing.T) {

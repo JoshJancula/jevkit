@@ -8,11 +8,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OWNER/jevkit/internal/agents"
-	"github.com/OWNER/jevkit/internal/compact"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/registry"
-	securityconfig "github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/agents"
+	"github.com/JoshJancula/jevkit/internal/compact"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 // runtimeCmd is the private, versioned stdin hook protocol used only by

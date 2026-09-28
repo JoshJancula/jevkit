@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 // testRegistry has a choice set with declared options, a call-time choice set,

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/redact"
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 const QuestionSetID = "security.command-risk"

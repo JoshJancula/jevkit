@@ -1,6 +1,6 @@
 package engine
 
-import "github.com/OWNER/jevkit/internal/registry"
+import "github.com/JoshJancula/jevkit/internal/registry"
 
 // Event feeds an Effect's resolution back into Apply. It is a sealed set:
 // WorkCompleted, CommandCompleted, JevDecided and HumanResponded.

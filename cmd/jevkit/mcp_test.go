@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 // syncBuf is a bytes.Buffer safe for the server goroutine and the test.

@@ -1,5 +1,3 @@
-# npm packages
+# Unpublished npm packaging
 
-`jevkit` is the launcher package. Future release automation will expand
-`platform-template` into six optional platform packages and places the
-corresponding GoReleaser binary in each package's `bin/` directory.
+This directory contains a launcher and six platform-package prototypes. The GitHub Release workflow does not publish them, and `npm install jevkit` is not a supported install path yet. Use the [GitHub Release or source build](../README.md#install) for now.

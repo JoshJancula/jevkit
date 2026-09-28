@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/redact/audit"
-	"github.com/OWNER/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/redact/audit"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
 )
 
 const (

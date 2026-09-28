@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/sdlc/worker"
-	securityconfig "github.com/OWNER/jevkit/internal/security/config"
-	"github.com/OWNER/jevkit/internal/usage"
+	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
+	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/usage"
 )
 
 func TestSecurityCLIAndInvalidPolicyHookFallback(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/plugins"
+	"github.com/JoshJancula/jevkit/internal/plugins"
 )
 
 func TestVersionMatchesBinaryConstant(t *testing.T) {

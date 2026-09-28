@@ -14,9 +14,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OWNER/jevkit/internal/compact"
-	"github.com/OWNER/jevkit/internal/security"
-	securityconfig "github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/compact"
+	"github.com/JoshJancula/jevkit/internal/security"
+	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 // shellWrapperCmd is invoked only after a runtime's PreToolUse hook rewrites a

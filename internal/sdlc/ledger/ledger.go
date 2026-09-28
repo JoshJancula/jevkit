@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/filelock"
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/engine"
-	"github.com/OWNER/jevkit/internal/sdlc/stageflow"
+	"github.com/JoshJancula/jevkit/internal/filelock"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/engine"
+	"github.com/JoshJancula/jevkit/internal/sdlc/stageflow"
 )
 
 type Event struct {
