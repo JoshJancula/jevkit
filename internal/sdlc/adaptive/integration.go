@@ -395,6 +395,8 @@ func InvalidateOnCandidateChange(st *State) {
 	if st == nil {
 		return
 	}
+	st.RepairFeedback = nil
+	st.NoProgressCount = 0
 	st.Assessments = nil
 	st.SpecialistReviews = nil
 	st.SpecialistDecisions = nil

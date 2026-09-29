@@ -56,7 +56,7 @@ type RuntimeMatrix struct {
 	// ShellHookCoverage mirrors agents.RuntimeCapability.ShellPolicyCoverage:
 	// whether the installed pre-tool hook can inspect and rewrite an eligible
 	// shell call before the runtime executes it. OpenCode is false; see
-	// internal/agents/capability_audit.go and docs/AGENT-REFERENCE.md.
+	// internal/agents/capability_audit.go and docs/AGENT-INTEGRATIONS.md.
 	ShellHookCoverage bool
 	// WorkdirScoped is true for every runtime: CLIExecutor.Execute always
 	// sets cmd.Dir to req.WorkDir (worker.go), independent of the runtime

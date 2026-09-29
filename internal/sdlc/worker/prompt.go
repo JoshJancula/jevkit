@@ -69,6 +69,9 @@ Return exactly one JSON object with outcome and content fields. For this role, o
 	if role == "planner" {
 		base += "\n\n" + plannerStableContract()
 	}
+	if role == "implementer" {
+		base += "\n\nOn a repair attempt, inspect the decisive review findings and supervisor check logs before editing. Identify the cause, make a targeted repair, and explain what changed and which evidence supports it. If an approach fails, use the observed failure to choose a different next action. Answer or no-change cannot close an existing candidate that still needs verification or review. If blocked, report the specific blocker, evidence, and needed capability in a handoff; respect the unchanged-workspace handoff contract."
+	}
 	return base
 }
 

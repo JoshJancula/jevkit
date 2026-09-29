@@ -11,7 +11,7 @@ make install     # copy to ~/.local/bin, or $INSTALL_DIR
 
 Add `~/.local/bin` to your `PATH` if needed. For linting, install [golangci-lint](https://golangci-lint.run/usage/install/) and run `make lint`. Run `make plugins` after changing generated agent plugin templates, then confirm the generated-plugin check your CI uses still passes. Before a pull request, run `make lint test` and `git diff --check`.
 
-Local SDLC runs from a built binary write under `$JEVKIT_STATE_DIR` (or the XDG/Windows default described in [usage](USAGE.md)). Tests use temp directories and do not need a personal state tree. Fixture-driven SDLC journeys live under `cmd/jevkit` and `internal/sdlc`; they exercise planner ready/blocked setup, plan and check approval, verification outcomes, fan-out scheduling, custom/child runs, and delete/prune without calling live providers.
+Local SDLC runs from a built binary write under `$JEVKIT_STATE_DIR` (or the XDG/Windows default described in [usage](USAGE.md)). Tests use temp directories and do not need a personal state tree. Fixture-driven SDLC journeys live under `cmd/jevkit/sdlc` and `internal/sdlc`; they exercise planner ready/blocked setup, plan and check approval, verification outcomes, fan-out scheduling, custom/child runs, and delete/prune without calling live providers.
 
 `make snapshot` needs GoReleaser, Syft, and Cosign to produce the configured snapshot artifacts locally. The tagged release workflow installs its own tools; see [Releases](../CONTRIBUTING.md#releases). Distribution is the GitHub Release binary (and `make install` from source)—not an npm package.
 

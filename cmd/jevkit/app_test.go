@@ -1,102 +1,30 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
+	"github.com/JoshJancula/jevkit/cmd/jevkit/internal/testkit"
 )
-
-// noNetwork fails the test if anything uses the default HTTP transport.
-type noNetwork struct{ t *testing.T }
-
-func (n noNetwork) RoundTrip(r *http.Request) (*http.Response, error) {
-	n.t.Errorf("unexpected network call to %s", r.URL)
-	return nil, errors.New("network is forbidden in this test")
-}
-
-func newApp(t *testing.T) *App {
-	t.Helper()
-	old := http.DefaultTransport
-	http.DefaultTransport = noNetwork{t}
-	t.Cleanup(func() { http.DefaultTransport = old })
-	root := t.TempDir()
-	work := filepath.Join(root, "work")
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return &App{
-		Stdin:              strings.NewReader(""),
-		Environ:            []string{"HOME=" + home},
-		WorkDir:            work,
-		HomeDir:            home,
-		ConfigDir:          filepath.Join(root, "cfg"),
-		StateDir:           filepath.Join(root, "state"),
-		Version:            "test",
-		Binary:             "jevkit",
-		SdlcSpecialistNeed: func(context.Context, string, string, string) (bool, error) { return false, nil },
-	}
-}
-
-// run executes one command with fresh buffers.
-func run(a *App, stdin string, args ...string) (code int, stdout, stderr string) {
-	var out, errb bytes.Buffer
-	a.Stdout, a.Stderr, a.Stdin = &out, &errb, strings.NewReader(stdin)
-	code = a.Run(args)
-	return code, out.String(), errb.String()
-}
-
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func readFile(t *testing.T, path string) string {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
-}
-
-func mustRun(t *testing.T, a *App, stdin string, want int, args ...string) (stdout, stderr string) {
-	t.Helper()
-	code, out, errs := run(a, stdin, args...)
-	if code != want {
-		t.Fatalf("jevkit %v: exit %d, want %d\nstdout:\n%s\nstderr:\n%s", args, code, want, out, errs)
-	}
-	return out, errs
-}
 
 func TestInitCreatesPrivateFileThatPassesCheck(t *testing.T) {
 	a := newApp(t)
 	out, _ := mustRun(t, a, "", 0, "redact", "init")
-	if !strings.Contains(out, a.userPath()) {
+	if !strings.Contains(out, a.UserPath()) {
 		t.Errorf("init did not report the path: %q", out)
 	}
-	fi, err := os.Stat(a.userPath())
+	fi, err := os.Stat(a.UserPath())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %04o, want 0600", fi.Mode().Perm())
 	}
-	if body := readFile(t, a.userPath()); strings.Count(body, "#") < 40 {
+	if body := testkit.ReadFile(t, a.UserPath()); strings.Count(body, "#") < 40 {
 		t.Errorf("starter is not heavily commented:\n%s", body)
 	}
 	out, _ = mustRun(t, a, "", 0, "redact", "check")
@@ -105,13 +33,13 @@ func TestInitCreatesPrivateFileThatPassesCheck(t *testing.T) {
 	}
 
 	// Refuses to clobber, unless forced.
-	writeFile(t, a.userPath(), "version: 1\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\n")
 	mustRun(t, a, "", 1, "redact", "init")
-	if got := readFile(t, a.userPath()); got != "version: 1\n" {
+	if got := testkit.ReadFile(t, a.UserPath()); got != "version: 1\n" {
 		t.Errorf("init without --force changed the file: %q", got)
 	}
 	mustRun(t, a, "", 0, "redact", "init", "--force")
-	if got := readFile(t, a.userPath()); got == "version: 1\n" {
+	if got := testkit.ReadFile(t, a.UserPath()); got == "version: 1\n" {
 		t.Error("--force did not rewrite the file")
 	}
 }
@@ -120,8 +48,8 @@ func TestInitProject(t *testing.T) {
 	a := newApp(t)
 	mustRun(t, a, "", 0, "redact", "init", "--project")
 	path := filepath.Join(a.WorkDir, ".jevkit", "redact.yaml")
-	if a.projectPath() != path {
-		t.Fatalf("projectPath = %s", a.projectPath())
+	if a.ProjectPath() != path {
+		t.Fatalf("projectPath = %s", a.ProjectPath())
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -130,7 +58,7 @@ func TestInitProject(t *testing.T) {
 	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %04o, want 0600", fi.Mode().Perm())
 	}
-	if _, err := os.Stat(a.userPath()); err == nil {
+	if _, err := os.Stat(a.UserPath()); err == nil {
 		t.Error("--project also wrote the user file")
 	}
 	mustRun(t, a, "", 0, "redact", "check")
@@ -139,7 +67,7 @@ func TestInitProject(t *testing.T) {
 func TestAddPreservesCommentsAndValidates(t *testing.T) {
 	a := newApp(t)
 	mustRun(t, a, "", 0, "redact", "init")
-	before := readFile(t, a.userPath())
+	before := testkit.ReadFile(t, a.UserPath())
 
 	mustRun(t, a, "", 0, "redact", "add", "--literal", "acme-prod-db-password")
 	mustRun(t, a, "", 0, "redact", "add", "--env", "STRIPE_*")
@@ -154,7 +82,7 @@ func TestAddPreservesCommentsAndValidates(t *testing.T) {
 	}
 	mustRun(t, a, "", 0, "redact", "add", "--pattern", `build-[0-9]{6}`, "--id", "custom.build")
 
-	after := readFile(t, a.userPath())
+	after := testkit.ReadFile(t, a.UserPath())
 	for _, line := range strings.Split(before, "\n") {
 		if strings.HasPrefix(line, "#") && !strings.Contains(after, line) {
 			t.Errorf("comment lost: %q\n---\n%s", line, after)
@@ -177,9 +105,9 @@ func TestAddPreservesCommentsAndValidates(t *testing.T) {
 	mustRun(t, a, "", 0, "redact", "check")
 
 	// Adding an existing entry changes nothing.
-	snapshot := readFile(t, a.userPath())
+	snapshot := testkit.ReadFile(t, a.UserPath())
 	out, _ = mustRun(t, a, "", 0, "redact", "add", "--env", "STRIPE_*")
-	if !strings.Contains(out, "already present") || readFile(t, a.userPath()) != snapshot {
+	if !strings.Contains(out, "already present") || testkit.ReadFile(t, a.UserPath()) != snapshot {
 		t.Errorf("duplicate add: %q", out)
 	}
 
@@ -199,7 +127,7 @@ func TestAddRejectsInvalidInputWithoutModifyingFile(t *testing.T) {
 	a := newApp(t)
 	mustRun(t, a, "", 0, "redact", "init")
 	mustRun(t, a, "", 0, "redact", "add", "--pattern", `keep-[0-9]+x`, "--id", "custom.keep")
-	snapshot := readFile(t, a.userPath())
+	snapshot := testkit.ReadFile(t, a.UserPath())
 
 	cases := []struct {
 		name string
@@ -221,7 +149,7 @@ func TestAddRejectsInvalidInputWithoutModifyingFile(t *testing.T) {
 			if !strings.Contains(errs, tc.want) || !strings.Contains(errs, "left unchanged") {
 				t.Errorf("stderr = %q, want %q", errs, tc.want)
 			}
-			if got := readFile(t, a.userPath()); got != snapshot {
+			if got := testkit.ReadFile(t, a.UserPath()); got != snapshot {
 				t.Errorf("file modified:\n%s", got)
 			}
 			if strings.Contains(errs, ".tmp") {
@@ -234,7 +162,7 @@ func TestAddRejectsInvalidInputWithoutModifyingFile(t *testing.T) {
 	mustRun(t, a, "", 2, "redact", "add")
 	mustRun(t, a, "", 2, "redact", "add", "--literal", "abcdefgh", "--env", "FOO")
 	mustRun(t, a, "", 2, "redact", "add", "--literal", "abcdefgh", "--id", "x")
-	if got := readFile(t, a.userPath()); got != snapshot {
+	if got := testkit.ReadFile(t, a.UserPath()); got != snapshot {
 		t.Error("usage error modified the file")
 	}
 }
@@ -242,11 +170,11 @@ func TestAddRejectsInvalidInputWithoutModifyingFile(t *testing.T) {
 func TestAddCreatesMissingFilesAndProjectLayer(t *testing.T) {
 	a := newApp(t)
 	mustRun(t, a, "", 0, "redact", "add", "--literal", "super-secret-value")
-	if got := readFile(t, a.userPath()); !strings.Contains(got, "version: 1") || !strings.Contains(got, "super-secret-value") {
+	if got := testkit.ReadFile(t, a.UserPath()); !strings.Contains(got, "version: 1") || !strings.Contains(got, "super-secret-value") {
 		t.Errorf("created file:\n%s", got)
 	}
 	mustRun(t, a, "", 0, "redact", "add", "--project", "--never-send", "make deploy*")
-	if got := readFile(t, a.projectPath()); !strings.Contains(got, "make deploy*") {
+	if got := testkit.ReadFile(t, a.ProjectPath()); !strings.Contains(got, "make deploy*") {
 		t.Errorf("project file:\n%s", got)
 	}
 	// An untrusted project file cannot gain a key it may not have; a rule is fine.
@@ -255,12 +183,12 @@ func TestAddCreatesMissingFilesAndProjectLayer(t *testing.T) {
 
 func TestAddRejectsWhenAnotherLayerIsBroken(t *testing.T) {
 	a := newApp(t)
-	writeFile(t, a.projectPath(), "version: 1\nallowlist:\n  - literal: x\n")
+	testkit.WriteFile(t, a.ProjectPath(), "version: 1\nallowlist:\n  - literal: x\n")
 	_, errs := mustRun(t, a, "", 1, "redact", "add", "--literal", "abcdefgh")
 	if !strings.Contains(errs, "allowlist") {
 		t.Errorf("stderr = %q", errs)
 	}
-	if _, err := os.Stat(a.userPath()); err == nil {
+	if _, err := os.Stat(a.UserPath()); err == nil {
 		t.Error("a rejected add created the user file")
 	}
 }
@@ -284,7 +212,7 @@ func TestTestRedactsFromStdinAndFileWithoutNetwork(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "in.txt")
-	writeFile(t, path, in)
+	testkit.WriteFile(t, path, in)
 	out, _ = mustRun(t, a, "", 0, "redact", "test", path, "--diff")
 	if !strings.HasPrefix(out, "--- "+path+"\n+++ redacted\n") {
 		t.Errorf("file diff header: %q", out)
@@ -301,7 +229,7 @@ func TestTestRedactsFromStdinAndFileWithoutNetwork(t *testing.T) {
 func TestTestUsesConfigAndFailsClosed(t *testing.T) {
 	a := newApp(t)
 	a.Environ = append(a.Environ, "MY_API_TOKEN=tok_abcdefghijklmnop")
-	writeFile(t, a.userPath(), "version: 1\nrules:\n  - id: custom.host\n    pattern: 'corp-[a-z]+\\.internal'\n    replacement: '[HOST]'\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\nrules:\n  - id: custom.host\n    pattern: 'corp-[a-z]+\\.internal'\n    replacement: '[HOST]'\n")
 	out, errs := mustRun(t, a, "x corp-build.internal tok_abcdefghijklmnop\n", 0, "redact", "test")
 	if out != "x [HOST] [REDACTED]\n" {
 		t.Errorf("stdout = %q", out)
@@ -310,7 +238,7 @@ func TestTestUsesConfigAndFailsClosed(t *testing.T) {
 		t.Errorf("hit table = %q", errs)
 	}
 
-	writeFile(t, a.userPath(), "version: 1\nrules:\n  - id: custom.bad\n    pattern: '('\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\nrules:\n  - id: custom.bad\n    pattern: '('\n")
 	out, errs = mustRun(t, a, "bob@example.org\n", 1, "redact", "test")
 	if out != "" || !strings.Contains(errs, "rules[0].pattern") {
 		t.Errorf("broken config must print nothing: out=%q err=%q", out, errs)
@@ -319,8 +247,8 @@ func TestTestUsesConfigAndFailsClosed(t *testing.T) {
 
 func TestListShowsClassSourceAndState(t *testing.T) {
 	a := newApp(t)
-	writeFile(t, a.userPath(), "version: 1\ndisable: [builtin.email]\nrules:\n  - id: custom.user-rule\n    pattern: 'uu-[0-9]{4}'\n")
-	writeFile(t, a.projectPath(), "version: 1\nrules:\n  - id: custom.proj-rule\n    pattern: 'pp-[0-9]{4}'\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\ndisable: [builtin.email]\nrules:\n  - id: custom.user-rule\n    pattern: 'uu-[0-9]{4}'\n")
+	testkit.WriteFile(t, a.ProjectPath(), "version: 1\nrules:\n  - id: custom.proj-rule\n    pattern: 'pp-[0-9]{4}'\n")
 	out, _ := mustRun(t, a, "", 0, "redact", "list")
 	want := map[string][]string{
 		"builtin.openai-key":   {"HARD", "builtin", "enabled"},
@@ -355,7 +283,7 @@ func TestListShowsClassSourceAndState(t *testing.T) {
 
 func TestExplain(t *testing.T) {
 	a := newApp(t)
-	writeFile(t, a.userPath(), "version: 1\nrules:\n  - id: custom.host\n    pattern: 'corp-[a-z]+'\n    flags: i\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\nrules:\n  - id: custom.host\n    pattern: 'corp-[a-z]+'\n    flags: i\n")
 
 	out, _ := mustRun(t, a, "", 0, "redact", "explain", "builtin.high-entropy")
 	for _, want := range []string{"SOFT", "entropy_threshold", "allowlist", "disable"} {
@@ -368,7 +296,7 @@ func TestExplain(t *testing.T) {
 		t.Errorf("hard explain:\n%s", out)
 	}
 	out, _ = mustRun(t, a, "", 0, "redact", "explain", "custom.host")
-	if !strings.Contains(out, "corp-[a-z]+") || !strings.Contains(out, a.userPath()) || !strings.Contains(out, "HARD") {
+	if !strings.Contains(out, "corp-[a-z]+") || !strings.Contains(out, a.UserPath()) || !strings.Contains(out, "HARD") {
 		t.Errorf("custom explain:\n%s", out)
 	}
 	_, errs := mustRun(t, a, "", 1, "redact", "explain", "nope")
@@ -380,16 +308,16 @@ func TestExplain(t *testing.T) {
 
 func TestCheckCatchesBrokenRule(t *testing.T) {
 	a := newApp(t)
-	writeFile(t, a.userPath(), "version: 1\nrules:\n  - id: custom.ok\n    pattern: 'fine-[0-9]{4}'\n  - id: custom.broken\n    pattern: 'unclosed('\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\nrules:\n  - id: custom.ok\n    pattern: 'fine-[0-9]{4}'\n  - id: custom.broken\n    pattern: 'unclosed('\n")
 	out, errs := mustRun(t, a, "", 1, "redact", "check")
-	if !strings.Contains(errs, "rules[1].pattern") || !strings.Contains(errs, a.userPath()) {
+	if !strings.Contains(errs, "rules[1].pattern") || !strings.Contains(errs, a.UserPath()) {
 		t.Errorf("check must name file and key: out=%q err=%q", out, errs)
 	}
 }
 
 func TestCheckLintFindings(t *testing.T) {
 	a := newApp(t)
-	writeFile(t, a.userPath(), `version: 1
+	testkit.WriteFile(t, a.UserPath(), `version: 1
 literals:
   - corp-secret-host
   - corp-secret-host
@@ -456,7 +384,7 @@ tests:
   - input: "no secrets here"
     must_contain: ["no secrets here"]
 `
-	writeFile(t, a.userPath(), passing)
+	testkit.WriteFile(t, a.UserPath(), passing)
 	out, _ := mustRun(t, a, "", 0, "redact", "check")
 	if !strings.Contains(out, "2 embedded test(s) passed") {
 		t.Errorf("out = %q", out)
@@ -464,7 +392,7 @@ tests:
 
 	// A rule that no longer matches leaks the value: the test must fail, and
 	// the output must name the case but not echo the needle.
-	writeFile(t, a.userPath(), strings.Replace(passing, `corp-[a-z]+\.internal`, `corp-[0-9]+\.internal`, 1))
+	testkit.WriteFile(t, a.UserPath(), strings.Replace(passing, `corp-[a-z]+\.internal`, `corp-[0-9]+\.internal`, 1))
 	out, _ = mustRun(t, a, "", 1, "redact", "check")
 	for _, want := range []string{"test FAIL: tests[0] host hidden (user)", "must_not_contain[0]", "must_contain[0]", "FAIL: 2 problem(s)"} {
 		if !strings.Contains(out, want) {
@@ -476,13 +404,13 @@ tests:
 	}
 
 	// Cases in a project file run too.
-	writeFile(t, a.userPath(), "version: 1\n")
-	writeFile(t, a.projectPath(), "version: 1\ntests:\n  - name: email\n    input: \"a bob@example.org\"\n    must_not_contain: [\"bob@\"]\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\n")
+	testkit.WriteFile(t, a.ProjectPath(), "version: 1\ntests:\n  - name: email\n    input: \"a bob@example.org\"\n    must_not_contain: [\"bob@\"]\n")
 	out, _ = mustRun(t, a, "", 0, "redact", "check")
 	if !strings.Contains(out, "1 embedded test(s) passed") {
 		t.Errorf("out = %q", out)
 	}
-	writeFile(t, a.projectPath(), "version: 1\ntests:\n  - input: \"x\"\n    unknown: 1\n")
+	testkit.WriteFile(t, a.ProjectPath(), "version: 1\ntests:\n  - input: \"x\"\n    unknown: 1\n")
 	mustRun(t, a, "", 1, "redact", "check")
 }
 
@@ -495,8 +423,8 @@ func TestDoctorReportsRedactionConfig(t *testing.T) {
 		}
 	}
 
-	writeFile(t, a.userPath(), "version: 1\nrules:\n  - id: custom.a\n    pattern: 'aaaa-[0-9]+'\n")
-	writeFile(t, a.projectPath(), "version: 1\nmode: strict\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\nrules:\n  - id: custom.a\n    pattern: 'aaaa-[0-9]+'\n")
+	testkit.WriteFile(t, a.ProjectPath(), "version: 1\nmode: strict\n")
 	out, _ = mustRun(t, a, "", 0, "doctor")
 	for _, want := range []string{"active layers: built-in, user, project", "mode:          strict", "1 custom", "(present)"} {
 		if !strings.Contains(out, want) {
@@ -504,7 +432,7 @@ func TestDoctorReportsRedactionConfig(t *testing.T) {
 		}
 	}
 
-	writeFile(t, a.userPath(), "version: 1\nrules:\n  - id: custom.a\n    pattern: '('\n")
+	testkit.WriteFile(t, a.UserPath(), "version: 1\nrules:\n  - id: custom.a\n    pattern: '('\n")
 	out, _ = mustRun(t, a, "", 1, "doctor")
 	for _, want := range []string{"INVALID", "rules[0].pattern", "mode:          unknown"} {
 		if !strings.Contains(out, want) {
@@ -514,8 +442,8 @@ func TestDoctorReportsRedactionConfig(t *testing.T) {
 
 	// A too-permissive user file is a config error, too.
 	if runtime.GOOS != "windows" {
-		writeFile(t, a.userPath(), "version: 1\n")
-		if err := os.Chmod(a.userPath(), 0o644); err != nil {
+		testkit.WriteFile(t, a.UserPath(), "version: 1\n")
+		if err := os.Chmod(a.UserPath(), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		out, _ = mustRun(t, a, "", 1, "doctor")
@@ -540,18 +468,18 @@ func TestDispatch(t *testing.T) {
 }
 
 func TestUnifiedDiff(t *testing.T) {
-	if got := unifiedDiff("a", "b", "x\ny\n", "x\ny\n"); got != "" {
+	if got := app.UnifiedDiff("a", "b", "x\ny\n", "x\ny\n"); got != "" {
 		t.Errorf("equal texts: %q", got)
 	}
 	from := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n"
 	to := strings.Replace(strings.Replace(from, "\n2\n", "\nTWO\n", 1), "\n18\n", "\nEIGHTEEN\n", 1)
-	got := unifiedDiff("a", "b", from, to)
+	got := app.UnifiedDiff("a", "b", from, to)
 	want := "--- a\n+++ b\n@@ -1,5 +1,5 @@\n 1\n-2\n+TWO\n 3\n 4\n 5\n@@ -15,6 +15,6 @@\n 15\n 16\n 17\n-18\n+EIGHTEEN\n 19\n 20\n"
 	if got != want {
 		t.Errorf("diff:\n%s\nwant:\n%s", got, want)
 	}
 	// Adjacent changes merge into one hunk, deletions before additions.
-	got = unifiedDiff("a", "b", "a\nb\nc\n", "A\nB\nc\n")
+	got = app.UnifiedDiff("a", "b", "a\nb\nc\n", "A\nB\nc\n")
 	if got != "--- a\n+++ b\n@@ -1,3 +1,3 @@\n-a\n-b\n+A\n+B\n c\n" {
 		t.Errorf("run diff: %q", got)
 	}

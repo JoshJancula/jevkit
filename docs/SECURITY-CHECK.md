@@ -28,7 +28,7 @@ SDLC assignments request read-only or writable execution per role. Jevkit only r
 jevkit sdlc agents capabilities
 ```
 
-In short: Codex can enforce a real sandbox mode; Claude and Cursor use prompting modes (`plan` / `ask`); OpenCode has no read-only flag and is refused for read-only roles; Antigravity's writable path passes `--dangerously-skip-permissions` (named explicitly in the matrix). Planner argv checks also require `jevkit sdlc resume RUN_ID --authorize-checks` before the supervisor runs them. Details stay in the [SDLC reference](SDLC-REFERENCE.md) and [agent reference](AGENT-REFERENCE.md).
+Codex can enforce a real sandbox mode; Claude and Cursor use prompting modes (`plan` / `ask`); OpenCode has no read-only flag and is refused for read-only roles; Antigravity's writable path passes `--dangerously-skip-permissions` (named explicitly in the matrix). Planner argv checks also require `jevkit sdlc resume RUN_ID --authorize-checks` before the supervisor runs them. See [SDLC project policy](SDLC.md#project-policy) and [agent integration behavior](AGENT-INTEGRATIONS.md#what-the-integration-does).
 
 ## Try it locally
 

@@ -61,6 +61,15 @@ type SpecialistDecision struct {
 	Reason     string  `json:"reason"`
 }
 
+// RepairFeedback preserves the decisive review across retries and restarts.
+// It is evidence for this candidate only, not an instruction or an approval.
+type RepairFeedback struct {
+	InvocationID string `json:"invocationId"`
+	Revision     string `json:"revision"`
+	Role         string `json:"role"`
+	Summary      string `json:"summary"`
+}
+
 type State struct {
 	TaskKind               string                `json:"taskKind"`
 	Profile                string                `json:"profile"`
@@ -96,6 +105,8 @@ type State struct {
 	PendingDecision        string                `json:"pendingDecision,omitempty"`
 	PendingPhase           string                `json:"pendingPhase,omitempty"`
 	LastImplementerBinding string                `json:"lastImplementerBinding,omitempty"`
+	RepairFeedback         *RepairFeedback       `json:"repairFeedback,omitempty"`
+	NoProgressCount        int                   `json:"noProgressCount,omitempty"`
 }
 
 // Result is a worker's structured outcome. A revision is a content digest of
@@ -388,6 +399,7 @@ func (s *State) apply(r Result) error {
 		s.SpecialistReviews = append(s.SpecialistReviews, check)
 		s.SpecialistQueue = append(append([]SpecialistCheck{}, s.SpecialistQueue[:idx]...), s.SpecialistQueue[idx+1:]...)
 		if !check.Approved {
+			s.rememberRejection(a, r)
 			s.SpecialistQueue = nil
 			s.Assignments = map[string]Assignment{} // cancel excess pending specialists
 			s.Stage = Implementing
@@ -414,10 +426,18 @@ func (s *State) apply(r Result) error {
 	case Implementing:
 		switch r.Outcome {
 		case "answer", "no-change":
+			if s.DiffRevision != "" {
+				s.implementationMadeNoProgress()
+				return nil
+			}
 			s.Stage, s.Outcome = Done, r.Outcome
 		case "changed":
-			if r.Revision == "" || r.Revision == s.DiffRevision {
+			if r.Revision == "" {
 				return fmt.Errorf("adaptive: new diff revision required")
+			}
+			if r.Revision == s.DiffRevision {
+				s.implementationMadeNoProgress()
+				return nil
 			}
 			s.RevisionCount++
 			if s.RevisionCount > s.MaxRevisions {
@@ -449,6 +469,7 @@ func (s *State) apply(r Result) error {
 		// A single changes-required is decisive: cancel excess pending reviewers
 		// and return to implementation (or pause when the revision budget is spent).
 		if r.Outcome == "changes-required" {
+			s.rememberRejection(a, r)
 			if s.RevisionCount >= s.MaxRevisions {
 				s.Pause("revision-budget-exhausted")
 			} else {
@@ -485,6 +506,21 @@ func (s *State) apply(r Result) error {
 		return fmt.Errorf("adaptive: run is %s", s.Stage)
 	}
 	return nil
+}
+
+func (s *State) rememberRejection(a Assignment, r Result) {
+	s.RepairFeedback = &RepairFeedback{InvocationID: r.InvocationID, Revision: r.Revision,
+		Role: a.Role, Summary: BoundPendingDetail(r.Reason, 4096)}
+	s.PendingReason = "address the decisive review findings for revision " + r.Revision
+}
+
+func (s *State) implementationMadeNoProgress() {
+	s.NoProgressCount++
+	s.PendingReason = "the existing candidate still requires verification or review; inspect the saved findings and check logs, then make a concrete repair or hand off with the blocker and evidence"
+	if s.NoProgressCount >= 2 {
+		s.Pause("implementer-failed")
+		s.PendingReason = "two implementation attempts produced no new candidate; " + s.PendingReason
+	}
 }
 
 func (s *State) Pause(reason string) {

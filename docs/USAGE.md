@@ -38,4 +38,4 @@ jevkit sdlc prune --logs-only --older-than 168h --apply
 jevkit sdlc delete RUN_ID --apply
 ```
 
-Logs-only prune removes diagnostic streams and marks invocations pruned; plans, verification receipts, status, and usage totals remain. See [Agent workflows](SDLC.md) for quotas and truncation markers, and the [SDLC reference](SDLC-REFERENCE.md) for the full retention contract.
+Logs-only prune removes diagnostic streams and marks invocations pruned; plans, verification receipts, status, and usage totals remain. See [SDLC storage and logs](SDLC.md#saved-runs-storage-and-logs) for quotas, truncation markers, and retention behavior.

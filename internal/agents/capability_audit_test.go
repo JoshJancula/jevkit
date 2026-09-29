@@ -32,7 +32,7 @@ func TestRuntimeCapabilityAuditCoversEveryAdapter(t *testing.T) {
 }
 
 func TestRuntimeCapabilityAuditIsDocumented(t *testing.T) {
-	doc, err := os.ReadFile("../../docs/AGENT-REFERENCE.md")
+	doc, err := os.ReadFile("../../docs/AGENT-INTEGRATIONS.md")
 	if err != nil {
 		t.Fatal(err)
 	}

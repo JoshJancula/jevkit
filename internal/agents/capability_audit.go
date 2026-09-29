@@ -28,7 +28,7 @@ type RuntimeCapability struct {
 	// inspects and can rewrite an eligible shell call before it runs (see
 	// IsShellWrapperCommand / buildSecurityShellWrapperCommand call sites).
 	// OpenCode's plugin never receives a pre-tool event (HandlePreTool is a
-	// documented no-op; see opencode.go and docs/AGENT-REFERENCE.md), so its
+	// documented no-op; see opencode.go and docs/AGENT-INTEGRATIONS.md), so its
 	// shell calls are never policy-checked in this version. This must stay in
 	// sync with PreToolDecision for every runtime that claims shell coverage;
 	// see TestRuntimeCapabilityAuditMatchesAdapterClaims.
