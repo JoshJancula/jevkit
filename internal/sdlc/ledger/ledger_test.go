@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -321,7 +322,7 @@ func TestRunDirectoryPermissions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat %s: %v", dir, err)
 		}
-		if perm := fi.Mode().Perm(); perm != 0o700 {
+		if perm := fi.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o700 {
 			t.Errorf("%s perm = %o, want 0700", dir, perm)
 		}
 	}

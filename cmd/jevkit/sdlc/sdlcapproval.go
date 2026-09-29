@@ -258,7 +258,7 @@ func (a *App) formatPlanApprovalExtras(b planArtifactBundle, maxConcurrent int) 
 				if timeout == 0 {
 					out.WriteString("    timeoutSeconds: (default)\n")
 				} else {
-					out.WriteString(fmt.Sprintf("    timeoutSeconds: %d\n", timeout))
+					fmt.Fprintf(&out, "    timeoutSeconds: %d\n", timeout)
 				}
 			} else {
 				out.WriteString("    manual: " + c.Manual + "\n")
@@ -286,7 +286,7 @@ func (a *App) formatPlanApprovalExtras(b planArtifactBundle, maxConcurrent int) 
 	if maxConcurrent > 0 && maxConcurrent < eff {
 		eff = maxConcurrent
 	}
-	out.WriteString(fmt.Sprintf("  effectiveConcurrency: %d (policy maxConcurrent=%d)\n", eff, maxConcurrent))
+	fmt.Fprintf(&out, "  effectiveConcurrency: %d (policy maxConcurrent=%d)\n", eff, maxConcurrent)
 	if len(b.Graph.Subtasks) > 0 {
 		ordered := append([]adaptive.Subtask(nil), b.Graph.Subtasks...)
 		sort.SliceStable(ordered, func(i, j int) bool {
@@ -297,7 +297,7 @@ func (a *App) formatPlanApprovalExtras(b planArtifactBundle, maxConcurrent int) 
 		})
 		out.WriteString("  integrationOrder:\n")
 		for _, st := range ordered {
-			out.WriteString(fmt.Sprintf("    %d. %s — owner scope: %s\n", st.MergeOrder, st.ID, strings.Join(st.OwnedPaths, ", ")))
+			fmt.Fprintf(&out, "    %d. %s — owner scope: %s\n", st.MergeOrder, st.ID, strings.Join(st.OwnedPaths, ", "))
 			if len(st.DependsOn) > 0 {
 				out.WriteString("       dependsOn: " + strings.Join(st.DependsOn, ", ") + "\n")
 			}

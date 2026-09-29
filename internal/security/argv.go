@@ -88,7 +88,7 @@ func RunArgv(ctx context.Context, req ArgvRequest) (ArgvResult, error) {
 	dir := workspace
 	if wd := strings.TrimSpace(req.WorkingDir); wd != "" {
 		if filepath.IsAbs(wd) || strings.Contains(wd, "..") {
-			return ArgvResult{}, fmt.Errorf("security: workingDir must be a relative path without ..")
+			return ArgvResult{}, fmt.Errorf("security: workingDir must be a relative path without parent traversal")
 		}
 		dir = filepath.Join(workspace, filepath.Clean(wd))
 	}

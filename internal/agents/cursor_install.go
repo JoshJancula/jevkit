@@ -100,10 +100,6 @@ func cursorHookCommand(binary, marker string) string {
 	return binary + " " + marker
 }
 
-func mergeCursorHooks(existing []byte, binary string) ([]byte, error) {
-	return mergeCursorHooksGuard(existing, binary, false)
-}
-
 func mergeCursorHooksGuard(existing []byte, binary string, guard bool) ([]byte, error) {
 	doc := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {

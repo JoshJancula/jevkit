@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -162,7 +163,7 @@ func TestAuditReviewFilesUsePrivatePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := fi.Mode().Perm(); perm != 0o700 {
+	if perm := fi.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o700 {
 		t.Errorf("audit dir perm = %o, want 0700", perm)
 	}
 	for _, p := range []string{a.AuditPath(), a.ReviewPath()} {
@@ -170,7 +171,7 @@ func TestAuditReviewFilesUsePrivatePermissions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat %s: %v", p, err)
 		}
-		if perm := fi.Mode().Perm(); perm != 0o600 {
+		if perm := fi.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 			t.Errorf("%s perm = %o, want 0600", p, perm)
 		}
 	}

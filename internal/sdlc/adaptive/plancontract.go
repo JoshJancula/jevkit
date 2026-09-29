@@ -124,7 +124,7 @@ func ValidateChecks(checks []Check) error {
 			}
 			if wd := strings.TrimSpace(c.WorkingDir); wd != "" {
 				if path.IsAbs(wd) || strings.Contains(wd, "..") {
-					return fmt.Errorf("adaptive: check %q workingDir must be a relative path without ..", id)
+					return fmt.Errorf("adaptive: check %q workingDir must be a relative path without parent traversal", id)
 				}
 			}
 		}

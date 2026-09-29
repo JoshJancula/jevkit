@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,9 @@ func TestRunArgvRequiresAuthorization(t *testing.T) {
 }
 
 func TestRunArgvArgvWithoutShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture executes a Unix shell script")
+	}
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out.txt")
 	digest := "authorized-digest"
@@ -83,6 +87,9 @@ func TestRunArgvDeniesSandboxEscape(t *testing.T) {
 }
 
 func TestRunArgvClosedStdinAndBoundedOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture executes a Unix shell script")
+	}
 	dir := t.TempDir()
 	digest := "authorized-digest"
 	script := filepath.Join(dir, "noise.sh")

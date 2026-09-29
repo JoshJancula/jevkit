@@ -11,11 +11,6 @@ import (
 
 func newApp(t *testing.T) *App { return &App{App: testkit.NewApp(t)} }
 
-func cliApp(t *testing.T) (*App, *testkit.FakeKeyring, *testkit.FakeJev) {
-	a, keyring, jev := testkit.CLIApp(t)
-	return &App{App: a}, keyring, jev
-}
-
 // testCommands builds this package's commands (plus any it drives in tests)
 // on the same App the test inspects.
 func testCommands(a *App) func() []*cobra.Command {

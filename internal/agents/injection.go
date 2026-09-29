@@ -3,7 +3,6 @@ package agents
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 
@@ -78,4 +77,3 @@ func stopBody(id string, extra map[string]any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
-func reviewError(id string) error { return fmt.Errorf("injection review %s pending", id) }

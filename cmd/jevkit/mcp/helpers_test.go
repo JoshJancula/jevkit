@@ -8,8 +8,6 @@ import (
 	"github.com/JoshJancula/jevkit/cmd/jevkit/internal/testkit"
 )
 
-func newApp(t *testing.T) *App { return &App{App: testkit.NewApp(t)} }
-
 func cliApp(t *testing.T) (*App, *testkit.FakeKeyring, *testkit.FakeJev) {
 	a, keyring, jev := testkit.CLIApp(t)
 	return &App{App: a}, keyring, jev
@@ -25,9 +23,4 @@ func testCommands(a *App) func() []*cobra.Command {
 
 func run(a *App, stdin string, args ...string) (code int, stdout, stderr string) {
 	return testkit.RunWith(a.App, testCommands(a), stdin, args...)
-}
-
-func mustRun(t *testing.T, a *App, stdin string, want int, args ...string) (stdout, stderr string) {
-	t.Helper()
-	return testkit.MustRunWith(t, a.App, testCommands(a), stdin, want, args...)
 }

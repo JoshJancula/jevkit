@@ -32,13 +32,13 @@ func (a *App) securityCmd() *cobra.Command {
 func (a *App) securityCheckOutputCmd() *cobra.Command {
 	var tool, runtime string
 	c := &cobra.Command{Use: "check-output [file]", Short: "check untrusted output without setting a review latch", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		var source io.Reader = a.Stdin
+		source := a.Stdin
 		if len(args) == 1 {
 			f, err := os.Open(args[0])
 			if err != nil {
 				return err
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			source = f
 		}
 		raw, err := io.ReadAll(io.LimitReader(source, 10<<20))

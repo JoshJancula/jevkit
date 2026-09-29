@@ -498,11 +498,7 @@ func (a *App) sdlcShowJSON(info sdlcRunInfo, task string, raw bool) error {
 		Artifacts: info.Artifacts, Task: task, TaskRaw: raw,
 	}
 	for _, l := range info.Logs {
-		out.Logs = append(out.Logs, jsonLog{
-			Invocation: l.Invocation, Agent: l.Agent, Runtime: l.Runtime,
-			HasStdout: l.HasStdout, HasStderr: l.HasStderr, Truncated: l.Truncated,
-			TruncatedOmittedBytes: l.TruncatedOmittedBytes, Pruned: l.Pruned,
-		})
+		out.Logs = append(out.Logs, jsonLog(l))
 	}
 	enc := json.NewEncoder(a.Stdout)
 	enc.SetIndent("", "  ")

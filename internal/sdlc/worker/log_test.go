@@ -13,13 +13,24 @@ import (
 	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 )
 
-func TestInvocationLogRetainsBoundedTailAndMarksTruncation(t *testing.T) {
-	dir := t.TempDir()
-	req := Request{Agent: enrollment.Agent{ID: "reviewer", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv-1"}, LogDir: dir}
-	log, err := newInvocationLog(req, "stderr")
+func newTestInvocationLog(t *testing.T, req Request, stream string) *invocationLog {
+	t.Helper()
+	log, err := newInvocationLog(req, stream)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := log.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return log
+}
+
+func TestInvocationLogRetainsBoundedTailAndMarksTruncation(t *testing.T) {
+	dir := t.TempDir()
+	req := Request{Agent: enrollment.Agent{ID: "reviewer", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv-1"}, LogDir: dir}
+	log := newTestInvocationLog(t, req, "stderr")
 	if _, err := log.Write([]byte(strings.Repeat("a", MaxLogTail))); err != nil {
 		t.Fatal(err)
 	}
@@ -42,10 +53,7 @@ func TestInvocationLogRetainsBoundedTailAndMarksTruncation(t *testing.T) {
 func TestInvocationLogAccumulatesOmittedByteCountAcrossMultipleRollovers(t *testing.T) {
 	dir := t.TempDir()
 	req := Request{Agent: enrollment.Agent{ID: "reviewer", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv-2"}, LogDir: dir, LogTailBytes: 100}
-	log, err := newInvocationLog(req, "stdout")
-	if err != nil {
-		t.Fatal(err)
-	}
+	log := newTestInvocationLog(t, req, "stdout")
 	// Three writes of 60 bytes each against a 100-byte tail: the first stays
 	// under bound, the second and third each roll the tail over once more,
 	// so the omitted count must keep growing rather than reset per write.
@@ -70,10 +78,7 @@ func TestInvocationLogAccumulatesOmittedByteCountAcrossMultipleRollovers(t *test
 func TestInvocationLogRespectsConfigurableTailBound(t *testing.T) {
 	dir := t.TempDir()
 	req := Request{Agent: enrollment.Agent{ID: "reviewer", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv-3"}, LogDir: dir, LogTailBytes: 50}
-	log, err := newInvocationLog(req, "stdout")
-	if err != nil {
-		t.Fatal(err)
-	}
+	log := newTestInvocationLog(t, req, "stdout")
 	if _, err := log.Write([]byte(strings.Repeat("c", 200))); err != nil {
 		t.Fatal(err)
 	}
@@ -89,10 +94,7 @@ func TestInvocationLogRespectsConfigurableTailBound(t *testing.T) {
 func TestInvocationLogLinesJSONLTruncationRecordsOmittedBytes(t *testing.T) {
 	dir := t.TempDir()
 	req := Request{Agent: enrollment.Agent{ID: "agent", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv-4"}, LogDir: dir, LogTailBytes: 200}
-	out, err := newInvocationLog(req, "stdout")
-	if err != nil {
-		t.Fatal(err)
-	}
+	out := newTestInvocationLog(t, req, "stdout")
 	for i := 0; i < 40; i++ {
 		if _, err := out.Write([]byte("a line of moderate length here\n")); err != nil {
 			t.Fatal(err)
@@ -119,14 +121,8 @@ func TestInvocationLogLinesJSONLTruncationRecordsOmittedBytes(t *testing.T) {
 func TestInvocationLogPreservesInterleavedCompleteLines(t *testing.T) {
 	dir := t.TempDir()
 	req := Request{Agent: enrollment.Agent{ID: "agent", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv"}, LogDir: dir}
-	out, err := newInvocationLog(req, "stdout")
-	if err != nil {
-		t.Fatal(err)
-	}
-	stderr, err := newInvocationLog(req, "stderr")
-	if err != nil {
-		t.Fatal(err)
-	}
+	out := newTestInvocationLog(t, req, "stdout")
+	stderr := newTestInvocationLog(t, req, "stderr")
 	_, _ = out.Write([]byte("first "))
 	_, _ = out.Write([]byte("line\n"))
 	_, _ = stderr.Write([]byte("second line\n"))

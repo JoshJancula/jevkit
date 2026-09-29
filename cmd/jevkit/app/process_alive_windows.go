@@ -2,18 +2,17 @@
 
 package app
 
-import "os"
+import "golang.org/x/sys/windows"
 
 func ProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	p, err := os.FindProcess(pid)
+	h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
 	if err != nil {
 		return false
 	}
-	// On Windows FindProcess always succeeds; Signal(0) is not portable.
-	// Treat unknown processes as dead so reconcile fails closed.
-	_ = p
-	return false
+	defer func() { _ = windows.CloseHandle(h) }()
+	status, err := windows.WaitForSingleObject(h, 0)
+	return err == nil && status == uint32(windows.WAIT_TIMEOUT)
 }

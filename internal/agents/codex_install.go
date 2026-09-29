@@ -100,10 +100,6 @@ func codexHookCommand(binary, marker string) string {
 	return binary + " " + marker
 }
 
-func mergeCodexHooks(existing []byte, binary string) ([]byte, error) {
-	return mergeCodexHooksGuard(existing, binary, false)
-}
-
 func mergeCodexHooksGuard(existing []byte, binary string, guard bool) ([]byte, error) {
 	doc := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestSDLCIntegrationAsksEachRunUntilDefaultIsSelected(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 || strings.HasPrefix(path, a.WorkDir) {
+	if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 || strings.HasPrefix(path, a.WorkDir) {
 		t.Fatalf("preference should be personal and private: %s, %v, %v", path, info, err)
 	}
 	other := a.clone()

@@ -246,7 +246,14 @@ func (s *Store) WithRunLock(fn func() error) error {
 	if err := safeMkdirAll(s.Dir); err != nil {
 		return err
 	}
-	l, err := filelock.Acquire(filepath.Join(s.Dir, "run.update.lock"))
+	// Keep locks outside the runs directory so Windows can remove a run while
+	// its lock is held, without adding entries to the run listing.
+	runsDir := filepath.Dir(s.Dir)
+	lockDir := filepath.Join(filepath.Dir(runsDir), "."+filepath.Base(runsDir)+"-locks")
+	if err := safeMkdirAll(lockDir); err != nil {
+		return err
+	}
+	l, err := filelock.Acquire(filepath.Join(lockDir, filepath.Base(s.Dir)+".update.lock"))
 	if err != nil {
 		return err
 	}

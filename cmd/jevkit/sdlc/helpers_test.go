@@ -30,8 +30,3 @@ func testCommands(a *App) func() []*cobra.Command {
 func run(a *App, stdin string, args ...string) (code int, stdout, stderr string) {
 	return testkit.RunWith(a.App, testCommands(a), stdin, args...)
 }
-
-func mustRun(t *testing.T, a *App, stdin string, want int, args ...string) (stdout, stderr string) {
-	t.Helper()
-	return testkit.MustRunWith(t, a.App, testCommands(a), stdin, want, args...)
-}

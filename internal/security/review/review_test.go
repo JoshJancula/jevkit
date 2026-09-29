@@ -2,6 +2,7 @@ package review
 
 import (
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -20,7 +21,7 @@ func TestCreatePendingResolveAndAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatalf("permissions: %v", info.Mode())
 	}
 	if _, err := Resolve(state, r.ID, "allow", "reviewed"); err != nil {

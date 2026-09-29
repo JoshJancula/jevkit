@@ -250,7 +250,7 @@ func TestFanoutDependentWaitsForParents(t *testing.T) {
 		t.Fatalf("docs should still be pending after first wave: %+v", stored.Fanout.Subtasks["docs"])
 	}
 	if err := a.sdlcDrive(context.Background(), id); err != nil && !strings.Contains(err.Error(), "fanout") {
-		// pause for integration after docs completes is fine
+		t.Fatal(err)
 	}
 	stored, _ = ledger.Open(a.SDLCRunsDir(), id).ReadRun()
 	if stored.Fanout.Subtasks["docs"].Status != adaptive.SubtaskSucceeded {

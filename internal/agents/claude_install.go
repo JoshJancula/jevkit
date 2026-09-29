@@ -103,10 +103,6 @@ func claudeHookCommand(binary string) string {
 	return binary + " " + ClaudeHookMarker
 }
 
-func mergeClaudeSettings(existing []byte, command string) ([]byte, error) {
-	return mergeClaudeSettingsGuard(existing, command, false)
-}
-
 func mergeClaudeSettingsGuard(existing []byte, command string, guard bool) ([]byte, error) {
 	if guard {
 		command = "JEVKIT_INJECTION_GUARD=1 " + command
