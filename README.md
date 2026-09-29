@@ -10,14 +10,9 @@ On macOS or Linux, the installer downloads the latest [GitHub Release](https://g
 curl -fsSL https://raw.githubusercontent.com/JoshJancula/jevkit/main/install.sh | sh
 ```
 
-On Windows, download the matching release ZIP or run [install.ps1](install.ps1) in PowerShell. If there is no release yet, build from source with Go:
+On Windows, download the matching ZIP from [GitHub Releases](https://github.com/JoshJancula/jevkit/releases) or run [install.ps1](install.ps1) in PowerShell.
 
-```bash
-make install
-jevkit version
-```
-
-`make install` also uses `~/.local/bin`. Add that directory to your `PATH` if your shell does not already use it. See [build and development](docs/BUILD.md) for prerequisites and other build commands.
+Run `jevkit version` to confirm the installation. On macOS and Linux, add `~/.local/bin` to your `PATH` if needed. For source builds and development, see the [build guide](docs/BUILD.md).
 
 ## Get started
 
@@ -40,4 +35,5 @@ Redaction is pattern based, so check it against your own data before using Jevki
 - [Run an agent workflow](docs/SDLC.md) with planning and review.
 - [Inspect local usage and state](docs/USAGE.md).
 - [Browse all guides and references](docs/README.md).
-- [Contribute](CONTRIBUTING.md) or read the [MIT License](LICENSE).
+- [Contribute](CONTRIBUTING.md).
+- [MIT License](LICENSE).
