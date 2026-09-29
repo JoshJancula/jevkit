@@ -25,7 +25,7 @@ func TestSDLCRunExecutesBuiltInInOneCommand(t *testing.T) {
 		t.Fatalf("output: %q", out)
 	}
 	runID := strings.Fields(out)[1]
-	for _, want := range []string{"Run summary", "State:    DONE (approved)", "What happened:", "Token usage by runtime and model:", "RUNTIME", "MODEL", "Logs:     jevkit sdlc logs " + runID} {
+	for _, want := range []string{"Run summary", "State:    DONE (approved)", "What happened:", "Token usage by runtime and model:", "RUNTIME", "MODEL", "INVOCATIONS", "TOOL CALLS", "Logs:     jevkit sdlc logs " + runID} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("final output missing %q: %q", want, out)
 		}

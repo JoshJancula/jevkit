@@ -25,6 +25,6 @@ The first usable source wins:
 
 A configured backend that fails stops resolution; only an unavailable OS keychain is skipped. Jevkit stores backend selection in a private `jev-credentials.json` file. It does not write a key under the workspace.
 
-The config directory is `$JEVKIT_CONFIG_DIR`, then `$JEVKIT_CONFIG_HOME`, then your user config directory's `jevkit` folder (typically `~/.config/jevkit`). State such as usage and audit logs goes to `$JEVKIT_STATE_DIR`, then `$XDG_STATE_HOME/jevkit`, then `~/.local/state/jevkit`.
+The config directory is `$JEVKIT_CONFIG_DIR`, then `$JEVKIT_CONFIG_HOME`, then your user config directory's `jevkit` folder (typically `~/.config/jevkit`). State such as usage and audit logs goes to `$JEVKIT_STATE_DIR`, then `$XDG_STATE_HOME/jevkit`, then `~/.local/state/jevkit`. See [usage and local state](USAGE.md) for `jevkit usage`, cache token fields, and SDLC retention commands.
 
 `jevkit key clear` does not unset shell variables or edit `.env`. Prefer the keychain or a credential command for long-lived keys; use an environment variable in short-lived CI jobs. Jevkit's [redaction rules](REDACTION.md) apply to question text, while the key travels as the HTTP credential.

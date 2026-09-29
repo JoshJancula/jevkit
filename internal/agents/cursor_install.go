@@ -24,12 +24,15 @@ func (c *Cursor) Install(opts InstallOptions) error {
 	if binary == "" {
 		binary = c.binary()
 	}
+	if opts.InjectionGuard {
+		binary = "JEVKIT_INJECTION_GUARD=1 " + binary
+	}
 
 	existing, err := readFileOptional(path)
 	if err != nil {
 		return err
 	}
-	out, err := mergeCursorHooks(existing, binary)
+	out, err := mergeCursorHooksGuard(existing, binary, opts.InjectionGuard)
 	if err != nil {
 		return err
 	}
@@ -98,6 +101,10 @@ func cursorHookCommand(binary, marker string) string {
 }
 
 func mergeCursorHooks(existing []byte, binary string) ([]byte, error) {
+	return mergeCursorHooksGuard(existing, binary, false)
+}
+
+func mergeCursorHooksGuard(existing []byte, binary string, guard bool) ([]byte, error) {
 	doc := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {
 		dec := json.NewDecoder(bytes.NewReader(existing))
@@ -123,9 +130,13 @@ func mergeCursorHooks(existing []byte, binary string) ([]byte, error) {
 	preCmd := cursorHookCommand(binary, CursorPreToolMarker)
 	postCmd := cursorHookCommand(binary, CursorPostToolMarker)
 
+	preMatcher := cursorShellMatcher
+	if guard {
+		preMatcher = "*"
+	}
 	hooksObj["preToolUse"] = upsertCursorHookEntries(
 		stripManagedCursorHooks(asSlice(hooksObj["preToolUse"])),
-		[]map[string]any{{"command": preCmd, "matcher": cursorShellMatcher}},
+		[]map[string]any{{"command": preCmd, "matcher": preMatcher}},
 	)
 	hooksObj["postToolUse"] = upsertCursorHookEntries(
 		stripManagedCursorHooks(asSlice(hooksObj["postToolUse"])),

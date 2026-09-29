@@ -149,12 +149,16 @@ func (a *App) sdlcShowPlan(rootID string) error {
 		defer func() { a.WorkDir = old }()
 	}
 	store := ledger.Open(a.sdlcRunsDir(), targetID)
-	plan, err := store.ReadArtifact("plan.md")
+	st := run.Adaptive
+	b, err := ensurePlanSideArtifacts(store, st, st.MaxConcurrent, remainingAssignmentBudget(run))
 	if err != nil {
-		return failf("read plan.md: %v", err)
+		return failf("%v", err)
 	}
-	if fmt.Sprintf("%x", sha256.Sum256(plan)) != run.Adaptive.PlanRevision {
-		return failf("saved plan.md no longer matches the planned revision")
+	if err := planArtifactsMatchState(b, st); err != nil {
+		return failf("%s", err.Error())
+	}
+	if err := store.WriteRun(run); err != nil {
+		return err
 	}
 	cfg, err := config.Load(a.loadOptions())
 	if err != nil {
@@ -164,7 +168,7 @@ func (a *App) sdlcShowPlan(rootID string) error {
 	if err != nil {
 		return err
 	}
-	clean, err := redactor.Apply(string(plan))
+	clean, err := redactor.Apply(string(b.Plan))
 	if err != nil {
 		return err
 	}
@@ -175,6 +179,10 @@ func (a *App) sdlcShowPlan(rootID string) error {
 		_, _ = fmt.Fprintln(a.Stdout, ttySafeLine(line))
 	}
 	_, _ = fmt.Fprintln(a.Stdout, a.styled(a.Stdout, ansiCyan, strings.Repeat("─", 72)))
+	extras := a.formatPlanApprovalExtras(b, st.MaxConcurrent)
+	for _, line := range strings.Split(strings.TrimRight(extras, "\n"), "\n") {
+		_, _ = fmt.Fprintln(a.Stdout, ttySafeLine(line))
+	}
 	return nil
 }
 
@@ -372,6 +380,9 @@ func (a *App) sdlcInteractiveDrive(ctx context.Context, rootID string, drive fun
 	}
 done:
 	a.sdlcFinalSummary(a.Stdout, rootID, driveErr)
+	if driveErr == nil {
+		return a.sdlcReviewFollowup(ctx, rootID)
+	}
 	return driveErr
 }
 
@@ -412,11 +423,15 @@ func (a *App) sdlcRequestPlanChanges(rootID, feedback string) error {
 		}
 		run.PlanFeedback = feedback
 		run.ApprovedPlanRevision = ""
+		run.ApprovedChecksRevision = ""
+		run.ApprovedSubtasksRevision = ""
+		run.AuthorizedChecksRevision = ""
 		st := run.Adaptive
 		st.Stage, st.Outcome = adaptive.Planning, ""
 		st.PendingDecision, st.PendingPhase, st.PendingFocus, st.PendingReason = "", "", "", ""
 		st.SpecialistQueue, st.SpecialistReviews, st.SpecialistDecisions = nil, nil, nil
 		st.AfterSpecialists = ""
+		st.ChecksRevision, st.SubtasksRevision = "", ""
 		run.UpdatedAt = a.now().UTC().Format(time.RFC3339)
 		if err := store.WriteRun(run); err != nil {
 			return err

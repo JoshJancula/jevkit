@@ -11,12 +11,19 @@ import (
 )
 
 type runtimeTotals struct {
-	Invocations     int      `json:"invocations"`
-	InputTokens     int64    `json:"input_tokens"`
-	OutputTokens    int64    `json:"output_tokens"`
-	UnknownInput    int      `json:"unknown_input"`
-	UnknownOutput   int      `json:"unknown_output"`
-	SuppliedCostUSD *float64 `json:"supplied_cost_usd,omitempty"`
+	Invocations          int      `json:"invocations"`
+	ToolCalls            int64    `json:"tool_calls"`
+	UnknownToolCalls     int      `json:"unknown_tool_calls"`
+	InputTokens          int64    `json:"input_tokens"`
+	OutputTokens         int64    `json:"output_tokens"`
+	CacheReadTokens      int64    `json:"cache_read_tokens"`
+	CacheCreationTokens  int64    `json:"cache_creation_tokens"`
+	UnknownInput         int      `json:"unknown_input"`
+	UnknownOutput        int      `json:"unknown_output"`
+	UnknownCacheRead     int      `json:"unknown_cache_read"`
+	UnknownCacheCreation int      `json:"unknown_cache_creation"`
+	UnknownCost          int      `json:"unknown_cost"`
+	SuppliedCostUSD      *float64 `json:"supplied_cost_usd,omitempty"`
 }
 
 type runtimeSummary struct {
@@ -65,6 +72,11 @@ func (a *App) allUsageRuns() ([]ledger.Run, error) {
 
 func addRuntime(t *runtimeTotals, u ledger.InvocationUsage) {
 	t.Invocations++
+	if u.ToolCalls == nil {
+		t.UnknownToolCalls++
+	} else {
+		t.ToolCalls += *u.ToolCalls
+	}
 	if u.InputTokens == nil {
 		t.UnknownInput++
 	} else {
@@ -75,11 +87,23 @@ func addRuntime(t *runtimeTotals, u ledger.InvocationUsage) {
 	} else {
 		t.OutputTokens += *u.OutputTokens
 	}
+	if u.CacheReadTokens == nil {
+		t.UnknownCacheRead++
+	} else {
+		t.CacheReadTokens += *u.CacheReadTokens
+	}
+	if u.CacheCreationTokens == nil {
+		t.UnknownCacheCreation++
+	} else {
+		t.CacheCreationTokens += *u.CacheCreationTokens
+	}
 	if u.CostUSD != nil {
 		if t.SuppliedCostUSD == nil {
 			t.SuppliedCostUSD = new(float64)
 		}
 		*t.SuppliedCostUSD += *u.CostUSD
+	} else {
+		t.UnknownCost++
 	}
 }
 
@@ -159,9 +183,13 @@ func (a *App) renderJevUsage(s usage.Summary) {
 func (a *App) renderRuntime(s runtimeSummary) {
 	a.heading("Agent runtime usage")
 	_, _ = fmt.Fprintf(a.Stdout, "  invocations: %d\n", s.Totals.Invocations)
+	_, _ = fmt.Fprintf(a.Stdout, "  tool calls: %s (%d unknown)\n", formatInt(s.Totals.ToolCalls), s.Totals.UnknownToolCalls)
 	_, _ = fmt.Fprintf(a.Stdout, "  tokens: input %s (%d unknown), output %s (%d unknown)\n", formatInt(s.Totals.InputTokens), s.Totals.UnknownInput, formatInt(s.Totals.OutputTokens), s.Totals.UnknownOutput)
+	_, _ = fmt.Fprintf(a.Stdout, "  cache: read %s (%d unknown), creation %s (%d unknown)\n", formatInt(s.Totals.CacheReadTokens), s.Totals.UnknownCacheRead, formatInt(s.Totals.CacheCreationTokens), s.Totals.UnknownCacheCreation)
 	if s.Totals.SuppliedCostUSD != nil {
-		_, _ = fmt.Fprintf(a.Stdout, "  supplied cost: $%.6f\n", *s.Totals.SuppliedCostUSD)
+		_, _ = fmt.Fprintf(a.Stdout, "  supplied cost: $%.6f (%d unknown)\n", *s.Totals.SuppliedCostUSD, s.Totals.UnknownCost)
+	} else {
+		_, _ = fmt.Fprintf(a.Stdout, "  supplied cost: unknown (%d unknown)\n", s.Totals.UnknownCost)
 	}
 
 	for _, group := range []struct {
@@ -183,9 +211,15 @@ func (a *App) renderRuntime(s runtimeSummary) {
 		rows := make([][]string, 0, len(keys))
 		for _, key := range keys {
 			t := group.items[key]
-			rows = append(rows, []string{key, fmt.Sprint(t.Invocations), formatInt(t.InputTokens), formatInt(t.OutputTokens), fmt.Sprint(t.UnknownInput), fmt.Sprint(t.UnknownOutput)})
+			rows = append(rows, []string{
+				key, fmt.Sprint(t.Invocations), usageCount(t.ToolCalls, t.UnknownToolCalls),
+				formatInt(t.InputTokens), formatInt(t.OutputTokens),
+				formatInt(t.CacheReadTokens), formatInt(t.CacheCreationTokens),
+				fmt.Sprint(t.UnknownInput), fmt.Sprint(t.UnknownOutput),
+				fmt.Sprint(t.UnknownCacheRead), fmt.Sprint(t.UnknownCacheCreation),
+			})
 		}
-		a.table([]string{"NAME", "INVOCATIONS", "INPUT", "OUTPUT", "INPUT UNKNOWN", "OUTPUT UNKNOWN"}, rows)
+		a.table([]string{"NAME", "INVOCATIONS", "TOOL CALLS", "INPUT", "OUTPUT", "CACHE READ", "CACHE CREATE", "INPUT UNKNOWN", "OUTPUT UNKNOWN", "CACHE READ UNKNOWN", "CACHE CREATE UNKNOWN"}, rows)
 	}
 }
 

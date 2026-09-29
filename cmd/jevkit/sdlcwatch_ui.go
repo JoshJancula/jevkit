@@ -21,10 +21,17 @@ import (
 type watchTTYState struct {
 	selected, scroll, detailScroll, unknownInput, unknownOutput int
 	details, logs, all, toolView, help                          bool
-	paused, canRetry, driving                                   bool
+	paused, canRetry, driving, frozen                           bool
+	focusInvocation                                             string
 	cause                                                       string
-	inputTokens, outputTokens                                   int64
-	cost                                                        *float64
+	// retryAction says what r does for this pause ("retry the implementer
+	// with the verification failures"); composing/draft hold the guidance
+	// text box opened with g.
+	retryAction               string
+	composing                 bool
+	draft                     string
+	inputTokens, outputTokens int64
+	cost                      *float64
 }
 
 type watchAgent struct {
@@ -67,6 +74,7 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 		return ttyFrame([]string{"SDLC run unavailable"}, width, height)
 	}
 	root := runs[0]
+	focused := state.focusInvocation != ""
 	stage, outcome := "unknown", ""
 	if root.Adaptive != nil {
 		stage, outcome = root.Adaptive.Stage, root.Adaptive.Outcome
@@ -79,9 +87,13 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 	if width < 75 && len(shownID) > 12 {
 		shownID = "…" + shownID[len(shownID)-8:]
 	}
-	lines = append(lines, "SDLC  "+shownID+"  ·  "+status)
-	lines = append(lines, ttyWrapLabel("Task  ", a.sdlcRedactedDisplay(root.Task), width, 2)...)
-	if root.Adaptive != nil {
+	if focused {
+		lines = append(lines, "AGENT VIEW  "+shownID+"  ·  "+status)
+	} else {
+		lines = append(lines, "SDLC  "+shownID+"  ·  "+status)
+		lines = append(lines, ttyWrapLabel("Task  ", a.sdlcRedactedDisplay(root.Task), width, 2)...)
+	}
+	if !focused && root.Adaptive != nil {
 		used := root.Adaptive.AssignmentCount
 		revisions := root.Adaptive.RevisionCount
 		if root.TreeUsage != nil {
@@ -96,7 +108,7 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 		}
 		lines = append(lines, budget)
 	}
-	if len(runs) > 1 {
+	if !focused && len(runs) > 1 {
 		var child []string
 		for _, run := range runs[1:] {
 			if run.Adaptive != nil {
@@ -108,7 +120,7 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 	// Reserve space for the outcome, navigation, and controls before sizing the
 	// agent pane. A short terminal must still explain a pause and how to recover.
 	var bottom []string
-	if len(decisions) > 0 {
+	if !focused && len(decisions) > 0 {
 		bottom = append(bottom, "DECISIONS  recorded routing evidence")
 		count := 2
 		if height < 22 {
@@ -126,13 +138,26 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 		}
 	}
 	decisionRows := len(bottom)
-	usage := fmt.Sprintf("Usage  %d in (%d unknown) · %d out (%d unknown)", state.inputTokens, state.unknownInput, state.outputTokens, state.unknownOutput)
+	usage := fmt.Sprintf("Usage  %s in (%d unknown) · %s out (%d unknown)", formatInt(state.inputTokens), state.unknownInput, formatInt(state.outputTokens), state.unknownOutput)
 	if state.cost != nil {
 		usage += fmt.Sprintf(" · $%.4f supplied", *state.cost)
 	}
-	bottom = append(bottom, usage)
+	if !focused {
+		bottom = append(bottom, usage)
+	}
 	if state.paused {
 		bottom = append(bottom, "PAUSED  "+a.sdlcRedactedDisplay(state.cause))
+		switch {
+		case state.composing:
+			bottom = append(bottom, "GUIDANCE  "+watchDraftTail(state.draft, width-12)+"▏")
+		case state.canRetry && state.retryAction != "":
+			bottom = append(bottom, "NEXT  r: "+state.retryAction+" · g: tell the agent how to proceed first")
+		case !state.canRetry:
+			bottom = append(bottom, "NEXT  this pause needs a new run or a policy change; q leaves it paused")
+		}
+	}
+	if state.frozen {
+		bottom = append(bottom, "DISPLAY FROZEN  Press p to resume updates · Ctrl-C to stop")
 	}
 	if state.help && height >= 16 {
 		bottom = append(bottom, watchHelpLines(state, width, height)...)
@@ -150,10 +175,25 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 
 	agents := a.sdlcWatchAgents(runs)
 	if len(agents) == 0 {
-		lines = append(lines, ttyBox("AGENT", []string{"Waiting for the next agent invocation"}, width)...)
+		message := "Waiting for the next agent invocation"
+		if focused {
+			message = "Starting agent invocation; waiting for runtime activity"
+		}
+		lines = append(lines, ttyBox("AGENT", []string{message}, width)...)
 	} else {
 		indices := []int{len(agents) - 1}
-		if state.selected >= 0 {
+		if focused && state.selected < 0 {
+			indices = indices[:0]
+			for i := range agents {
+				if agents[i].meta.Invocation == state.focusInvocation {
+					indices = append(indices, i)
+					break
+				}
+			}
+			if len(indices) == 0 {
+				lines = append(lines, ttyBox("AGENT", []string{"Starting agent invocation; waiting for runtime activity"}, width)...)
+			}
+		} else if state.selected >= 0 {
 			indices[0] = state.selected % len(agents)
 		}
 		if state.all {
@@ -197,7 +237,7 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 					}
 					start := max(0, index-rows+1)
 					end := min(len(agent.history), start+rows)
-					body = append(body, fmt.Sprintf("History  %d/%d · ↑ older / ↓ newer · wheel", index+1, len(agent.history)))
+					body = append(body, fmt.Sprintf("History  %d/%d · ↑ older / ↓ newer", index+1, len(agent.history)))
 					for h := start; h < end; h++ {
 						marker := "  "
 						if h == index {
@@ -220,7 +260,7 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 					}
 					start := max(0, len(wrapped)-rows-max(0, state.detailScroll))
 					end := min(len(wrapped), start+rows)
-					body = append(body, fmt.Sprintf("%s  %d-%d/%d · J older / K newer", detailTitle, start+1, end, len(wrapped)))
+					body = append(body, fmt.Sprintf("%s  %d-%d/%d · j/J older / k/K newer", detailTitle, start+1, end, len(wrapped)))
 					for _, row := range wrapped[start:end] {
 						if strings.HasPrefix(row.plain, ttyPrestyled) {
 							body = append(body, ttyPrestyled+"  "+strings.TrimPrefix(row.plain, ttyPrestyled))
@@ -257,22 +297,28 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 func watchControls(state watchTTYState, width int) string {
 	narrow := width < 65
 	switch {
+	case state.composing && narrow:
+		return "Enter send+retry  Esc cancel"
+	case state.composing:
+		return "Enter send guidance and retry  Esc cancel  Ctrl-U clear"
+	case state.frozen:
+		return "p resume display  Ctrl-C stop"
 	case state.paused && state.canRetry && narrow:
-		return "r auto retry  q leave  ? help"
+		return "r retry  g guide  q leave  ? help"
 	case state.paused && state.canRetry:
-		return "r auto retry  f fresh  s resume  c compact  q leave  ? help"
+		return "r retry  g guide+retry  f new session  s same session  c compact  q leave  ? help"
 	case state.paused && narrow:
-		return "q leave paused  ? help"
+		return "p copy  q leave paused  ? help"
 	case state.paused:
-		return "? help  ↑/↓ history  J/K text  q leave paused"
+		return "? help  ↑/↓ history  j/k text  p copy  q leave paused"
 	case narrow && state.driving:
-		return "? help  ↑↓ history  J/K text  n agent"
+		return "? help  ↑↓ history  p copy  Ctrl-C stop"
 	case narrow:
-		return "q detach  ↑↓ history  ? help"
+		return "q detach  p copy  ? help"
 	case state.driving:
-		return "? help  ↑/↓ or wheel: history  J/K: text  n agent"
+		return "? help  ↑/↓ history  j/k: text  p copy  n agent  Ctrl-C stop"
 	default:
-		return "? help  ↑/↓ or wheel: history  J/K: text  n agent  q detach"
+		return "? help  ↑/↓ history  j/k: text  p copy  n agent  q detach"
 	}
 }
 
@@ -280,33 +326,34 @@ func watchHelpLines(state watchTTYState, width, height int) []string {
 	if width < 50 {
 		lines := []string{
 			"HELP  ? hide · ↑/↓ activity",
-			"  J/K text · n next agent",
-			"  a all · l logs · t tool · d",
+			"  j/k text (either case) · n next agent",
+			"  p pause to copy · a all · l logs",
 		}
 		if state.paused && state.canRetry {
-			lines = append(lines, "r:auto f:fresh s:saved c:compact")
+			lines = append(lines, "r:retry g:guide f:new c:compact")
 		}
 		return lines
 	}
 	if width < 65 || height < 22 {
 		lines := []string{
 			"HELP  ? hides this guide",
-			"  ↑/↓ or wheel: activity; J/K: scroll message text",
-			"  n agent · a all · l logs · t tool · d details",
+			"  ↑/↓: activity; j/k: scroll message text",
+			"  p pause to copy · n agent · a all · l logs",
 		}
 		if state.paused && state.canRetry && height >= 19 {
-			lines = append(lines, "  Retry: r auto · f fresh · s saved · c compact; q leave")
+			lines = append(lines, "  r retry · g guide · f new/s same/c compact session")
 		}
 		return lines
 	}
 	lines := []string{
 		"HELP  Press ? to hide this guide",
-		"  ↑/↓ or wheel: older/newer activity; PgUp/PgDn: jump five",
-		"  J/K: scroll message text; n: next agent; a: show all agents",
-		"  l: show/hide logs; t: last tool result; d: decision detail",
+		"  ↑/↓: older/newer activity; PgUp/PgDn: jump five",
+		"  j/k (either case): scroll message text; n: next agent; a: show all agents",
+		"  p: pause redraw to copy; l: show/hide logs; t: tool; d: details",
 	}
 	if state.paused && state.canRetry {
-		lines = append(lines, "  Retry: r policy session; f new; s saved; c compact then resume")
+		lines = append(lines, "  r: retry (see NEXT) · g: type guidance for the next agent, then retry")
+		lines = append(lines, "  Retry in a specific agent session: f new · s same saved · c compacted")
 	}
 	return lines
 }
@@ -493,6 +540,11 @@ func ttyStyleLine(line string) string {
 	}
 	if strings.HasPrefix(line, "PAUSED  ") {
 		return style(ansiYellow, "PAUSED  ") + line[len("PAUSED  "):]
+	}
+	for _, label := range []string{"NEXT  ", "GUIDANCE  "} {
+		if strings.HasPrefix(line, label) {
+			return style(ansiCyan, label) + line[len(label):]
+		}
 	}
 	if strings.HasPrefix(line, "  ") && strings.Contains(line, " · ") {
 		content := strings.TrimLeft(line, " ")
@@ -689,6 +741,9 @@ func (a *App) sdlcWatchAgents(runs []ledger.Run) []watchAgent {
 				previewTitle, previewDetail = watchCodexToolPreview(saved.Text)
 			}
 			if len(previewDetail) == 0 {
+				previewTitle, previewDetail = watchClaudeToolResult(saved.Text)
+			}
+			if len(previewDetail) == 0 {
 				previewTitle, previewDetail = watchEditPreview(saved.Text, agent.workDir)
 			}
 			fileLabel, fileTitle, fileDetail := watchFileChanges(saved.Text, agent.workDir)
@@ -812,9 +867,12 @@ func watchActivity(saved worker.LogLine) (label, key string, started, completed 
 		ToolCall map[string]json.RawMessage `json:"tool_call"`
 		Message  struct {
 			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-				Name string `json:"name"`
+				Type      string          `json:"type"`
+				Text      string          `json:"text"`
+				Name      string          `json:"name"`
+				ID        string          `json:"id"`
+				ToolUseID string          `json:"tool_use_id"`
+				Input     json.RawMessage `json:"input"`
 			} `json:"content"`
 		} `json:"message"`
 		Item struct {
@@ -878,15 +936,37 @@ func watchActivity(saved worker.LogLine) (label, key string, started, completed 
 		key = event.Item.ID
 		return label, key, event.Type == "item.started", event.Type == "item.completed"
 	case "assistant":
+		// Claude often puts explanatory text before a tool_use block in one
+		// assistant event. Keep the pending tool request visible while it runs.
+		for _, content := range event.Message.Content {
+			if content.Type == "tool_use" {
+				var input struct {
+					FilePath string `json:"file_path"`
+					Path     string `json:"path"`
+					Command  string `json:"command"`
+					Pattern  string `json:"pattern"`
+					Query    string `json:"query"`
+				}
+				_ = json.Unmarshal(content.Input, &input)
+				label = "Using " + content.Name
+				if target := cmp.Or(input.FilePath, input.Path, input.Command, input.Pattern, input.Query); target != "" {
+					label += " " + shortProgressText(target, 100)
+				}
+				return label, content.ID, content.ID != "", false
+			}
+		}
+	case "user":
+		for _, content := range event.Message.Content {
+			if content.Type == "tool_result" {
+				return "Tool result received", content.ToolUseID, false, content.ToolUseID != ""
+			}
+		}
 		for _, content := range event.Message.Content {
 			if content.Type == "text" && strings.TrimSpace(content.Text) != "" {
 				if reply, err := worker.ParseReply([]byte(content.Text)); err == nil {
 					return "Reported " + reply.Outcome, "", false, false
 				}
 				return "Says: " + shortProgressText(content.Text, 150), "", false, false
-			}
-			if content.Type == "tool_use" {
-				return "Using " + content.Name, "", false, false
 			}
 		}
 	case "tool_use":
@@ -1265,6 +1345,50 @@ func watchToolPreview(raw string) (string, []string) {
 	return title, matches
 }
 
+func watchClaudeToolResult(raw string) (string, []string) {
+	var event struct {
+		Type    string `json:"type"`
+		Message struct {
+			Content []struct {
+				Type    string          `json:"type"`
+				Content json.RawMessage `json:"content"`
+				IsError bool            `json:"is_error"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal([]byte(raw), &event) != nil || event.Type != "user" {
+		return "", nil
+	}
+	for _, block := range event.Message.Content {
+		if block.Type != "tool_result" {
+			continue
+		}
+		title := "Tool result"
+		if block.IsError {
+			title = "Tool error"
+		}
+		var content string
+		if json.Unmarshal(block.Content, &content) != nil {
+			var parts []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(block.Content, &parts) == nil {
+				for _, part := range parts {
+					if part.Type == "text" && part.Text != "" {
+						content += part.Text + "\n"
+					}
+				}
+			}
+		}
+		if strings.TrimSpace(content) == "" {
+			content = "Tool completed with no text output"
+		}
+		return title, formatWatchExcerpt(content, 80)
+	}
+	return "", nil
+}
+
 func formatWatchExcerpt(content string, maxLines int) []string {
 	if len(content) > 32<<10 {
 		content = content[:32<<10]
@@ -1289,4 +1413,13 @@ func formatWatchExcerpt(content string, maxLines int) []string {
 		}
 	}
 	return lines
+}
+
+// watchDraftTail keeps the end of a long guidance draft visible while typing.
+func watchDraftTail(draft string, width int) string {
+	runes := []rune(draft)
+	if width < 4 || len(runes) <= width {
+		return draft
+	}
+	return "…" + string(runes[len(runes)-width+1:])
 }

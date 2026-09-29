@@ -7,11 +7,19 @@ import (
 	"github.com/JoshJancula/jevkit/internal/filelock"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
+// MaxLogTail is the default number of bytes retained per invocation stream
+// (stdout, stderr, and the combined lines.jsonl each independently). It is
+// deliberately generous relative to observed invocation output (a single
+// CLI agent turn in this codebase's own fixtures runs a few KB to a few
+// hundred KB) while still bounding a runaway or looping agent. Request.
+// LogTailBytes overrides it per invocation; JEVKIT_SDLC_LOG_TAIL_BYTES is
+// the CLI-level override (see cmd/jevkit's sdlcLogTailBytes).
 const MaxLogTail = 1 << 20
 const maxReplyCapture = 16 << 20
 
@@ -44,7 +52,9 @@ type invocationLog struct {
 	live      func(stream, line string)
 	pending   string
 	data      []byte
-	truncated bool
+	maxTail   int
+	omitted   int64 // cumulative bytes dropped from the front of data by tail rollover
+	file      *os.File
 }
 
 func newInvocationLog(req Request, stream string) (*invocationLog, error) {
@@ -64,16 +74,36 @@ func newInvocationLog(req Request, stream string) (*invocationLog, error) {
 		return nil, err
 	}
 	path := filepath.Join(req.LogDir, id+"."+stream)
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o600)
+	if err != nil {
 		return nil, err
 	}
 	linesPath := filepath.Join(req.LogDir, id+".lines.jsonl")
 	if f, err := os.OpenFile(linesPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err != nil {
+		_ = file.Close()
 		return nil, err
 	} else {
 		_ = f.Close()
 	}
-	return &invocationLog{path: path, linesPath: linesPath, stream: stream, runtime: req.Agent.Runtime, live: req.LiveOutput}, nil
+	maxTail := req.LogTailBytes
+	if maxTail <= 0 {
+		maxTail = MaxLogTail
+	}
+	return &invocationLog{path: path, linesPath: linesPath, stream: stream, runtime: req.Agent.Runtime, live: req.LiveOutput, maxTail: maxTail, file: file}, nil
+}
+
+// close releases the held file handle for the raw stdout/stderr tail file.
+// It does not remove or truncate the file; the last-written tail stays on
+// disk exactly as callers (e.g. `sdlc logs`) already expect.
+func (l *invocationLog) close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.file == nil {
+		return nil
+	}
+	err := l.file.Close()
+	l.file = nil
+	return err
 }
 
 type LogLine struct {
@@ -138,19 +168,38 @@ func parseActivity(runtime, line string) *Activity {
 	return &Activity{Kind: runtime + "/" + event.Type, Label: strings.TrimSpace(label)}
 }
 
+// truncationMarker is the unmistakable, byte-accounted line prepended to a
+// retained tail once it has dropped older output. It appears identically in
+// the raw saved file and in normal (redacted) display, since both read the
+// same on-disk bytes; it is never omitted or replaced by "no output".
+func truncationMarker(omitted int64) string {
+	return fmt.Sprintf("%s %d bytes omitted]\n", TruncationMarkerPrefix, omitted)
+}
+
+// TruncationMarkerPrefix identifies the truncation marker line prepended to
+// a rolled-over stdout/stderr tail, so callers (e.g. cmd/jevkit's `sdlc
+// logs`) can detect and skip past it without depending on the exact
+// omitted-byte count it's followed by.
+const TruncationMarkerPrefix = "[earlier output truncated:"
+
 func (l *invocationLog) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.data = append(l.data, p...)
-	if len(l.data) > MaxLogTail {
-		l.data = append([]byte(nil), l.data[len(l.data)-MaxLogTail:]...)
-		l.truncated = true
-	}
-	data := l.data
-	if l.truncated {
-		data = append([]byte("[earlier output truncated]\n"), data...)
-	}
-	if err := os.WriteFile(l.path, data, 0o600); err != nil {
+	rolledOver := len(l.data) > l.maxTail
+	if rolledOver {
+		dropped := len(l.data) - l.maxTail
+		l.omitted += int64(dropped)
+		l.data = append([]byte(nil), l.data[dropped:]...)
+		// A rollover changes the truncation marker and the front of the
+		// retained window, so the on-disk file must be rewritten. Writes that
+		// stay under maxTail (the common case: total output never reaches the
+		// 1 MiB default) take the append path below instead, turning what used
+		// to be O(total bytes²) full-tail rewrites into O(total bytes) written.
+		if err := l.rewriteFile(); err != nil {
+			return 0, err
+		}
+	} else if _, err := l.file.Write(p); err != nil {
 		return 0, err
 	}
 	l.pending += string(p)
@@ -166,6 +215,24 @@ func (l *invocationLog) Write(p []byte) (int, error) {
 		}
 	}
 	return len(p), nil
+}
+
+// rewriteFile replaces the on-disk tail file with the current in-memory
+// window (plus the truncation marker, once anything has been dropped). It is
+// only reached when a Write rolls the window forward.
+func (l *invocationLog) rewriteFile() error {
+	data := l.data
+	if l.omitted > 0 {
+		data = append([]byte(truncationMarker(l.omitted)), data...)
+	}
+	if _, err := l.file.Seek(0, 0); err != nil {
+		return err
+	}
+	if err := l.file.Truncate(0); err != nil {
+		return err
+	}
+	_, err := l.file.Write(data)
+	return err
 }
 
 func (l *invocationLog) Flush() error {
@@ -193,8 +260,8 @@ func (l *invocationLog) appendLine(line string) error {
 		return err
 	}
 	entry = append(entry, '\n')
-	const maxCombined = MaxLogTail
-	if info, err := os.Stat(l.linesPath); os.IsNotExist(err) || err == nil && info.Size()+int64(len(entry)) <= maxCombined {
+	maxCombined := l.maxTail
+	if info, err := os.Stat(l.linesPath); os.IsNotExist(err) || err == nil && info.Size()+int64(len(entry)) <= int64(maxCombined) {
 		f, err := os.OpenFile(l.linesPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return err
@@ -206,12 +273,21 @@ func (l *invocationLog) appendLine(line string) error {
 	data, _ := os.ReadFile(l.linesPath)
 	data = append(data, entry...)
 	if len(data) > maxCombined {
-		_ = os.WriteFile(l.linesPath+".truncated", []byte("true\n"), 0o600)
+		before := len(data)
 		data = data[len(data)-maxCombined:]
 		if end := bytes.IndexByte(data, '\n'); end >= 0 {
 			data = data[end+1:]
 		} else {
 			data = nil
+		}
+		dropped := int64(before - len(data))
+		var prevOmitted int64
+		if raw, err := os.ReadFile(l.linesPath + ".truncated"); err == nil {
+			prevOmitted, _ = strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+		}
+		total := prevOmitted + dropped
+		if writeErr := os.WriteFile(l.linesPath+".truncated", []byte(strconv.FormatInt(total, 10)+"\n"), 0o600); writeErr != nil {
+			return writeErr
 		}
 	}
 	return os.WriteFile(l.linesPath, data, 0o600)

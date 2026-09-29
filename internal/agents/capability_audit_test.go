@@ -46,6 +46,44 @@ func TestRuntimeCapabilityAuditIsDocumented(t *testing.T) {
 	}
 }
 
+func TestRuntimeCapabilityAuditFlagsOpenCodeMissingShellPolicyCoverage(t *testing.T) {
+	profile, ok := agents.RuntimeCapabilities(agents.OpenCodeName)
+	if !ok {
+		t.Fatal("OpenCode has no audited capability profile")
+	}
+	if profile.ShellPolicyCoverage {
+		t.Fatal("OpenCode does not receive a pre-tool event and must not claim shell policy coverage")
+	}
+	if agents.Lookup(agents.OpenCodeName).Capabilities().PreTool {
+		t.Fatal("OpenCode adapter must not advertise PreTool while its plugin never dispatches a pre-tool event")
+	}
+}
+
+func TestRuntimeCapabilityAuditRecordsAntigravityPermissionBypassContext(t *testing.T) {
+	profile, ok := agents.RuntimeCapabilities(agents.AntigravityName)
+	if !ok {
+		t.Fatal("Antigravity has no audited capability profile")
+	}
+	if !profile.ShellPolicyCoverage || !profile.PreToolDecision {
+		t.Fatal("Antigravity's pre-tool hook is what makes its permission-bypass rewrite reviewable; both must stay true")
+	}
+	if profile.PostToolOutput {
+		t.Fatal("Antigravity's PostToolUse payload has no output field; PostToolOutput must stay false, not be advertised")
+	}
+}
+
+func TestRuntimeCapabilityAuditShellPolicyCoverageMatchesPreToolDecision(t *testing.T) {
+	for _, name := range []string{agents.ClaudeName, agents.CursorName, agents.CodexName, agents.OpenCodeName, agents.AntigravityName} {
+		profile, ok := agents.RuntimeCapabilities(name)
+		if !ok {
+			t.Fatalf("%s has no audited capability profile", name)
+		}
+		if profile.ShellPolicyCoverage != profile.PreToolDecision {
+			t.Fatalf("%s: ShellPolicyCoverage=%v must match PreToolDecision=%v; a runtime cannot policy-check shell calls without a pre-tool decision", name, profile.ShellPolicyCoverage, profile.PreToolDecision)
+		}
+	}
+}
+
 func TestRuntimeCapabilityAuditMatchesAdapterClaims(t *testing.T) {
 	for _, name := range []string{
 		agents.ClaudeName,

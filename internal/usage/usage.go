@@ -93,6 +93,95 @@ func Append(stateDir string, rec Record) error {
 	return f.Close()
 }
 
+// RemoveRuns rewrites the usage log to drop every record whose RunID is in
+// runIDs — the "attributable" usage a deleted run tree owns. Records with an
+// empty RunID, or a RunID not in the set, are shared/unattributable and are
+// always preserved untouched. A missing file removes nothing.
+func RemoveRuns(stateDir string, runIDs map[string]bool) (removed int, err error) {
+	if len(runIDs) == 0 {
+		return 0, nil
+	}
+	path := Path(stateDir)
+	l, err := filelock.Acquire(path + ".lock")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Release()
+
+	recs, err := ReadRecords(path)
+	if err != nil {
+		return 0, err
+	}
+	kept := recs[:0]
+	for _, r := range recs {
+		if r.RunID != "" && runIDs[r.RunID] {
+			removed++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+
+	var buf bytes.Buffer
+	for _, r := range kept {
+		line, err := json.Marshal(r)
+		if err != nil {
+			return 0, err
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return 0, err
+	}
+	tmp, err := os.CreateTemp(dir, ".tmp-usage-*")
+	if err != nil {
+		return 0, err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return 0, err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return 0, err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return 0, err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return 0, err
+	}
+	return removed, nil
+}
+
+// CountRuns reports how many records are attributable to runIDs, without
+// modifying the log — used to preview how much a prune/delete would remove.
+func CountRuns(stateDir string, runIDs map[string]bool) (int, error) {
+	if len(runIDs) == 0 {
+		return 0, nil
+	}
+	recs, err := ReadRecords(Path(stateDir))
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range recs {
+		if r.RunID != "" && runIDs[r.RunID] {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // ReadRecords returns every parseable record in path. A missing file yields
 // none; blank and malformed lines are skipped.
 func ReadRecords(path string) ([]Record, error) {

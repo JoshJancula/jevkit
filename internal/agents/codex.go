@@ -8,6 +8,7 @@ import (
 	"github.com/JoshJancula/jevkit/internal/compact"
 	"github.com/JoshJancula/jevkit/internal/registry"
 	"github.com/JoshJancula/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/security/review"
 )
 
 // Codex adapter name used by installed runtime integrations.
@@ -93,6 +94,9 @@ func (c *Codex) Passthrough(event Event) []byte {
 }
 
 func (c *Codex) HandlePreTool(ctx context.Context, req Request) (Response, error) {
+	if response, ok := latched(c.StateDir, CodexName, req.Raw); ok {
+		return response, nil
+	}
 	var payload struct {
 		HookEventName string `json:"hook_event_name"`
 		ToolName      string `json:"tool_name"`
@@ -109,9 +113,10 @@ func (c *Codex) HandlePreTool(ctx context.Context, req Request) (Response, error
 	if response, deny := securityDecision(ctx, c.Security, c.SecurityDecider, payload.ToolInput.Command, payload.CWD, payload.CWD, CodexName); deny {
 		return response, nil
 	}
+	key, _ := hookSession(req.Raw, CodexName)
 	body, err := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{
 		"hookEventName": "PreToolUse", "permissionDecision": "allow",
-		"updatedInput": map[string]string{"command": buildSecurityShellWrapperCommand(c.binary(), payload.CWD, payload.ToolInput.Command, CodexName, c.Security != nil && c.Security.Yolo, securityPolicyName(c.Security))},
+		"updatedInput": map[string]string{"command": buildSecurityShellWrapperCommand(c.binary(), payload.CWD, payload.ToolInput.Command, CodexName, c.Security != nil && c.Security.Yolo, securityPolicyName(c.Security), c.Security != nil && c.Security.Injection.Mode != "off") + " --session " + shellQuote(key)},
 	}})
 	if err != nil {
 		return Response{Body: c.Passthrough(EventPreTool)}, nil
@@ -122,6 +127,10 @@ func (c *Codex) HandlePreTool(ctx context.Context, req Request) (Response, error
 // HandlePostTool is telemetry-only. Shell output is replaced by the pre-tool
 // wrapper, which preserves the real exit status and raw original.
 func (c *Codex) HandlePostTool(ctx context.Context, req Request) (Response, error) {
+	key, _ := hookSession(req.Raw, CodexName)
+	if rec, ok := review.Pending(c.StateDir, key); ok {
+		return Response{Body: stopBody(rec.ID, nil), Deny: true, Outcome: OutcomeLatched}, nil
+	}
 	return Response{Body: c.Passthrough(EventPostTool)}, nil
 }
 

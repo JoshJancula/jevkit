@@ -9,6 +9,7 @@ Start with the [README](../README.md) to install Jevkit and connect an agent. Pi
 | Connect Claude, Codex, Cursor, OpenCode, or Antigravity | [Agent integrations](AGENT-INTEGRATIONS.md) |
 | Ask a typed question from the terminal | [Ask Jev](ASK.md) |
 | Set up an API key or find out which source wins | [API keys](KEYS.md) |
+| Inspect local usage, cache tokens, and state paths | [Usage and local state](USAGE.md) |
 | Inspect what Jevkit may send | [Redaction](REDACTION.md) |
 | Configure command checks | [Security check](SECURITY-CHECK.md) |
 | Run planning, implementation, and assessment | [SDLC runs](SDLC.md) |

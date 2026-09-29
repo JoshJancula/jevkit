@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -29,11 +30,89 @@ func TestInvocationLogRetainsBoundedTailAndMarksTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(got), "[earlier output truncated]\n") || !strings.HasSuffix(string(got), "last line\n") || len(got) > MaxLogTail+40 {
-		t.Fatalf("invalid bounded tail: len=%d", len(got))
+	wantMarker := "[earlier output truncated: 10 bytes omitted]\n"
+	if !strings.HasPrefix(string(got), wantMarker) || !strings.HasSuffix(string(got), "last line\n") || len(got) > MaxLogTail+len(wantMarker) {
+		t.Fatalf("invalid bounded tail: len=%d body=%q", len(got), truncate(string(got), 80))
 	}
 	if info, err := os.Stat(filepath.Join(dir, "inv-1.stderr")); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("private log: %v %v", info, err)
+	}
+}
+
+func TestInvocationLogAccumulatesOmittedByteCountAcrossMultipleRollovers(t *testing.T) {
+	dir := t.TempDir()
+	req := Request{Agent: enrollment.Agent{ID: "reviewer", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv-2"}, LogDir: dir, LogTailBytes: 100}
+	log, err := newInvocationLog(req, "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Three writes of 60 bytes each against a 100-byte tail: the first stays
+	// under bound, the second and third each roll the tail over once more,
+	// so the omitted count must keep growing rather than reset per write.
+	for i := 0; i < 3; i++ {
+		if _, err := log.Write([]byte(strings.Repeat("b", 60))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "inv-2.stdout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMarker := "[earlier output truncated: 80 bytes omitted]\n"
+	if !strings.HasPrefix(string(got), wantMarker) {
+		t.Fatalf("expected cumulative omitted count in marker, got %q", truncate(string(got), 80))
+	}
+	if got2, _ := os.ReadFile(filepath.Join(dir, "inv-2.stdout")); len(got2)-len(wantMarker) != 100 {
+		t.Fatalf("retained tail should stay at the configured bound: got %d bytes of body", len(got2)-len(wantMarker))
+	}
+}
+
+func TestInvocationLogRespectsConfigurableTailBound(t *testing.T) {
+	dir := t.TempDir()
+	req := Request{Agent: enrollment.Agent{ID: "reviewer", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv-3"}, LogDir: dir, LogTailBytes: 50}
+	log, err := newInvocationLog(req, "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := log.Write([]byte(strings.Repeat("c", 200))); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "inv-3.stdout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(got), "[earlier output truncated: 150 bytes omitted]\n") {
+		t.Fatalf("custom LogTailBytes was not honored: %q", truncate(string(got), 80))
+	}
+}
+
+func TestInvocationLogLinesJSONLTruncationRecordsOmittedBytes(t *testing.T) {
+	dir := t.TempDir()
+	req := Request{Agent: enrollment.Agent{ID: "agent", Runtime: "codex"}, Assignment: adaptive.Assignment{InvocationID: "inv-4"}, LogDir: dir, LogTailBytes: 200}
+	out, err := newInvocationLog(req, "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 40; i++ {
+		if _, err := out.Write([]byte("a line of moderate length here\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	markerPath := filepath.Join(dir, "inv-4.lines.jsonl.truncated")
+	raw, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("expected a truncation marker with an omitted-byte count: %v", err)
+	}
+	omitted, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil || omitted <= 0 {
+		t.Fatalf("expected a positive omitted byte count, got %q", raw)
+	}
+	lines, err := os.ReadFile(filepath.Join(dir, "inv-4.lines.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(lines)) > 200 {
+		t.Fatalf("lines.jsonl exceeded its configured bound: %d bytes", len(lines))
 	}
 }
 

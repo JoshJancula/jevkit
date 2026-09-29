@@ -1,0 +1,5 @@
+{"type":"item.started","item":{"id":"item-1","type":"command_execution"}}
+{"type":"item.completed","item":{"id":"item-1","type":"command_execution"}}
+{"type":"item.completed","item":{"id":"item-2","type":"file_change"}}
+{"type":"item.completed","item":{"id":"item-1","type":"command_execution"}}
+{"type":"item.completed","item":{"id":"msg-1","type":"agent_message"}}

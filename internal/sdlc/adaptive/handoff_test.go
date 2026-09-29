@@ -33,7 +33,7 @@ func TestSpecialistReviewsApproveExactDiffBeforeAssessment(t *testing.T) {
 	s.DiffRevision = "diff-1"
 	s.LastImplementerBinding = "writer"
 	s.SpecialistQueue = []SpecialistCheck{{Role: "qa", Revision: "diff-1"}, {Role: "security", Revision: "diff-1"}}
-	s.AfterSpecialists = Assessing
+	s.AfterSpecialists = Verifying
 	qa := Assignment{InvocationID: "q", AgentID: "qa", Binding: "writer", Role: "qa", Revision: "diff-1"}
 	if err := s.Assign(qa); err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestSpecialistReviewsApproveExactDiffBeforeAssessment(t *testing.T) {
 	if err := s.Apply(Result{InvocationID: "s", AgentID: "security", Outcome: "approved", Revision: "diff-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if s.Stage != Assessing || len(s.SpecialistQueue) != 0 || len(s.SpecialistReviews) != 2 {
+	if s.Stage != Verifying || len(s.SpecialistQueue) != 0 || len(s.SpecialistReviews) != 2 {
 		t.Fatalf("after approvals: %+v", s)
 	}
 }

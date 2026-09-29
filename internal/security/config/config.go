@@ -28,10 +28,20 @@ type Config struct {
 	JevScoring bool
 	Mode       string
 	Yolo       bool
+	Injection  Injection
 	Tests      []Test
 	Asker      interface {
 		Ask(context.Context, jev.Request) (*jev.Response, error)
 	}
+}
+
+type Injection struct {
+	Mode          string   `yaml:"mode" json:"mode"`
+	Scan          string   `yaml:"scan" json:"scan"`
+	MaxBytes      int      `yaml:"max_bytes" json:"max_bytes"`
+	Tools         []string `yaml:"tools" json:"tools"`
+	HeuristicHalt bool     `yaml:"heuristic_halt" json:"heuristic_halt"`
+	HaltOn        string   `yaml:"halt_on" json:"halt_on"`
 }
 
 type Test struct {
@@ -45,10 +55,11 @@ type LoadOptions struct {
 }
 
 type fileSpec struct {
-	Version    int      `yaml:"version"`
-	Killswitch []string `yaml:"killswitch"`
-	JevScoring *bool    `yaml:"jev_scoring"`
-	Mode       string   `yaml:"mode"`
+	Version    int        `yaml:"version"`
+	Killswitch []string   `yaml:"killswitch"`
+	JevScoring *bool      `yaml:"jev_scoring"`
+	Mode       string     `yaml:"mode"`
+	Injection  *Injection `yaml:"injection"`
 	Sandbox    *struct {
 		AllowRead []string `yaml:"allow_read"`
 	} `yaml:"sandbox"`
@@ -70,12 +81,12 @@ func Builtin(opts LoadOptions) (*Config, error) {
 			allow = append(allow, path)
 		}
 	}
-	patterns := []string{"rm -rf /", "rm -rf /*", "rm -fr /", "rm -fr /*"}
+	patterns := []string{"rm -rf /", "rm -rf /*", "rm -fr /", "rm -fr /*", "jevkit security review*"}
 	ks, err := NewKillswitch(patterns)
 	if err != nil {
 		return nil, err
 	}
-	return &Config{Name: "builtin", StateDir: opts.StateDir, Patterns: patterns, Killswitch: ks, AllowRead: allow, Mode: "enforce"}, nil
+	return &Config{Name: "builtin", StateDir: opts.StateDir, Patterns: patterns, Killswitch: ks, AllowRead: allow, Mode: "enforce", Injection: Injection{Mode: "off", Scan: "suspicious", MaxBytes: 16384, HaltOn: "escalate"}}, nil
 }
 
 func Load(opts LoadOptions) (*Config, error) {
@@ -116,6 +127,9 @@ func Load(opts LoadOptions) (*Config, error) {
 		}
 		if err == nil {
 			cfg.Patterns = append(cfg.Patterns, spec.Killswitch...)
+			if spec.Injection != nil {
+				tightenInjection(&cfg.Injection, *spec.Injection)
+			}
 		}
 	}
 	cfg.Killswitch, err = NewKillswitch(cfg.Patterns)
@@ -124,6 +138,13 @@ func Load(opts LoadOptions) (*Config, error) {
 	}
 	if v, ok := envBool(opts.Environ, "JEVKIT_SECURITY_SCORING"); ok {
 		cfg.JevScoring = v
+	}
+	if v, ok := envBool(opts.Environ, "JEVKIT_INJECTION_GUARD"); ok {
+		if v {
+			cfg.Injection.Mode = "enforce"
+		} else {
+			cfg.Injection.Mode = "off"
+		}
 	}
 	cfg.Yolo, _ = envBool(opts.Environ, "JEVKIT_YOLO")
 	return cfg, nil
@@ -154,7 +175,7 @@ func readSpec(path string, project bool) (fileSpec, error) {
 	if err := yaml.Unmarshal(raw, &keys); err != nil {
 		return spec, fmt.Errorf("%s: %w", path, err)
 	}
-	allowed := map[string]bool{"version": true, "killswitch": true}
+	allowed := map[string]bool{"version": true, "killswitch": true, "injection": true}
 	if !project {
 		for _, key := range []string{"jev_scoring", "mode", "sandbox", "tests"} {
 			allowed[key] = true
@@ -175,6 +196,21 @@ func readSpec(path string, project bool) (fileSpec, error) {
 	}
 	if spec.Mode != "" && spec.Mode != "enforce" && spec.Mode != "shadow" {
 		return spec, fmt.Errorf("%s: mode must be enforce or shadow", path)
+	}
+	if spec.Injection != nil {
+		i := spec.Injection
+		if i.Mode != "" && i.Mode != "off" && i.Mode != "shadow" && i.Mode != "enforce" {
+			return spec, fmt.Errorf("%s: invalid injection mode", path)
+		}
+		if i.HaltOn != "" && i.HaltOn != "act" && i.HaltOn != "escalate" {
+			return spec, fmt.Errorf("%s: invalid injection halt_on", path)
+		}
+		if i.Scan != "" && i.Scan != "all" && i.Scan != "suspicious" {
+			return spec, fmt.Errorf("%s: invalid injection scan", path)
+		}
+		if i.MaxBytes < 0 {
+			return spec, fmt.Errorf("%s: invalid injection max_bytes", path)
+		}
 	}
 	if _, err := NewKillswitch(spec.Killswitch); err != nil {
 		return spec, fmt.Errorf("%s: %w", path, err)
@@ -207,10 +243,62 @@ func applyUser(cfg *Config, spec fileSpec) {
 	if spec.Mode != "" {
 		cfg.Mode = spec.Mode
 	}
+	if spec.Injection != nil {
+		applyInjection(&cfg.Injection, *spec.Injection)
+	}
 	if spec.Sandbox != nil {
 		cfg.AllowRead = append(cfg.AllowRead, spec.Sandbox.AllowRead...)
 	}
 	cfg.Tests = append(cfg.Tests, spec.Tests...)
+}
+
+func applyInjection(dst *Injection, src Injection) {
+	if src.Mode != "" {
+		dst.Mode = src.Mode
+	}
+	if src.Scan != "" {
+		dst.Scan = src.Scan
+	}
+	if src.MaxBytes > 0 {
+		dst.MaxBytes = src.MaxBytes
+	}
+	if src.Tools != nil {
+		dst.Tools = append([]string(nil), src.Tools...)
+	}
+	if src.HaltOn != "" {
+		dst.HaltOn = src.HaltOn
+	}
+	dst.HeuristicHalt = src.HeuristicHalt
+}
+func tightenInjection(dst *Injection, src Injection) {
+	rank := map[string]int{"off": 0, "shadow": 1, "enforce": 2}
+	if rank[src.Mode] > rank[dst.Mode] {
+		dst.Mode = src.Mode
+	}
+	if src.HeuristicHalt {
+		dst.HeuristicHalt = true
+	}
+	if src.HaltOn == "escalate" {
+		dst.HaltOn = "escalate"
+	}
+	if src.Scan == "all" {
+		dst.Scan = "all"
+	}
+	if src.MaxBytes > dst.MaxBytes {
+		dst.MaxBytes = src.MaxBytes
+	}
+	if len(dst.Tools) > 0 {
+		seen := map[string]bool{}
+		for _, tool := range dst.Tools {
+			seen[tool] = true
+		}
+		for _, tool := range src.Tools {
+			if !seen[tool] {
+				dst.Tools = append(dst.Tools, tool)
+				seen[tool] = true
+			}
+		}
+	}
 }
 
 func PolicyPath(configDir, name string) string {

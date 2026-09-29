@@ -10,6 +10,7 @@ import (
 const (
 	Planning     = "planning"
 	Implementing = "implementing"
+	Verifying    = "verifying"
 	Assessing    = "assessing"
 	Specializing = "specializing"
 	Done         = "done"
@@ -66,6 +67,8 @@ type State struct {
 	Stage                  string                `json:"stage"`
 	Outcome                string                `json:"outcome,omitempty"`
 	PlanRevision           string                `json:"planRevision,omitempty"`
+	ChecksRevision         string                `json:"checksRevision,omitempty"`
+	SubtasksRevision       string                `json:"subtasksRevision,omitempty"`
 	DiffRevision           string                `json:"diffRevision,omitempty"`
 	Quorum                 int                   `json:"quorum"`
 	MaxConcurrent          int                   `json:"maxConcurrent"`
@@ -77,6 +80,7 @@ type State struct {
 	RevisionCount          int                   `json:"revisionCount"`
 	Assignments            map[string]Assignment `json:"assignments,omitempty"`
 	Assessments            []Assessment          `json:"assessments,omitempty"`
+	CheckReceipts          []CheckReceipt        `json:"checkReceipts,omitempty"`
 	Excluded               map[string]bool       `json:"excluded,omitempty"`
 	ExcludedBindings       map[string]bool       `json:"excludedBindings,omitempty"`
 	ExcludedRuntimes       map[string]bool       `json:"excludedRuntimes,omitempty"`
@@ -124,11 +128,49 @@ func (s State) Role() string {
 	case Assessing:
 		return "assessor"
 	case Specializing:
-		if len(s.SpecialistQueue) > 0 {
-			return s.SpecialistQueue[0].Role
+		pending := map[string]bool{}
+		for _, a := range s.Assignments {
+			pending[a.Role] = true
+		}
+		for _, check := range s.SpecialistQueue {
+			if !pending[check.Role] {
+				return check.Role
+			}
 		}
 	}
 	return ""
+}
+
+// ParallelReviews reports whether the stage admits concurrent read-only
+// reviewer invocations (assessors and optional specialists).
+func (s State) ParallelReviews() bool {
+	return s.Stage == Assessing || s.Stage == Specializing
+}
+
+// ReviewSlotsNeeded is how many additional independent reviewers the stage
+// still requires before a quorum or specialist-queue decision can complete.
+func (s State) ReviewSlotsNeeded() int {
+	switch s.Stage {
+	case Assessing:
+		needed := s.Quorum - len(s.Assessments) - len(s.Assignments)
+		if needed < 0 {
+			return 0
+		}
+		return needed
+	case Specializing:
+		pending := map[string]bool{}
+		for _, a := range s.Assignments {
+			pending[a.Role] = true
+		}
+		n := 0
+		for _, check := range s.SpecialistQueue {
+			if !pending[check.Role] {
+				n++
+			}
+		}
+		return n
+	}
+	return 0
 }
 
 func (s State) Pending() []Assignment {
@@ -164,21 +206,44 @@ func (s *State) Assign(a Assignment) error {
 	if len(s.Assignments) >= s.MaxConcurrent {
 		return fmt.Errorf("adaptive: concurrency limit reached")
 	}
-	if s.Stage != Assessing && len(s.Assignments) > 0 {
+	if !s.ParallelReviews() && len(s.Assignments) > 0 {
 		return fmt.Errorf("adaptive: one %s invocation is already pending", s.Stage)
 	}
 	if s.Stage == Assessing || s.Stage == Specializing && a.Role != "research" {
 		if a.Revision != s.DiffRevision || a.Revision == "" {
 			return fmt.Errorf("adaptive: assessment must target exact diff revision")
 		}
+		if s.Stage == Assessing && s.LastImplementerBinding != "" && a.Binding == s.LastImplementerBinding {
+			return fmt.Errorf("adaptive: assessor must be independent of implementer")
+		}
 		for _, pending := range s.Assignments {
 			if pending.Binding == a.Binding || pending.AgentID == a.AgentID {
 				return fmt.Errorf("adaptive: assessor already assigned")
+			}
+			if s.Stage == Specializing && pending.Role == a.Role {
+				return fmt.Errorf("adaptive: specialist role %q already assigned", a.Role)
 			}
 		}
 		for _, done := range s.Assessments {
 			if done.Revision == a.Revision && (done.Binding == a.Binding || done.AgentID == a.AgentID) {
 				return fmt.Errorf("adaptive: assessor already counted for this revision")
+			}
+		}
+		if s.Stage == Specializing {
+			found := false
+			for _, check := range s.SpecialistQueue {
+				if check.Role == a.Role {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("adaptive: specialist role %q is not queued", a.Role)
+			}
+			for _, done := range s.SpecialistReviews {
+				if done.Revision == a.Revision && done.Role == a.Role {
+					return fmt.Errorf("adaptive: specialist role %q already counted for this revision", a.Role)
+				}
 			}
 		}
 	} else if s.Stage == Specializing && a.Role == "research" && a.Revision != s.PlanRevision {
@@ -218,6 +283,7 @@ func (s *State) Apply(r Result) error {
 		c.ExcludedRuntimes[k] = v
 	}
 	c.Assessments = append([]Assessment(nil), s.Assessments...)
+	c.CheckReceipts = append([]CheckReceipt(nil), s.CheckReceipts...)
 	c.SpecialistQueue = append([]SpecialistCheck(nil), s.SpecialistQueue...)
 	c.SpecialistReviews = append([]SpecialistCheck(nil), s.SpecialistReviews...)
 	if err := c.apply(r); err != nil {
@@ -295,7 +361,17 @@ func (s *State) apply(r Result) error {
 		if len(s.SpecialistQueue) == 0 || r.Revision != a.Revision {
 			return fmt.Errorf("adaptive: specialist result does not match exact revision")
 		}
-		check := s.SpecialistQueue[0]
+		idx := -1
+		for i, check := range s.SpecialistQueue {
+			if check.Role == a.Role {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return fmt.Errorf("adaptive: specialist role %q is not queued", a.Role)
+		}
+		check := s.SpecialistQueue[idx]
 		check.AgentID, check.Binding = a.AgentID, a.Binding
 		check.Overlap = a.Binding == s.LastImplementerBinding
 		if check.Role == "research" {
@@ -310,13 +386,14 @@ func (s *State) apply(r Result) error {
 			check.Approved = r.Outcome == "approved"
 		}
 		s.SpecialistReviews = append(s.SpecialistReviews, check)
-		s.SpecialistQueue = s.SpecialistQueue[1:]
+		s.SpecialistQueue = append(append([]SpecialistCheck{}, s.SpecialistQueue[:idx]...), s.SpecialistQueue[idx+1:]...)
 		if !check.Approved {
 			s.SpecialistQueue = nil
+			s.Assignments = map[string]Assignment{} // cancel excess pending specialists
 			s.Stage = Implementing
 			return nil
 		}
-		if len(s.SpecialistQueue) == 0 {
+		if len(s.SpecialistQueue) == 0 && len(s.Assignments) == 0 {
 			s.Stage = s.AfterSpecialists
 			s.AfterSpecialists = ""
 		}
@@ -347,14 +424,16 @@ func (s *State) apply(r Result) error {
 				s.Stage, s.Outcome = Paused, "revision-budget-exhausted"
 				return nil
 			}
-			s.DiffRevision, s.Stage = r.Revision, Assessing
+			s.DiffRevision, s.Stage = r.Revision, Verifying
 			s.LastImplementerBinding = a.Binding
-			s.Assessments = nil
+			InvalidateOnCandidateChange(s)
 		case "failed":
 			s.Stage, s.Outcome = Paused, "implementer-failed"
 		default:
 			return fmt.Errorf("adaptive: invalid implementation outcome %q", r.Outcome)
 		}
+	case Verifying:
+		return fmt.Errorf("adaptive: verifying is supervisor-owned; use ApplyVerificationResult")
 	case Assessing:
 		if r.Revision != a.Revision {
 			return fmt.Errorf("adaptive: assessment revision does not match assignment")
@@ -367,12 +446,33 @@ func (s *State) apply(r Result) error {
 		default:
 			return fmt.Errorf("adaptive: invalid assessment outcome %q", r.Outcome)
 		}
+		// A single changes-required is decisive: cancel excess pending reviewers
+		// and return to implementation (or pause when the revision budget is spent).
+		if r.Outcome == "changes-required" {
+			if s.RevisionCount >= s.MaxRevisions {
+				s.Pause("revision-budget-exhausted")
+			} else {
+				s.Stage = Implementing
+			}
+			s.Assignments = map[string]Assignment{}
+			return nil
+		}
 		if len(s.Assessments) >= s.Quorum {
 			approved := true
 			for _, x := range s.Assessments {
-				approved = approved && x.Approved
+				approved = approved && x.Approved && x.Revision == s.DiffRevision
 			}
 			if approved {
+				if !ChecksAllowCompletion(s.CheckReceipts, s.DiffRevision) {
+					// Supervisor receipts are authoritative; agent prose / Jev
+					// cannot mark a failed or missing required check as passed.
+					s.Assignments = map[string]Assignment{}
+					s.Assessments = nil
+					s.Stage = Verifying
+					s.Outcome = ""
+					s.PendingReason = "assessor quorum cannot complete without passing supervisor checks for this candidate"
+					return nil
+				}
 				s.Stage, s.Outcome = Done, "approved"
 			} else if s.RevisionCount >= s.MaxRevisions {
 				s.Pause("revision-budget-exhausted")

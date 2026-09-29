@@ -54,30 +54,59 @@ const (
 )
 
 // Run is one run's authoritative record: run.json.
+type RuntimeIntegration struct {
+	Hooks      bool `json:"hooks"`
+	Compaction bool `json:"compaction"`
+}
+
 type Run struct {
-	RunID                string            `json:"runId"`
-	SessionStrategy      string            `json:"sessionStrategy,omitempty"`
-	RequirePlanApproval  bool              `json:"requirePlanApproval,omitempty"`
-	ApprovedPlanRevision string            `json:"approvedPlanRevision,omitempty"`
-	PlanFeedback         string            `json:"planFeedback,omitempty"`
-	Sessions             map[string]string `json:"sessions,omitempty"`
-	Usage                []InvocationUsage `json:"usage,omitempty"`
-	ReviewRecovery       *ReviewRecovery   `json:"reviewRecovery,omitempty"`
-	WorkDir              string            `json:"workDir,omitempty"`
-	AllowRead            []string          `json:"allowRead,omitempty"`
-	TreeUsage            *TreeUsage        `json:"treeUsage,omitempty"`
-	DelegateBuiltins     bool              `json:"delegateBuiltins,omitempty"`
-	AutoDecisionDone     bool              `json:"autoDecisionDone,omitempty"`
-	AutoDecisionReason   string            `json:"autoDecisionReason,omitempty"`
-	AutoChildRunID       string            `json:"autoChildRunId,omitempty"`
-	AutoTarget           string            `json:"autoTarget,omitempty"`
-	ParentRunID          string            `json:"parentRunId,omitempty"`
-	Depth                int               `json:"depth,omitempty"`
-	Workflow             string            `json:"workflow"`
-	SelectionReason      string            `json:"selectionReason,omitempty"`
-	GraphSHA256          string            `json:"graphSha256"`
-	CreatedAt            string            `json:"createdAt"`
-	UpdatedAt            string            `json:"updatedAt"`
+	RunID                    string              `json:"runId"`
+	SessionStrategy          string              `json:"sessionStrategy,omitempty"`
+	RuntimeIntegration       *RuntimeIntegration `json:"runtimeIntegration,omitempty"`
+	RequirePlanApproval      bool                `json:"requirePlanApproval,omitempty"`
+	ApprovedPlanRevision     string              `json:"approvedPlanRevision,omitempty"`
+	ApprovedChecksRevision   string              `json:"approvedChecksRevision,omitempty"`
+	ApprovedSubtasksRevision string              `json:"approvedSubtasksRevision,omitempty"`
+	// AuthorizedChecksRevision is the exact checks.json digest the operator
+	// authorized for this run. --auto alone never sets it.
+	AuthorizedChecksRevision string `json:"authorizedChecksRevision,omitempty"`
+	PlanFeedback             string `json:"planFeedback,omitempty"`
+	// OperatorGuidance is free text the human supplied while the run was
+	// paused. It is added to the next agent prompt and cleared once an
+	// invocation completes with a real outcome.
+	OperatorGuidance string            `json:"operatorGuidance,omitempty"`
+	Sessions         map[string]string `json:"sessions,omitempty"`
+	// SessionContexts records content-free binding metadata so chooseSession can
+	// refuse silent resume when project/workdir or plan/diff revision drifts.
+	// Omitted on older run.json files; missing entries keep prior resume behavior
+	// until the next successful invocation writes a context.
+	SessionContexts map[string]SessionContext `json:"sessionContexts,omitempty"`
+	Usage           []InvocationUsage         `json:"usage,omitempty"`
+	ReviewRecovery  *ReviewRecovery           `json:"reviewRecovery,omitempty"`
+	WorkDir         string                    `json:"workDir,omitempty"`
+	AllowRead       []string                  `json:"allowRead,omitempty"`
+	TreeUsage       *TreeUsage                `json:"treeUsage,omitempty"`
+	// Fanout is the durable supervisor schedule for an approved subtask graph.
+	Fanout *adaptive.Schedule `json:"fanout,omitempty"`
+	// Integration is the supervisor-owned merge of fan-out subtask patches.
+	// Stored with the parent run so users can inspect or delete it together.
+	Integration *adaptive.IntegrationRecord `json:"integration,omitempty"`
+	// Verification is the supervisor-owned check pass for the current candidate.
+	// Receipts are owner-only under the run; diagnostic logs are separately
+	// prunable via `sdlc prune --logs-only`.
+	Verification       *adaptive.VerificationRecord `json:"verification,omitempty"`
+	DelegateBuiltins   bool                         `json:"delegateBuiltins,omitempty"`
+	AutoDecisionDone   bool                         `json:"autoDecisionDone,omitempty"`
+	AutoDecisionReason string                       `json:"autoDecisionReason,omitempty"`
+	AutoChildRunID     string                       `json:"autoChildRunId,omitempty"`
+	AutoTarget         string                       `json:"autoTarget,omitempty"`
+	ParentRunID        string                       `json:"parentRunId,omitempty"`
+	Depth              int                          `json:"depth,omitempty"`
+	Workflow           string                       `json:"workflow"`
+	SelectionReason    string                       `json:"selectionReason,omitempty"`
+	GraphSHA256        string                       `json:"graphSha256"`
+	CreatedAt          string                       `json:"createdAt"`
+	UpdatedAt          string                       `json:"updatedAt"`
 	// Task is the run's task statement, stored intact (run.json is written
 	// at 0600, like every ledger file); it is redacted before it ever
 	// reaches Jev, but kept whole here for a human or `sdlc status` to read.
@@ -88,37 +117,56 @@ type Run struct {
 }
 
 // InvocationUsage uses pointers so an absent count remains unknown.
+// Cache fields and provenance are omitempty so older run.json ledgers that
+// never recorded them stay readable and round-trip without inventing zeros.
 type InvocationUsage struct {
-	Invocation   string   `json:"invocation"`
-	Agent        string   `json:"agent"`
-	Runtime      string   `json:"runtime"`
-	Model        string   `json:"model,omitempty"`
-	Role         string   `json:"role"`
-	SessionID    string   `json:"sessionId,omitempty"`
-	InputTokens  *int64   `json:"inputTokens"`
-	OutputTokens *int64   `json:"outputTokens"`
-	CostUSD      *float64 `json:"costUsd,omitempty"`
+	Invocation              string   `json:"invocation"`
+	Agent                   string   `json:"agent"`
+	Runtime                 string   `json:"runtime"`
+	Model                   string   `json:"model,omitempty"`
+	Role                    string   `json:"role"`
+	SessionID               string   `json:"sessionId,omitempty"`
+	InputTokens             *int64   `json:"inputTokens"`
+	OutputTokens            *int64   `json:"outputTokens"`
+	ToolCalls               *int64   `json:"toolCalls,omitempty"`
+	CacheReadTokens         *int64   `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens     *int64   `json:"cacheCreationTokens,omitempty"`
+	CostUSD                 *float64 `json:"costUsd,omitempty"`
+	UsageProvenance         string   `json:"usageProvenance,omitempty"`
+	StablePrefixBytes       int      `json:"stablePrefixBytes,omitempty"`
+	StablePrefixFingerprint string   `json:"stablePrefixFingerprint,omitempty"`
+}
+
+// SessionContext is content-free metadata for a stored runtime session ID.
+type SessionContext struct {
+	WorkDir      string `json:"workDir,omitempty"`
+	PlanRevision string `json:"planRevision,omitempty"`
+	DiffRevision string `json:"diffRevision,omitempty"`
 }
 
 // ReviewRecovery is durable evidence for a parsed review that was interrupted
 // by workspace drift or a crash before its result was applied.
 type ReviewRecovery struct {
-	Invocation   string   `json:"invocation"`
-	Agent        string   `json:"agent"`
-	Binding      string   `json:"binding"`
-	Runtime      string   `json:"runtime"`
-	Model        string   `json:"model,omitempty"`
-	Revision     string   `json:"revision"`
-	Outcome      string   `json:"outcome"`
-	Content      string   `json:"content,omitempty"`
-	Reason       string   `json:"reason,omitempty"`
-	SessionID    string   `json:"sessionId,omitempty"`
-	InputTokens  *int64   `json:"inputTokens,omitempty"`
-	OutputTokens *int64   `json:"outputTokens,omitempty"`
-	CostUSD      *float64 `json:"costUsd,omitempty"`
-	Paths        []string `json:"paths,omitempty"`
-	Truncated    bool     `json:"truncated,omitempty"`
-	Applied      bool     `json:"applied,omitempty"`
+	Invocation          string   `json:"invocation"`
+	Agent               string   `json:"agent"`
+	Binding             string   `json:"binding"`
+	Runtime             string   `json:"runtime"`
+	Model               string   `json:"model,omitempty"`
+	Revision            string   `json:"revision"`
+	Outcome             string   `json:"outcome"`
+	Content             string   `json:"content,omitempty"`
+	Reason              string   `json:"reason,omitempty"`
+	SessionID           string   `json:"sessionId,omitempty"`
+	InputTokens         *int64   `json:"inputTokens,omitempty"`
+	OutputTokens        *int64   `json:"outputTokens,omitempty"`
+	ToolCalls           *int64   `json:"toolCalls,omitempty"`
+	CacheReadTokens     *int64   `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens *int64   `json:"cacheCreationTokens,omitempty"`
+	CostUSD             *float64 `json:"costUsd,omitempty"`
+	UsageProvenance     string   `json:"usageProvenance,omitempty"`
+	Paths               []string `json:"paths,omitempty"`
+	Truncated           bool     `json:"truncated,omitempty"`
+	Applied             bool     `json:"applied,omitempty"`
 }
 
 // TreeUsage is charged at the root as work is reserved or completed.
@@ -151,11 +199,40 @@ type NodeRecord struct {
 // Store is a run's ledger directory: <root>/<runId>/.
 type Store struct {
 	Dir string
+
+	// invalid is set by Open when runID fails containment validation, so
+	// every read/write on this Store fails closed instead of resolving a
+	// path outside root. runID is frequently a CLI positional argument, so
+	// this is the one place that guards every caller at once.
+	invalid error
 }
 
-// Open returns the Store for runID under root. It does not touch disk.
+// Open returns the Store for runID under root. It does not touch disk. A
+// runID containing a path separator, or equal to "." or "..", makes every
+// subsequent read/write on the returned Store return an error instead of
+// resolving outside root.
 func Open(root, runID string) *Store {
-	return &Store{Dir: filepath.Join(root, runID)}
+	dir := filepath.Join(root, runID)
+	s := &Store{Dir: dir}
+	if runID == "" || runID == "." || runID == ".." || strings.ContainsAny(runID, "/\\") {
+		s.invalid = fmt.Errorf("ledger: invalid run id %q", runID)
+	}
+	return s
+}
+
+// check fails closed for an invalid runID (see Open) or for a run directory
+// that already exists as a symlink: MkdirAll treats an existing symlink to a
+// directory as success, so without this check a symlink planted at
+// <root>/<runID> before the run is created would make every read and write
+// silently follow it outside root.
+func (s *Store) check() error {
+	if s.invalid != nil {
+		return s.invalid
+	}
+	if fi, err := os.Lstat(s.Dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("ledger: refusing to use symlinked run directory %q", s.Dir)
+	}
+	return nil
 }
 
 func (s *Store) runPath() string { return filepath.Join(s.Dir, RunFileName) }
@@ -163,7 +240,10 @@ func (s *Store) runPath() string { return filepath.Join(s.Dir, RunFileName) }
 // WithRunLock serializes read-modify-write operations on one run across
 // processes. Individual file writes remain atomic under their own locks.
 func (s *Store) WithRunLock(fn func() error) error {
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+	if err := s.check(); err != nil {
+		return err
+	}
+	if err := safeMkdirAll(s.Dir); err != nil {
 		return err
 	}
 	l, err := filelock.Acquire(filepath.Join(s.Dir, "run.update.lock"))
@@ -175,6 +255,9 @@ func (s *Store) WithRunLock(fn func() error) error {
 }
 
 func (s *Store) nodePath(nodeID string) (string, error) {
+	if err := s.check(); err != nil {
+		return "", err
+	}
 	if nodeID == "" || strings.ContainsAny(nodeID, "/\\") {
 		return "", fmt.Errorf("ledger: invalid node id %q", nodeID)
 	}
@@ -185,6 +268,9 @@ func (s *Store) nodePath(nodeID string) (string, error) {
 // "docs/design.md") within the run's artifacts directory, rejecting any
 // path that would escape it.
 func (s *Store) artifactPath(artifact string) (string, error) {
+	if err := s.check(); err != nil {
+		return "", err
+	}
 	if artifact == "" {
 		return "", errors.New("ledger: artifact name must not be empty")
 	}
@@ -226,6 +312,9 @@ func NewRun(store *Store, runID, workflow, graphSHA256 string, st engine.State, 
 
 // WriteRun atomically writes r to run.json.
 func (s *Store) WriteRun(r Run) error {
+	if err := s.check(); err != nil {
+		return err
+	}
 	if err := writeAtomicJSON(s.runPath(), r); err != nil {
 		return err
 	}
@@ -278,8 +367,11 @@ func (s *Store) WriteRun(r Run) error {
 }
 
 func (s *Store) AppendEvent(e Event) error {
+	if err := s.check(); err != nil {
+		return err
+	}
 	path := filepath.Join(s.Dir, "events.jsonl")
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+	if err := safeMkdirAll(s.Dir); err != nil {
 		return err
 	}
 	lock, err := filelock.Acquire(path + ".lock")
@@ -302,6 +394,9 @@ func (s *Store) AppendEvent(e Event) error {
 }
 
 func (s *Store) ReadEvents() ([]Event, error) {
+	if err := s.check(); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(s.Dir, "events.jsonl")
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -338,6 +433,9 @@ func (s *Store) UpdateState(st engine.State, now time.Time) (Run, error) {
 
 // ReadRun reads run.json.
 func (s *Store) ReadRun() (Run, error) {
+	if err := s.check(); err != nil {
+		return Run{}, err
+	}
 	var r Run
 	err := readJSON(s.runPath(), &r)
 	return r, err
@@ -387,6 +485,9 @@ func (s *Store) AppendAttempt(nodeID string, att AttemptRecord) error {
 // ReadAllNodes returns every node record in the run's ledger, sorted by
 // node id. A run with no nodes directory yet returns none, not an error.
 func (s *Store) ReadAllNodes() (map[string]NodeRecord, error) {
+	if err := s.check(); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(filepath.Join(s.Dir, nodesDir))
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]NodeRecord{}, nil
@@ -412,6 +513,24 @@ func (s *Store) ReadAllNodes() (map[string]NodeRecord, error) {
 	return out, nil
 }
 
+// safeMkdirAll is os.MkdirAll guarded against a pre-existing symlink at dir:
+// MkdirAll silently succeeds if dir already resolves to a directory through
+// a symlink, which would make every subsequent write follow that symlink
+// outside root. Lstat sees the link itself, not its target.
+func safeMkdirAll(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("ledger: refusing to use symlinked directory %q", dir)
+	}
+	return nil
+}
+
 // writeAtomicJSON marshals v and writes it to path under an exclusive lock
 // on path+".lock", via a same-directory temp file and rename.
 func writeAtomicJSON(path string, v any) error {
@@ -426,7 +545,7 @@ func writeAtomicJSON(path string, v any) error {
 // writeAtomicBytes writes data to path under an exclusive lock on
 // path+".lock", via a same-directory temp file and rename.
 func writeAtomicBytes(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := safeMkdirAll(filepath.Dir(path)); err != nil {
 		return err
 	}
 	l, err := filelock.Acquire(path + ".lock")

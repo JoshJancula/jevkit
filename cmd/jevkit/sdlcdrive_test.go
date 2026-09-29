@@ -17,6 +17,7 @@ import (
 )
 
 type fakeSDLCExecutor struct {
+	mu       sync.Mutex
 	replies  []worker.Reply
 	requests []worker.Request
 	failures map[string]bool
@@ -42,12 +43,27 @@ func TestSDLCStartAndDriveHelpExplainHandoff(t *testing.T) {
 }
 
 func (f *fakeSDLCExecutor) Execute(_ context.Context, req worker.Request) (worker.Reply, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.requests = append(f.requests, req)
 	if f.failures[req.Agent.ID] {
 		return worker.Reply{}, &worker.InvocationFailure{Err: fmt.Errorf("cannot launch %s", req.Agent.ID)}
 	}
 	r := f.replies[0]
 	f.replies = f.replies[1:]
+	if r.Outcome == "planned" {
+		// Test doubles often supply only plan markdown; production planners must
+		// return the structured handoff fields themselves.
+		if len(r.NextSteps) == 0 {
+			r.NextSteps = []string{"implement the plan"}
+		}
+		if len(r.AcceptanceCriteria) == 0 {
+			r.AcceptanceCriteria = []string{"acceptance covered"}
+		}
+		if r.Checks == nil {
+			r.Checks = []adaptive.Check{}
+		}
+	}
 	return r, nil
 }
 
@@ -422,6 +438,15 @@ func TestSDLCConcurrentAssessmentsDoNotOverwriteEachOther(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := adaptive.ApplyVerificationResult(&st, adaptive.VerificationRecord{
+		Status: adaptive.VerificationStatusPassed, AllPassed: true,
+		CandidateFingerprint: "diff",
+		Receipts: []adaptive.CheckReceipt{{
+			CheckID: "ok", Passed: true, CandidateFingerprint: "diff", WorktreeIdentity: "wt",
+		}},
+	}, a.now()); err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{"a", "b"} {
 		if err := st.Assign(adaptive.Assignment{InvocationID: id, AgentID: id, Binding: id, Role: "assessor", Revision: "diff"}); err != nil {
 			t.Fatal(err)
@@ -453,5 +478,58 @@ func TestSDLCConcurrentAssessmentsDoNotOverwriteEachOther(t *testing.T) {
 	}
 	if run.Adaptive.Stage != adaptive.Done || len(run.Adaptive.Assessments) != 2 {
 		t.Fatalf("lost assessment: %+v", run.Adaptive)
+	}
+}
+
+func TestDrivePersistsPlannerContractArtifacts(t *testing.T) {
+	a := newApp(t)
+	fakeSDLCReach(a)
+	writeFile(t, a.sdlcRosterPath(), `version: 1
+agents:
+  - {id: planner, roles: [planner], rubric: Plan., via: runtime, runtime: codex, model: p}
+  - {id: builder, roles: [implementer], rubric: Build., via: runtime, runtime: codex, model: b}
+  - {id: reviewer, roles: [assessor], rubric: Review., via: runtime, runtime: cursor, model: r}
+`)
+	f := &fakeSDLCExecutor{replies: []worker.Reply{
+		{
+			Outcome:            "planned",
+			Content:            "# Plan\nShip the feature.\n",
+			NextSteps:          []string{"add endpoint", "add test"},
+			AcceptanceCriteria: []string{"go test ./... passes"},
+			Checks:             []adaptive.Check{{ID: "unit", Argv: []string{"go", "test", "./..."}}},
+			Subtasks: &adaptive.SubtaskGraph{
+				IndependenceReason: "cycle would be rejected",
+				IntegrationOwner:   "integrator",
+				Subtasks: []adaptive.Subtask{
+					{ID: "a", Objective: "A", ExpectedOutput: "a", OwnedPaths: []string{"a/"}, MergeOrder: 1, AcceptanceCriteria: []string{"ok"}, DependsOn: []string{"b"}},
+					{ID: "b", Objective: "B", ExpectedOutput: "b", OwnedPaths: []string{"b/"}, MergeOrder: 2, AcceptanceCriteria: []string{"ok"}, DependsOn: []string{"a"}},
+				},
+			},
+		},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+line\n"},
+		{Outcome: "approved"},
+	}}
+	a.SdlcExecutor = f
+	code, out, errs := run(a, "", "sdlc", "start", "feature", "--task", "add line", "--auto")
+	if code != exitOK {
+		t.Fatalf("start: %d %s %s", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	code, _, errs = run(a, "", "sdlc", "drive", id, "--until-done")
+	if code != exitOK {
+		t.Fatalf("drive: %d %s", code, errs)
+	}
+	store := ledger.Open(a.sdlcRunsDir(), id)
+	plan, err := store.ReadArtifact(adaptive.ArtifactPlan)
+	if err != nil || !strings.Contains(string(plan), "Ship the feature") {
+		t.Fatalf("plan.md: %s %v", plan, err)
+	}
+	checks, err := store.ReadArtifact(adaptive.ArtifactChecks)
+	if err != nil || !strings.Contains(string(checks), `"id": "unit"`) {
+		t.Fatalf("checks.json: %s %v", checks, err)
+	}
+	subtasks, err := store.ReadArtifact(adaptive.ArtifactSubtasks)
+	if err != nil || !strings.Contains(string(subtasks), `"mode": "single"`) || !strings.Contains(string(subtasks), "cycles") {
+		t.Fatalf("invalid graph should fall back to single: %s %v", subtasks, err)
 	}
 }

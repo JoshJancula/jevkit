@@ -80,6 +80,90 @@ func (a *App) sdlcTree(root string) ([]ledger.Run, error) {
 	return out, nil
 }
 
+// sdlcTreeWatcher incrementally maintains the run tree rooted at a run ID
+// across repeated refreshes (`sdlc watch`'s once-a-second redraw, `sdlc logs
+// --follow`'s 250ms poll). A bare sdlcTree call re-lists every run directory
+// under sdlcRunsDir() and re-opens+parses every run.json it finds, even
+// those far outside this tree — cost that scales with the total number of
+// runs ever created in this state dir, not with this tree's size, and pays
+// that cost on every single tick. Since a run's ParentRunID never changes
+// after creation, a run already known not to belong to this tree can never
+// join it later, so its run.json need not be re-read on subsequent ticks;
+// only directories new since the last refresh (which might be a new child)
+// and runs already confirmed to be members (whose mutable fields, like
+// Adaptive.Stage, do need to stay live) are re-read.
+type sdlcTreeWatcher struct {
+	root   string
+	known  map[string]ledger.Run
+	parent map[string]string
+	member map[string]bool
+}
+
+func newSdlcTreeWatcher(root string) *sdlcTreeWatcher {
+	return &sdlcTreeWatcher{root: root, known: map[string]ledger.Run{}, parent: map[string]string{}, member: map[string]bool{}}
+}
+
+func (w *sdlcTreeWatcher) refresh(a *App) ([]ledger.Run, error) {
+	if !sdlcRunIDRE.MatchString(w.root) {
+		return nil, usagef("invalid run ID")
+	}
+	entries, err := os.ReadDir(a.sdlcRunsDir())
+	if err != nil {
+		return nil, err
+	}
+	current := map[string]bool{}
+	for _, e := range entries {
+		if e.IsDir() && sdlcRunIDRE.MatchString(e.Name()) {
+			current[e.Name()] = true
+		}
+	}
+	// A run gone from the listing (pruned) must disappear immediately, the
+	// same as a fresh sdlcTree call would show; a stale cached member could
+	// otherwise linger in the tree walk below.
+	for name := range w.parent {
+		if !current[name] {
+			delete(w.parent, name)
+			delete(w.known, name)
+			delete(w.member, name)
+		}
+	}
+	for name := range current {
+		_, seen := w.parent[name]
+		if seen && !w.member[name] {
+			continue
+		}
+		r, err := ledger.Open(a.sdlcRunsDir(), name).ReadRun()
+		if err != nil {
+			continue
+		}
+		w.known[name] = r
+		w.parent[name] = r.ParentRunID
+	}
+	if _, ok := w.known[w.root]; !ok {
+		return nil, fmt.Errorf("run %s not found", w.root)
+	}
+	children := map[string][]string{}
+	for id, p := range w.parent {
+		children[p] = append(children[p], id)
+	}
+	for id := range w.member {
+		delete(w.member, id)
+	}
+	var out []ledger.Run
+	var visit func(string)
+	visit = func(id string) {
+		w.member[id] = true
+		out = append(out, w.known[id])
+		kids := append([]string(nil), children[id]...)
+		sort.Strings(kids)
+		for _, kid := range kids {
+			visit(kid)
+		}
+	}
+	visit(w.root)
+	return out, nil
+}
+
 func (a *App) sdlcLogs(ctx context.Context, root string, f logFilters) error {
 	if f.stream != "" && f.stream != "stdout" && f.stream != "stderr" && f.stream != "decisions" {
 		return usagef("--stream must be stdout, stderr or decisions")
@@ -95,13 +179,20 @@ func (a *App) sdlcLogs(ctx context.Context, root string, f logFilters) error {
 			return failf("load redaction: %v", err)
 		}
 		redactor = func(s string) (string, error) { v, err := r.Apply(s); return v.Text, err }
+		if a.Stderr != nil {
+			a.errf("Pattern redaction is best-effort and does not guarantee a secret-free log; use --raw to see saved output unredacted.\n")
+		}
+	}
+	if a.Stderr != nil {
+		a.errf("This shows only what jevkit saved locally; any session history the agent runtime itself keeps (e.g. a Claude/Codex session store) is separate and not covered here.\n")
 	}
 	seen := map[string]string{}
 	lineSeen := map[string]int64{}
 	decisionSeen := map[string]int{}
+	tree := newSdlcTreeWatcher(root)
 	for {
 		var combined []displayedLogLine
-		runs, err := a.sdlcTree(root)
+		runs, err := tree.refresh(a)
 		if err != nil {
 			return failf("%v", err)
 		}
@@ -216,13 +307,15 @@ func (a *App) sdlcLogs(ctx context.Context, root string, f logFilters) error {
 					key := path
 					current := string(data)
 					if redactor != nil {
-						const marker = "[earlier output truncated]\n"
-						if strings.HasPrefix(current, marker) {
-							tail := current[len(marker):]
-							if end := strings.IndexByte(tail, '\n'); end >= 0 {
-								current = marker + tail[end+1:]
-							} else {
-								current = marker
+						if strings.HasPrefix(current, worker.TruncationMarkerPrefix) {
+							if nl := strings.IndexByte(current, '\n'); nl >= 0 {
+								marker := current[:nl+1]
+								tail := current[nl+1:]
+								if end := strings.IndexByte(tail, '\n'); end >= 0 {
+									current = marker + tail[end+1:]
+								} else {
+									current = marker
+								}
 							}
 						}
 						if f.follow {

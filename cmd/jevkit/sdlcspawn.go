@@ -143,7 +143,7 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 		return failf("read child run: %v", err)
 	}
 	var driveErr error
-	if child.Adaptive != nil && (child.Adaptive.Role() != "" || child.Adaptive.Stage == "question" || child.Adaptive.Stage == "spawn") {
+	if child.Adaptive != nil && (child.Adaptive.Role() != "" || child.Adaptive.Stage == "question" || child.Adaptive.Stage == "spawn" || child.Adaptive.Stage == adaptive.Verifying) {
 		stepCtx, cancel := context.WithTimeout(ctx, remaining)
 		driveErr = a.sdlcDrive(stepCtx, childID)
 		cancel()
@@ -192,7 +192,7 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 		if child.StageFlow != nil {
 			parent.StageFlow.Steps += child.StageFlow.Steps
 		}
-		for _, name := range []string{"plan.md", "patch.diff"} {
+		for _, name := range []string{"plan.md", "patch.diff", adaptive.ArtifactChecks, adaptive.ArtifactSubtasks, adaptive.ArtifactVerification} {
 			if data, err := childStore.ReadArtifact(name); err == nil {
 				if err := store.WriteArtifact(name, data); err != nil {
 					return failf("copy child artifact %s: %v", name, err)
@@ -202,8 +202,21 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 		if child.Adaptive.PlanRevision != "" {
 			parent.Adaptive.PlanRevision = child.Adaptive.PlanRevision
 		}
+		if child.Adaptive.ChecksRevision != "" {
+			parent.Adaptive.ChecksRevision = child.Adaptive.ChecksRevision
+		}
+		if child.Adaptive.SubtasksRevision != "" {
+			parent.Adaptive.SubtasksRevision = child.Adaptive.SubtasksRevision
+		}
 		if child.Adaptive.DiffRevision != "" {
 			parent.Adaptive.DiffRevision = child.Adaptive.DiffRevision
+		}
+		if len(child.Adaptive.CheckReceipts) > 0 {
+			parent.Adaptive.CheckReceipts = append([]adaptive.CheckReceipt(nil), child.Adaptive.CheckReceipts...)
+		}
+		if child.Verification != nil {
+			rec := *child.Verification
+			parent.Verification = &rec
 		}
 		if err := parent.StageFlow.Advance(outcome, parent.Adaptive); err != nil {
 			return failf("advance workflow stage: %v", err)
@@ -312,7 +325,7 @@ func (a *App) createSpawnChild(parent ledger.Run, name, objective, childID strin
 		task += "\n\nSubworkflow objective: " + objective
 	}
 	now := a.now().UTC().Format(time.RFC3339)
-	child := ledger.Run{RunID: childID, WorkDir: parent.WorkDir, AllowRead: append([]string(nil), parent.AllowRead...), ParentRunID: parent.RunID, Depth: parent.Depth + 1, Workflow: target.Name, Task: task, CreatedAt: now, UpdatedAt: now, Adaptive: &st, StageFlow: flow, RequirePlanApproval: parent.RequirePlanApproval}
+	child := ledger.Run{RunID: childID, WorkDir: parent.WorkDir, AllowRead: append([]string(nil), parent.AllowRead...), ParentRunID: parent.RunID, Depth: parent.Depth + 1, Workflow: target.Name, Task: task, CreatedAt: now, UpdatedAt: now, Adaptive: &st, StageFlow: flow, RequirePlanApproval: parent.RequirePlanApproval, DelegateBuiltins: parent.DelegateBuiltins, SessionStrategy: parent.SessionStrategy, RuntimeIntegration: parent.RuntimeIntegration}
 	if !target.Builtin {
 		raw, err := os.ReadFile(target.Path)
 		if err != nil {

@@ -3,6 +3,7 @@ package security
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 )
 
 const QuestionSetID = "security.command-risk"
+
+var reviewCommand = regexp.MustCompile(`(^|[[:space:];&|])([^[:space:];&|]*/)?jevkit[[:space:]]+security[[:space:]]+review[^[:space:];&|]*`)
 
 type Request struct {
 	Command, Cwd, Workspace, Runtime string
@@ -31,7 +34,13 @@ func Evaluate(ctx context.Context, cfg *config.Config, req Request, decider *reg
 	if cfg == nil {
 		return Decision{}, fmt.Errorf("security config is nil")
 	}
+	if reviewCommand.MatchString(req.Command) {
+		return Decision{Deny: true, Reason: "killswitch: jevkit security review*"}, nil
+	}
 	if pattern, ok := cfg.Killswitch.Match(req.Command); ok {
+		if strings.HasPrefix(pattern, "jevkit security review") {
+			return Decision{Deny: true, Reason: "killswitch: " + pattern}, nil
+		}
 		return verdict(cfg, "killswitch: "+pattern, req.Runtime), nil
 	}
 	if !cfg.Yolo && req.Workspace != "" {
@@ -102,7 +111,13 @@ func CheckLocal(cfg *config.Config, req Request) Decision {
 	if cfg == nil {
 		return Decision{}
 	}
+	if reviewCommand.MatchString(req.Command) {
+		return Decision{Deny: true, Reason: "killswitch: jevkit security review*"}
+	}
 	if pattern, ok := cfg.Killswitch.Match(req.Command); ok {
+		if strings.HasPrefix(pattern, "jevkit security review") {
+			return Decision{Deny: true, Reason: "killswitch: " + pattern}
+		}
 		return verdict(cfg, "killswitch: "+pattern, req.Runtime)
 	}
 	if cfg.Yolo || strings.TrimSpace(req.Workspace) == "" {

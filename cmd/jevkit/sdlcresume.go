@@ -11,19 +11,22 @@ import (
 
 	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/security/review"
 )
 
 func (a *App) sdlcResumeCmd() *cobra.Command {
-	var step, silent, retryFailed, approvePlan bool
-	var sessionStrategy string
+	var step, silent, retryFailed, approvePlan, authorizeChecks bool
+	var authorizeChecksDigest, sessionStrategy, guidance string
 	c := &cobra.Command{
 		Use:   "resume <run-id>",
 		Short: "approve a plan or continue an active run by ID",
 		Long: `Resume continues an active run until it finishes or pauses. In a
 terminal, a pending plan is displayed for approval or a change request. For
-redirected runs, review the saved plan.md and use --approve-plan to approve
-that exact revision and continue. Use --step
-to execute just the next question or agent action and inspect the result.
+redirected runs, review the saved plan.md, checks.json, and subtasks.json and
+use --approve-plan to approve those exact digests and continue. Under --auto,
+planner-proposed commands still require --authorize-checks (or an exact digest);
+--auto alone is not permission. Use --step to execute just the next question or
+agent action and inspect the result.
 
 Run starts a new task; run --step leaves an active run ID for resume. A host
 integration can also leave an active run. A pending specialist decision from
@@ -31,11 +34,24 @@ an older run or required specialist policy can be retried after changing the
 policy or enrolling the missing expert. An older pending delegation decision
 can also be retried.
 Runs paused by hard limits cannot continue.`,
-		Example: "  jevkit sdlc resume RUN_ID --approve-plan\n  jevkit sdlc resume RUN_ID --step",
+		Example: "  jevkit sdlc resume RUN_ID --approve-plan\n  jevkit sdlc resume RUN_ID --authorize-checks\n  jevkit sdlc resume RUN_ID --guidance \"the vet failure is pre-existing; only fix the new tests\"\n  jevkit sdlc resume RUN_ID --step",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if approvePlan && retryFailed {
 				return usagef("--approve-plan and --retry-failed cannot be combined")
+			}
+			if authorizeChecks && retryFailed {
+				return usagef("--authorize-checks and --retry-failed cannot be combined")
+			}
+			if strings.TrimSpace(guidance) != "" {
+				if err := a.sdlcSetOperatorGuidance(args[0], guidance); err != nil {
+					return err
+				}
+				// Guidance on a failure pause is an instruction to try again.
+				if run, err := ledger.Open(a.sdlcRunsDir(), args[0]).ReadRun(); err == nil && run.Adaptive != nil &&
+					run.Adaptive.Stage == adaptive.Paused && pauseRetryable(run.Adaptive.Outcome) && !approvePlan && !authorizeChecks && authorizeChecksDigest == "" {
+					retryFailed = true
+				}
 			}
 			if sessionStrategy != "" {
 				if err := validateSessionStrategy(sessionStrategy); err != nil {
@@ -47,29 +63,38 @@ Runs paused by hard limits cannot continue.`,
 			}
 			if !silent {
 				if a.sdlcInteractive() {
+					driveCtx, cancel := context.WithCancel(cmd.Context())
+					defer cancel()
 					if approvePlan {
 						if err := a.sdlcApprovePlan(args[0]); err != nil {
 							return err
 						}
 						approvePlan = false
 					}
+					if authorizeChecks || authorizeChecksDigest != "" {
+						if err := a.sdlcAuthorizeChecks(args[0], authorizeChecksDigest); err != nil {
+							return err
+						}
+						authorizeChecks = false
+						authorizeChecksDigest = ""
+					}
 					drive := func() error {
 						worker := a.sdlcDashboardWorker()
-						return worker.sdlcResume(cmd.Context(), args[0], step, retryFailed, approvePlan)
+						return worker.sdlcResume(driveCtx, args[0], step, retryFailed, approvePlan, false, "")
 					}
 					if !step {
-						return a.sdlcInteractiveDrive(cmd.Context(), args[0], drive, false)
+						return a.sdlcInteractiveDrive(driveCtx, args[0], drive, false)
 					}
 					if targetID, _, err := a.sdlcApprovalTarget(args[0]); err != nil {
 						return err
 					} else if targetID != "" {
-						return a.sdlcInteractiveDrive(cmd.Context(), args[0], drive, true)
+						return a.sdlcInteractiveDrive(driveCtx, args[0], drive, true)
 					}
-					return a.sdlcWatchDrive(cmd.Context(), args[0], drive, func(strategy string) error {
-						return a.sdlcDashboardRetry(cmd.Context(), args[0], strategy)
+					return a.sdlcWatchDrive(driveCtx, args[0], drive, func(strategy string) error {
+						return a.sdlcDashboardRetry(driveCtx, args[0], strategy)
 					})
 				}
-				err := a.sdlcResume(cmd.Context(), args[0], step, retryFailed, approvePlan)
+				err := a.sdlcResume(cmd.Context(), args[0], step, retryFailed, approvePlan, authorizeChecks, authorizeChecksDigest)
 				a.sdlcFinalSummary(a.Stdout, args[0], err)
 				return err
 			}
@@ -80,7 +105,7 @@ Runs paused by hard limits cannot continue.`,
 			if initial, err := ledger.Open(a.sdlcRunsDir(), args[0]).ReadRun(); err == nil && initial.Adaptive != nil {
 				completed = initial.Adaptive.Stage
 			}
-			err := a.sdlcResume(cmd.Context(), args[0], step, retryFailed, approvePlan)
+			err := a.sdlcResume(cmd.Context(), args[0], step, retryFailed, approvePlan, authorizeChecks, authorizeChecksDigest)
 			a.sdlcSilentStatus(out, args[0], step, completed)
 			return err
 		},
@@ -88,14 +113,20 @@ Runs paused by hard limits cannot continue.`,
 	c.Flags().BoolVar(&step, "step", false, "execute one question or agent action, then stop")
 	c.Flags().BoolVar(&silent, "silent", false, "show only final status")
 	c.Flags().BoolVar(&retryFailed, "retry-failed", false, "retry failed agent bindings after fixing their invocation error")
-	c.Flags().BoolVar(&approvePlan, "approve-plan", false, "approve the saved plan.md revision and continue the run")
+	c.Flags().BoolVar(&approvePlan, "approve-plan", false, "approve the saved plan.md, checks.json, and subtasks.json digests and continue the run")
+	c.Flags().BoolVar(&authorizeChecks, "authorize-checks", false, "authorize the current checks.json digest for this run; --auto alone is not permission")
+	c.Flags().StringVar(&authorizeChecksDigest, "authorize-checks-digest", "", "exact checks.json digest allowance for this run")
 	c.Flags().StringVar(&sessionStrategy, "session-strategy", "", "persist session policy: auto, fresh, resume or compact")
+	c.Flags().StringVar(&guidance, "guidance", "", "tell the next agent how to proceed; on a failure pause this also retries")
 	return c
 }
 
-func (a *App) sdlcResume(ctx context.Context, runID string, step, retryFailed, approvePlan bool) error {
+func (a *App) sdlcResume(ctx context.Context, runID string, step, retryFailed, approvePlan bool, authorizeChecks bool, authorizeChecksDigest string) error {
 	if !sdlcRunIDRE.MatchString(runID) {
 		return usagef("invalid run ID")
+	}
+	if rec, ok := review.PendingRun(a.stateHome(), runID); ok {
+		return failf("run %s awaits prompt-injection review %s; use jevkit security review %s", runID, rec.ID, rec.ID)
 	}
 	if approvePlan {
 		if retryFailed {
@@ -105,12 +136,32 @@ func (a *App) sdlcResume(ctx context.Context, runID string, step, retryFailed, a
 			return err
 		}
 	}
+	if authorizeChecks || authorizeChecksDigest != "" {
+		if retryFailed {
+			return usagef("--authorize-checks and --retry-failed cannot be combined")
+		}
+		if err := a.sdlcAuthorizeChecks(runID, authorizeChecksDigest); err != nil {
+			return err
+		}
+	}
 	run, err := ledger.Open(a.sdlcRunsDir(), runID).ReadRun()
 	if err != nil {
 		return failf("read run: %v", err)
 	}
 	if run.Adaptive == nil {
 		return failf("run %s has an unsupported run format", runID)
+	}
+	if run.Adaptive.Stage == adaptive.Paused && run.Adaptive.Outcome == "injection-review-required" {
+		if run.Adaptive.PendingPhase == "" {
+			return failf("run %s cannot resume: missing prior stage", runID)
+		}
+		run.Adaptive.Stage = run.Adaptive.PendingPhase
+		run.Adaptive.PendingPhase = ""
+		run.Adaptive.Outcome = ""
+		run.Adaptive.PendingReason = ""
+		if err := ledger.Open(a.sdlcRunsDir(), runID).WriteRun(run); err != nil {
+			return err
+		}
 	}
 	if run.WorkDir != "" {
 		old := a.WorkDir
@@ -131,12 +182,25 @@ func (a *App) sdlcResume(ctx context.Context, runID string, step, retryFailed, a
 	defer func() { a.sdlcSuppressLegacy = false }()
 	if run.Adaptive.Stage == adaptive.Paused {
 		if run.Adaptive.Outcome == "plan-approval-required" && !approvePlan {
-			return failf("run %s is awaiting plan approval; review plan.md, then use jevkit sdlc resume %s --approve-plan", runID, runID)
+			return failf("run %s is awaiting plan approval; review plan.md, checks.json, and subtasks.json, then use jevkit sdlc resume %s --approve-plan", runID, runID)
 		}
 		if run.Adaptive.Outcome == "child-plan-approval-required" && !approvePlan {
 			return failf("run %s is awaiting a child plan approval; review the child plan, then use jevkit sdlc resume %s --approve-plan", runID, runID)
 		}
-		if retryFailed {
+		if run.Adaptive.Outcome == "command-authorization-required" && !authorizeChecks && authorizeChecksDigest == "" {
+			return failf("run %s is awaiting command authorization; review checks.json, then use jevkit sdlc resume %s --authorize-checks", runID, runID)
+		}
+		if retryFailed && run.Adaptive.Outcome == adaptive.OutcomeVerificationEnvironment {
+			// The candidate is unchanged; re-run the supervisor checks without
+			// spending an implementer revision.
+			store := ledger.Open(a.sdlcRunsDir(), runID)
+			run.Adaptive.Stage = adaptive.Verifying
+			run.Adaptive.Outcome, run.Adaptive.PendingReason = "", ""
+			if err := store.WriteRun(run); err != nil {
+				return err
+			}
+			_ = a.recordDecision(store, ledger.Decision{RunID: runID, Kind: "retry", Stage: adaptive.Verifying, Choice: "retry verification", Next: "re-run authorized checks"})
+		} else if retryFailed {
 			pauseOutcome := run.Adaptive.Outcome
 			role := failedPauseRole(run.Adaptive.Outcome)
 			if run.Adaptive.Outcome == "review-workspace-drift" || run.Adaptive.Outcome == "review-recovery-invalid" {
@@ -273,5 +337,57 @@ func (a *App) sdlcDashboardRetry(ctx context.Context, runID, strategy string) er
 		return err
 	}
 	worker := a.sdlcDashboardWorker()
-	return worker.sdlcResume(ctx, runID, false, run.Adaptive != nil && (failedPauseRole(run.Adaptive.Outcome) != "" || run.Adaptive.Outcome == "review-workspace-drift" || run.Adaptive.Outcome == "review-recovery-invalid"), false)
+	return worker.sdlcResume(ctx, runID, false, run.Adaptive != nil && pauseRetryable(run.Adaptive.Outcome), false, false, "")
+}
+
+// pauseRetryable reports whether resume --retry-failed can continue a run
+// paused with this outcome.
+func pauseRetryable(outcome string) bool {
+	switch outcome {
+	case "review-workspace-drift", "review-recovery-invalid", adaptive.OutcomeVerificationEnvironment:
+		return true
+	}
+	return failedPauseRole(outcome) != ""
+}
+
+// operatorGuidanceConsumed reports whether an invocation outcome means an agent
+// actually worked with the operator's guidance, so it should not be repeated.
+func operatorGuidanceConsumed(outcome string) bool {
+	switch outcome {
+	case "invocation-failed", "auth-failed", "handoff", "failed", "timed-out", "run-time-exhausted":
+		return false
+	}
+	return true
+}
+
+// sdlcSetOperatorGuidance stores guidance for the next agent on a run and
+// records it in the decision log.
+func (a *App) sdlcSetOperatorGuidance(runID, guidance string) error {
+	guidance = strings.TrimSpace(guidance)
+	if guidance == "" {
+		return nil
+	}
+	if !sdlcRunIDRE.MatchString(runID) {
+		return usagef("invalid run ID")
+	}
+	store := ledger.Open(a.sdlcRunsDir(), runID)
+	return store.WithRunLock(func() error {
+		run, err := store.ReadRun()
+		if err != nil {
+			return failf("read run: %v", err)
+		}
+		if run.Adaptive != nil && run.Adaptive.Stage == adaptive.Done {
+			return failf("run %s is already complete; start a new run instead", runID)
+		}
+		run.OperatorGuidance = guidance
+		if err := store.WriteRun(run); err != nil {
+			return err
+		}
+		stage := ""
+		if run.Adaptive != nil {
+			stage = run.Adaptive.Stage
+		}
+		return a.recordDecision(store, ledger.Decision{RunID: runID, Kind: "operator-guidance", Stage: stage,
+			Choice: "guidance recorded", Detail: guidance, Next: "include in the next agent prompt"})
+	})
 }

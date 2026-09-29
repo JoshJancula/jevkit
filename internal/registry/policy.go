@@ -51,6 +51,7 @@ type Decision struct {
 	CommandFamily      string                 `json:"commandFamily,omitempty"`
 	PolicyRuleID       string                 `json:"policyRuleId,omitempty"`
 	Runtime            string                 `json:"runtime,omitempty"`
+	ReviewID           string                 `json:"reviewId,omitempty"`
 	BytesBefore        int                    `json:"bytesBefore,omitempty"`
 	BytesAfter         int                    `json:"bytesAfter,omitempty"`
 	LinesBefore        int                    `json:"linesBefore,omitempty"`

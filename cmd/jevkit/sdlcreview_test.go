@@ -31,10 +31,22 @@ func startReviewRun(t *testing.T, a *App, executor *fakeSDLCExecutor) string {
 		t.Fatalf("start: %d %s", code, errText)
 	}
 	id := strings.Fields(out)[1]
-	for i := 0; i < 2; i++ {
+	// plan → implement → verify, leaving the run in assessing for the reviewer.
+	for i := 0; i < 4; i++ {
+		stored, err := ledger.Open(a.sdlcRunsDir(), id).ReadRun()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.Adaptive.Stage == adaptive.Assessing || stored.Adaptive.Stage == adaptive.Done || stored.Adaptive.Stage == adaptive.Paused {
+			break
+		}
 		if code, _, errors := run(a, "", "sdlc", "drive", id); code != exitOK {
 			t.Fatalf("drive %d: %d %s", i, code, errors)
 		}
+	}
+	stored, err := ledger.Open(a.sdlcRunsDir(), id).ReadRun()
+	if err != nil || stored.Adaptive.Stage != adaptive.Assessing {
+		t.Fatalf("startReviewRun want assessing, got %+v %v", stored.Adaptive, err)
 	}
 	return id
 }

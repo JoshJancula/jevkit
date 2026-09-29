@@ -46,6 +46,7 @@ type Antigravity struct {
 	Binary          string
 	Security        *config.Config
 	SecurityDecider *registry.Decider
+	StateDir        string
 }
 
 func init() {
@@ -76,6 +77,9 @@ func (a *Antigravity) Passthrough(event Event) []byte {
 }
 
 func (a *Antigravity) HandlePreTool(ctx context.Context, req Request) (Response, error) {
+	if response, ok := latched(a.StateDir, AntigravityName, req.Raw); ok {
+		return response, nil
+	}
 	var payload struct {
 		ToolCall struct {
 			Name string `json:"name"`
@@ -93,9 +97,10 @@ func (a *Antigravity) HandlePreTool(ctx context.Context, req Request) (Response,
 	if response, deny := securityDecision(ctx, a.Security, a.SecurityDecider, payload.ToolCall.Args.CommandLine, payload.WorkspacePaths[0], payload.WorkspacePaths[0], AntigravityName); deny {
 		return response, nil
 	}
+	key, _ := hookSession(req.Raw, AntigravityName)
 	body, err := json.Marshal(map[string]any{
 		"decision":  "allow",
-		"overwrite": map[string]string{"CommandLine": buildSecurityShellWrapperCommand(a.binary(), payload.WorkspacePaths[0], payload.ToolCall.Args.CommandLine, AntigravityName, a.Security != nil && a.Security.Yolo, securityPolicyName(a.Security))},
+		"overwrite": map[string]string{"CommandLine": buildSecurityShellWrapperCommand(a.binary(), payload.WorkspacePaths[0], payload.ToolCall.Args.CommandLine, AntigravityName, a.Security != nil && a.Security.Yolo, securityPolicyName(a.Security), a.Security != nil && a.Security.Injection.Mode != "off") + " --session " + shellQuote(key)},
 	})
 	if err != nil {
 		return Response{Body: a.Passthrough(EventPreTool)}, nil

@@ -1,0 +1,3 @@
+{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"readToolCall":{}}}
+{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"readToolCall":{}}}
+{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"readToolCall":{}}}

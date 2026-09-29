@@ -17,6 +17,7 @@ import (
 	"github.com/JoshJancula/jevkit/internal/redact/audit"
 	"github.com/JoshJancula/jevkit/internal/redact/config"
 	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
 
@@ -77,6 +78,9 @@ type App struct {
 	SdlcReach func() enrollment.Reach
 	// SdlcExecutor replaces CLI invocation in tests and host integrations.
 	SdlcExecutor worker.Executor
+	// WorktreeCreator creates isolated Git worktrees for fan-out subtasks.
+	// Nil uses worker.GitWorktreeCreator.
+	WorktreeCreator worker.WorktreeCreator
 	// SdlcSpecialistNeed replaces the specialist-need router in tests or hosts.
 	// Nil uses Jev's registered specialist question set.
 	SdlcSpecialistNeed func(context.Context, string, string, string) (bool, error)
@@ -86,6 +90,7 @@ type App struct {
 	Confirm            func(prompt string) (bool, error)
 	sdlcDelegateChoice *bool
 	sdlcSessionChoice  string
+	sdlcRuntimeChoice  *ledger.RuntimeIntegration
 	sdlcAutoChoice     bool
 	sdlcProgress       *sdlcProgress
 	sdlcSuppressLegacy bool
@@ -110,8 +115,15 @@ func (a *App) now() time.Time {
 	return time.Now()
 }
 
-func (a *App) auditPath() string  { return filepath.Join(a.StateDir, audit.FileName) }
-func (a *App) reviewPath() string { return filepath.Join(a.StateDir, audit.ReviewFileName) }
+// auditPath and reviewPath resolve through stateHome()+"jevkit" (the same
+// resolver breaker.New, usage.Path, and registry.DecisionsPath use) rather
+// than a.StateDir directly, so a JEVKIT_STATE_DIR override that doesn't
+// itself end in "jevkit" still lands these files next to every other
+// jevkit-owned state file instead of one directory up.
+func (a *App) auditPath() string { return filepath.Join(a.stateHome(), "jevkit", audit.FileName) }
+func (a *App) reviewPath() string {
+	return filepath.Join(a.stateHome(), "jevkit", audit.ReviewFileName)
+}
 
 func (a *App) userPath() string {
 	if a.ConfigDir == "" {

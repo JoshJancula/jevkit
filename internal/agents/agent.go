@@ -53,7 +53,8 @@ type Request struct {
 // Response is the adapter's answer. Body is written to stdout as JSON.
 // ExitCode is used only for a deliberate deny; fail-open paths always force 0.
 type Response struct {
-	Body []byte
+	Body    []byte
+	Outcome string
 	// Deny marks a deliberate policy denial (as opposed to a fail-open
 	// passthrough). When true and ExitCode is 0, the process still exits 0
 	// and the body carries the deny for agents that encode it in JSON.
@@ -82,7 +83,8 @@ type InstallOptions struct {
 	// Binary is the absolute path to the jevkit binary to register.
 	Binary string
 	// DryRun reports the planned edit without writing.
-	DryRun bool
+	DryRun         bool
+	InjectionGuard bool
 	// Preview receives each planned file edit (hooks and, when used by the
 	// installer, MCP configs). Called on dry-run and on write.
 	Preview func(FilePreview)

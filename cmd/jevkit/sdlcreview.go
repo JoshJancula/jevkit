@@ -27,13 +27,18 @@ func (a *App) saveReviewRecovery(store *ledger.Store, assignment adaptive.Assign
 			Runtime: assignment.Runtime, Model: model, Revision: assignment.Revision, Outcome: reply.Outcome,
 			Content: reply.Content, Reason: reply.Reason, Paths: reply.WorkspaceDrift,
 			Truncated: reply.DriftTruncated, SessionID: reply.SessionID,
-			InputTokens: reply.InputTokens, OutputTokens: reply.OutputTokens,
+			InputTokens: reply.InputTokens, OutputTokens: reply.OutputTokens, ToolCalls: reply.ToolCalls,
+			CacheReadTokens: reply.CacheReadTokens, CacheCreationTokens: reply.CacheCreationTokens,
+			UsageProvenance: reply.UsageProvenance,
 		}
 		if reply.CostReported || reply.CostUSD > 0 {
 			run.ReviewRecovery.CostUSD = &reply.CostUSD
 		}
 		if err := store.WriteRun(run); err != nil {
 			return err
+		}
+		if reply.Content != "" {
+			_ = store.WriteArtifact("last-assessment.md", []byte(reply.Content))
 		}
 		detail := fmt.Sprintf("%d observed paths; editor unknown", len(reply.WorkspaceDrift))
 		if len(reply.WorkspaceDrift) == 0 {
@@ -160,7 +165,9 @@ func (a *App) recoverReview(ctx context.Context, runID string) error {
 	}
 	reply := worker.Reply{Outcome: recovery.Outcome, Content: recovery.Content, Reason: recovery.Reason,
 		WorkspaceDrift: recovery.Paths, DriftTruncated: recovery.Truncated, SessionID: recovery.SessionID,
-		InputTokens: recovery.InputTokens, OutputTokens: recovery.OutputTokens}
+		InputTokens: recovery.InputTokens, OutputTokens: recovery.OutputTokens, ToolCalls: recovery.ToolCalls,
+		CacheReadTokens: recovery.CacheReadTokens, CacheCreationTokens: recovery.CacheCreationTokens,
+		UsageProvenance: recovery.UsageProvenance}
 	if recovery.CostUSD != nil {
 		reply.CostUSD, reply.CostReported = *recovery.CostUSD, true
 	}

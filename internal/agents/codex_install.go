@@ -24,12 +24,15 @@ func (c *Codex) Install(opts InstallOptions) error {
 	if binary == "" {
 		binary = c.binary()
 	}
+	if opts.InjectionGuard {
+		binary = "JEVKIT_INJECTION_GUARD=1 " + binary
+	}
 
 	existing, err := readFileOptional(path)
 	if err != nil {
 		return err
 	}
-	out, err := mergeCodexHooks(existing, binary)
+	out, err := mergeCodexHooksGuard(existing, binary, opts.InjectionGuard)
 	if err != nil {
 		return err
 	}
@@ -98,6 +101,10 @@ func codexHookCommand(binary, marker string) string {
 }
 
 func mergeCodexHooks(existing []byte, binary string) ([]byte, error) {
+	return mergeCodexHooksGuard(existing, binary, false)
+}
+
+func mergeCodexHooksGuard(existing []byte, binary string, guard bool) ([]byte, error) {
 	doc := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {
 		dec := json.NewDecoder(bytes.NewReader(existing))
@@ -118,9 +125,13 @@ func mergeCodexHooks(existing []byte, binary string) ([]byte, error) {
 	preCmd := codexHookCommand(binary, CodexPreToolMarker)
 	postCmd := codexHookCommand(binary, CodexPostToolMarker)
 
+	preMatchers := []string{codexBashMatcher, codexCommandMatcher}
+	if guard {
+		preMatchers = []string{"*"}
+	}
 	hooksObj["PreToolUse"] = upsertCodexMatcherHooks(
 		stripManagedCodexHooks(asSlice(hooksObj["PreToolUse"])),
-		[]string{codexBashMatcher, codexCommandMatcher}, preCmd,
+		preMatchers, preCmd,
 	)
 	hooksObj["PostToolUse"] = upsertCodexMatcherHooks(
 		stripManagedCodexHooks(asSlice(hooksObj["PostToolUse"])),

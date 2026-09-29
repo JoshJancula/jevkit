@@ -49,6 +49,9 @@ func boundDecision(s string) string {
 // AppendDecision serializes complete JSON lines. Callers supply already
 // redacted text; this layer also bounds every free text field.
 func (s *Store) AppendDecision(d Decision) error {
+	if err := s.check(); err != nil {
+		return err
+	}
 	if d.At == "" {
 		d.At = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -76,7 +79,7 @@ func (s *Store) AppendDecision(d Decision) error {
 		d.Rubrics[k] = boundDecision(v)
 	}
 	path := filepath.Join(s.Dir, "decisions.jsonl")
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+	if err := safeMkdirAll(s.Dir); err != nil {
 		return err
 	}
 	l, err := filelock.Acquire(path + ".lock")
@@ -98,6 +101,9 @@ func (s *Store) AppendDecision(d Decision) error {
 }
 
 func (s *Store) ReadDecisions() ([]Decision, error) {
+	if err := s.check(); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(filepath.Join(s.Dir, "decisions.jsonl"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil

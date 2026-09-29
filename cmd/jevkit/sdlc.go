@@ -22,8 +22,9 @@ import (
 func (a *App) sdlcCmd() *cobra.Command {
 	c := a.group("sdlc", "run work with enrolled agents and optional decision workflows",
 		a.sdlcValidateCmd(), a.sdlcExplainCmd(), a.sdlcListCmd(), a.sdlcCreateCmd(),
-		a.sdlcAgentsCmd(), a.sdlcDoctorCmd(), a.sdlcRunCmd(), a.sdlcResumeCmd(),
-		a.sdlcLogsCmd(), a.sdlcWatchCmd(), a.sdlcUsageCmd(),
+		a.sdlcAgentsCmd(), a.sdlcDoctorCmd(), a.sdlcIntegrationsCmd(), a.sdlcRunCmd(), a.sdlcResumeCmd(),
+		a.sdlcLogsCmd(), a.sdlcWatchCmd(), a.sdlcUsageCmd(), a.sdlcRunsCmd(), a.sdlcShowCmd(),
+		a.sdlcDeleteCmd(), a.sdlcPruneCmd(),
 		a.sdlcInitCmd(), a.sdlcStartCmd(), a.sdlcNextCmd(), a.sdlcReportCmd(), a.sdlcDriveCmd())
 	c.Long = `Run an SDLC task with enrolled agents.
 
@@ -36,7 +37,8 @@ Run starts a new task and waits for plan approval before implementation.
 Use run --auto for the previous autonomous flow. Resume continues by ID.
 Create writes an optional custom workflow file with authored questions and
 routes. Built-in task kinds need no workflow file. Agents discover is optional
-inventory; you can add your own agent directly.`
+inventory; you can add your own agent directly. Integrations configures
+optional Jevkit hooks and tool-output compaction for SDLC CLI agents.`
 	return c
 }
 
@@ -209,7 +211,7 @@ Several agents can share a role; Jev chooses among them using each rubric.`,
 			return nil
 		},
 	}
-	list.AddCommand(a.sdlcAgentsAddCmd(), a.sdlcAgentsDiscoverCmd(), a.sdlcAgentsEnrollCmd())
+	list.AddCommand(a.sdlcAgentsAddCmd(), a.sdlcAgentsDiscoverCmd(), a.sdlcAgentsEnrollCmd(), a.sdlcAgentsCapabilitiesCmd())
 	return list
 }
 

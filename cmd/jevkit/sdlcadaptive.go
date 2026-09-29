@@ -17,6 +17,8 @@ import (
 	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 	"github.com/JoshJancula/jevkit/internal/sdlc/route"
+	"github.com/JoshJancula/jevkit/internal/sdlc/stageflow"
+	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
 
 var sdlcRunIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -63,16 +65,15 @@ func (a *App) adaptiveCandidates(st adaptive.State, reach enrollment.Reach) ([]e
 		}
 	}
 	candidates = withoutFailedBindings
-	if st.Stage == adaptive.Specializing && st.Role() != "research" && len(candidates) > 1 {
+	if (st.Stage == adaptive.Assessing || st.Stage == adaptive.Specializing && st.Role() != "research") &&
+		st.LastImplementerBinding != "" {
 		independent := make([]enrollment.Candidate, 0, len(candidates))
 		for _, c := range candidates {
 			if c.Binding != st.LastImplementerBinding {
 				independent = append(independent, c)
 			}
 		}
-		if len(independent) > 0 {
-			candidates = independent
-		}
+		candidates = independent
 	}
 	if st.Stage == adaptive.Assessing || st.Stage == adaptive.Specializing && st.Role() != "research" {
 		used := map[string]bool{}
@@ -146,6 +147,11 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 	if run.Adaptive == nil {
 		return nil, failf("run %s has an unsupported run format", runID)
 	}
+	if run.StageFlow != nil {
+		if err := stageflow.MigrateSaved(run.StageFlow); err != nil {
+			return nil, failf("%v", err)
+		}
+	}
 	if run.StageFlow != nil && run.Adaptive.Stage == "question" {
 		return nil, failf("run %s is at question %s; use sdlc resume %s --step to ask Jev", runID, run.StageFlow.Current, runID)
 	}
@@ -153,10 +159,70 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 		return nil, failf("run %s is at workflow stage %s; use sdlc resume %s --step to run it", runID, run.StageFlow.Current, runID)
 	}
 	st := *run.Adaptive
+	// Approved fan-out graphs are owned by the supervisor scheduler/integrator.
+	// Host next must not assign a free implementer that bypasses them.
+	if st.Stage == adaptive.Implementing {
+		if _, _, ok, ferr := a.approvedFanoutGraph(run, store); ferr != nil {
+			return nil, failf("%v", ferr)
+		} else if ok {
+			return nil, failf("run %s has an approved fan-out graph; use sdlc drive/resume so the supervisor scheduler and integrator own subtask work", runID)
+		}
+	}
 	if paused, err := a.sdlcPlanApprovalGateLocked(run, store); err != nil {
 		return nil, err
 	} else if paused {
+		run, err = store.ReadRun()
+		if err != nil {
+			return nil, err
+		}
+		if run.Adaptive != nil && run.Adaptive.Outcome == "command-authorization-required" {
+			return nil, failf("run %s paused: authorize planner-proposed commands before continuing; use jevkit sdlc resume %s --authorize-checks", runID, runID)
+		}
 		return nil, failf("run %s paused: approve the saved plan before implementation", runID)
+	}
+	// Supervisor-owned verification after implementation, before assessor assignment.
+	if st.Stage == adaptive.Verifying {
+		ran, verr := a.sdlcEnsureVerification(ctx, store, &run)
+		if verr != nil {
+			return nil, verr
+		}
+		if ran {
+			fresh, rerr := store.ReadRun()
+			if rerr != nil {
+				return nil, failf("read run after verification: %v", rerr)
+			}
+			run = fresh
+			if run.Adaptive == nil {
+				return nil, failf("run %s lost adaptive state after verification", runID)
+			}
+			st = *run.Adaptive
+		} else if st.Stage == adaptive.Verifying {
+			// Already-valid receipts still advance verifying → assessing.
+			if err := adaptive.ApplyVerificationResult(&st, adaptive.VerificationRecord{
+				Status: adaptive.VerificationStatusPassed, AllPassed: true,
+				Receipts:             append([]adaptive.CheckReceipt(nil), st.CheckReceipts...),
+				CandidateFingerprint: st.DiffRevision,
+			}, a.now()); err != nil {
+				return nil, failf("apply cached verification: %v", err)
+			}
+			run.Adaptive = &st
+			run.UpdatedAt = a.now().UTC().Format("2006-01-02T15:04:05Z")
+			if err := store.WriteRun(run); err != nil {
+				return nil, failf("%v", err)
+			}
+			if err := a.sdlcAdvanceStageFlowAfterVerification(store, &run, &st); err != nil {
+				return nil, err
+			}
+			st = *run.Adaptive
+		}
+		// Keep verifying and assessing as distinct drive steps so assessors are
+		// assigned only after supervisor receipts exist for this candidate.
+		if st.Stage == adaptive.Assessing {
+			a.outf("run %s: verification passed for revision %s\n", runID, shortHex(st.DiffRevision))
+			return nil, nil
+		}
+		a.outf("run %s: %s after verification (%s)\n", runID, st.Stage, st.PendingReason)
+		return nil, nil
 	}
 	p, roster, err := a.sdlcEnrollment()
 	if err != nil {
@@ -211,7 +277,10 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 	if st.Stage == adaptive.Assessing && len(st.Assessments)+len(st.Assignments) >= st.Quorum {
 		return nil, a.printPending(runID, st)
 	}
-	if len(st.Assignments) >= st.MaxConcurrent || st.Stage != adaptive.Assessing && len(st.Assignments) > 0 {
+	if st.Stage == adaptive.Specializing && st.ReviewSlotsNeeded() == 0 && len(st.Assignments) > 0 {
+		return nil, a.printPending(runID, st)
+	}
+	if len(st.Assignments) >= st.MaxConcurrent || !st.ParallelReviews() && len(st.Assignments) > 0 {
 		return nil, a.printPending(runID, st)
 	}
 	candidates, err := a.adaptiveCandidates(st, a.cliReach())
@@ -293,7 +362,8 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 		assignment.Reason = roleRubric
 	}
 	if st.PendingFocus != "" {
-		assignment.Reason = "handoff focus: " + st.PendingFocus + "; " + assignment.Reason
+		focus := worker.BoundText(st.PendingFocus, worker.MaxHandoffFieldBytes)
+		assignment.Reason = "handoff focus: " + focus + "; " + assignment.Reason
 		if st.HandoffFallbackUsed {
 			assignment.Reason = "no alternate agent is available; continue within your role if possible; " + assignment.Reason
 		}
@@ -381,6 +451,9 @@ workers' outcomes automatically.`,
 			if !sdlcRunIDRE.MatchString(args[0]) {
 				return usagef("invalid run ID")
 			}
+			if err := hostMayNotForgeSupervisorOutcome(outcome); err != nil {
+				return err
+			}
 			store := ledger.Open(a.sdlcRunsDir(), args[0])
 			run, err := store.ReadRun()
 			if err != nil {
@@ -388,6 +461,15 @@ workers' outcomes automatically.`,
 			}
 			if run.Adaptive == nil {
 				return failf("run %s has an unsupported run format", args[0])
+			}
+			if run.Adaptive.Stage == adaptive.Verifying {
+				return failf("run %s is in supervisor verification; hosts may not report check or integration results", args[0])
+			}
+			if run.Fanout != nil && run.Fanout.IntegrationPending {
+				return failf("run %s has supervisor integration pending; hosts may not forge the join result", args[0])
+			}
+			if run.Integration != nil && (run.Integration.Status == adaptive.IntegrationStatusPending || run.Integration.Status == adaptive.IntegrationStatusRepair) {
+				return failf("run %s has supervisor integration in progress; hosts may not forge the join result", args[0])
 			}
 			var artifact []byte
 			artifactName := ""
@@ -427,11 +509,17 @@ workers' outcomes automatically.`,
 }
 
 func (a *App) sdlcRecordResult(runID string, result adaptive.Result, artifactName string, artifact []byte) error {
-	store := ledger.Open(a.sdlcRunsDir(), runID)
-	return store.WithRunLock(func() error { return a.sdlcRecordResultLocked(runID, result, artifactName, artifact, store) })
+	return a.sdlcRecordResultExtras(runID, result, artifactName, artifact, nil)
 }
 
-func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artifactName string, artifact []byte, store *ledger.Store) error {
+func (a *App) sdlcRecordResultExtras(runID string, result adaptive.Result, artifactName string, artifact []byte, extras map[string][]byte) error {
+	store := ledger.Open(a.sdlcRunsDir(), runID)
+	return store.WithRunLock(func() error {
+		return a.sdlcRecordResultLocked(runID, result, artifactName, artifact, extras, store)
+	})
+}
+
+func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artifactName string, artifact []byte, extras map[string][]byte, store *ledger.Store) error {
 	run, err := store.ReadRun()
 	if err != nil {
 		return failf("read run: %v", err)
@@ -442,6 +530,25 @@ func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artif
 	st := *run.Adaptive
 	previousStage := st.Stage
 	completedAssignment := st.Assignments[result.InvocationID]
+	if _, ok := st.Assignments[result.InvocationID]; !ok {
+		for _, prior := range st.Assessments {
+			if prior.InvocationID == result.InvocationID {
+				a.outf("run %s: duplicate review result for %s ignored\n", runID, result.InvocationID)
+				return nil
+			}
+		}
+		for _, prior := range st.SpecialistReviews {
+			if prior.AgentID == result.AgentID && prior.Role != "" && result.Revision == prior.Revision {
+				a.outf("run %s: duplicate specialist result for %s ignored\n", runID, result.InvocationID)
+				return nil
+			}
+		}
+		staleCandidate := result.Revision != "" && result.Revision != st.DiffRevision && result.Revision != st.PlanRevision
+		if !st.ParallelReviews() || staleCandidate {
+			return a.sdlcIgnoreStaleReview(store, runID, &run, result, "review no longer pending for this candidate")
+		}
+		return usagef("adaptive: result does not match a pending independent invocation")
+	}
 	if st.Role() != "" && result.Outcome != "run-time-exhausted" {
 		policy, _, err := a.sdlcEnrollment()
 		if err != nil {
@@ -467,6 +574,9 @@ func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artif
 	if previousStage == adaptive.Planning && result.Outcome != "invocation-failed" && result.Outcome != "auth-failed" && result.Outcome != "handoff" {
 		run.PlanFeedback = ""
 	}
+	if run.OperatorGuidance != "" && operatorGuidanceConsumed(result.Outcome) {
+		run.OperatorGuidance = ""
+	}
 	if result.CostUSD > 0 {
 		policy, _, err := a.sdlcEnrollment()
 		if err != nil {
@@ -489,6 +599,39 @@ func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artif
 		if err := store.WriteArtifact(artifactName, artifact); err != nil {
 			return failf("store artifact: %v", err)
 		}
+	}
+	for name, data := range extras {
+		if err := store.WriteArtifact(name, data); err != nil {
+			return failf("store artifact %s: %v", name, err)
+		}
+	}
+	if result.Outcome == "planned" {
+		if checks, ok := extras[adaptive.ArtifactChecks]; ok {
+			st.ChecksRevision = adaptive.DigestHex(checks)
+		} else if _, err := store.ReadArtifact(adaptive.ArtifactChecks); err != nil {
+			raw := emptyChecksBytes()
+			if err := store.WriteArtifact(adaptive.ArtifactChecks, raw); err != nil {
+				return failf("store artifact %s: %v", adaptive.ArtifactChecks, err)
+			}
+			st.ChecksRevision = adaptive.DigestHex(raw)
+		} else if raw, err := store.ReadArtifact(adaptive.ArtifactChecks); err == nil {
+			st.ChecksRevision = adaptive.DigestHex(raw)
+		}
+		if subtasks, ok := extras[adaptive.ArtifactSubtasks]; ok {
+			st.SubtasksRevision = adaptive.DigestHex(subtasks)
+		} else if _, err := store.ReadArtifact(adaptive.ArtifactSubtasks); err != nil {
+			raw := emptySubtasksBytes()
+			if err := store.WriteArtifact(adaptive.ArtifactSubtasks, raw); err != nil {
+				return failf("store artifact %s: %v", adaptive.ArtifactSubtasks, err)
+			}
+			st.SubtasksRevision = adaptive.DigestHex(raw)
+		} else if raw, err := store.ReadArtifact(adaptive.ArtifactSubtasks); err == nil {
+			st.SubtasksRevision = adaptive.DigestHex(raw)
+		}
+		run.ApprovedPlanRevision = ""
+		run.ApprovedChecksRevision = ""
+		run.ApprovedSubtasksRevision = ""
+		run.AuthorizedChecksRevision = ""
 	}
 	if run.StageFlow == nil && st.Stage != adaptive.Paused && (result.Outcome == "planned" || result.Outcome == "changed") {
 		kind := "plan"
@@ -523,26 +666,18 @@ func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artif
 			st.Pause("assignment-budget-exhausted")
 		}
 	}
-	if run.StageFlow != nil && st.Stage != adaptive.Paused && st.Stage != previousStage {
-		outcome := result.Outcome
-		if previousStage == adaptive.Assessing {
-			outcome = "approved"
-			for _, assessment := range st.Assessments {
-				if assessment.Revision == st.DiffRevision && !assessment.Approved {
-					outcome = "changes-required"
-					break
-				}
+	if run.StageFlow != nil {
+		if route, ok := stageflowRouteAfterResult(previousStage, st.Stage, result.Outcome, st); ok {
+			if err := run.StageFlow.Advance(route, &st); err != nil {
+				return failf("advance workflow: %v", err)
 			}
-		}
-		if err := run.StageFlow.Advance(outcome, &st); err != nil {
-			return failf("advance workflow: %v", err)
-		}
-		policy, _, err := a.sdlcEnrollment()
-		if err != nil {
-			return err
-		}
-		if err := a.chargeTree(&run, policy, "step"); err != nil {
-			st.Pause("stage-step-budget-exhausted")
+			policy, _, err := a.sdlcEnrollment()
+			if err != nil {
+				return err
+			}
+			if err := a.chargeTree(&run, policy, "step"); err != nil {
+				st.Pause("stage-step-budget-exhausted")
+			}
 		}
 	}
 	run.Adaptive = &st

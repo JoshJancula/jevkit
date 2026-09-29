@@ -17,6 +17,7 @@ func (a *App) installCmd() *cobra.Command {
 	var dryRun bool
 	var binary string
 	var componentsRaw string
+	var injectionGuard bool
 	c := &cobra.Command{
 		Use:   "install <agent|all>",
 		Short: "install a jevkit runtime bundle into a coding agent",
@@ -28,7 +29,7 @@ or --components hooks when you only want one of them. Edits are idempotent and m
 Use --dry-run to print a unified diff without writing.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return codeErr(a.runInstall(args[0], scope, binary, componentsRaw, dryRun, false))
+			return codeErr(a.runInstall(args[0], scope, binary, componentsRaw, dryRun, false, injectionGuard))
 		},
 	}
 	f := c.Flags()
@@ -36,6 +37,7 @@ Use --dry-run to print a unified diff without writing.`,
 	f.BoolVar(&dryRun, "dry-run", false, "print planned diffs without writing")
 	f.StringVar(&binary, "binary", "", "jevkit binary path written into hooks (default: this executable or \"jevkit\")")
 	f.StringVar(&componentsRaw, "components", "plugin", "components: plugin (hooks + MCP), mcp, hooks; comma-separated")
+	f.BoolVar(&injectionGuard, "injection-guard", false, "install broad pre-tool and post-tool hooks for prompt-injection review")
 	return c
 }
 
@@ -51,7 +53,7 @@ install (or strip managed entries when no backup exists). Use --dry-run to
 preview without writing.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return codeErr(a.runInstall(args[0], scope, "", componentsRaw, dryRun, true))
+			return codeErr(a.runInstall(args[0], scope, "", componentsRaw, dryRun, true, false))
 		},
 	}
 	f := c.Flags()
@@ -61,7 +63,7 @@ preview without writing.`,
 	return c
 }
 
-func (a *App) runInstall(target, scope, binary, componentsRaw string, dryRun, uninstall bool) int {
+func (a *App) runInstall(target, scope, binary, componentsRaw string, dryRun, uninstall, injectionGuard bool) int {
 	target = strings.ToLower(strings.TrimSpace(target))
 	scope = strings.ToLower(strings.TrimSpace(scope))
 	if scope != "project" && scope != "user" {
@@ -86,11 +88,12 @@ func (a *App) runInstall(target, scope, binary, componentsRaw string, dryRun, un
 		}
 	}
 	opts := agents.InstallOptions{
-		WorkDir:   a.WorkDir,
-		ConfigDir: a.homeDir(),
-		Scope:     scope,
-		Binary:    a.resolveBinary(binary),
-		DryRun:    dryRun,
+		WorkDir:        a.WorkDir,
+		ConfigDir:      a.homeDir(),
+		Scope:          scope,
+		Binary:         a.resolveBinary(binary),
+		DryRun:         dryRun,
+		InjectionGuard: injectionGuard,
 	}
 	if scope == "project" && opts.WorkDir == "" {
 		a.errf("jevkit: project scope requires a working directory\n")

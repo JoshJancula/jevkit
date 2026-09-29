@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
+	"github.com/JoshJancula/jevkit/internal/security/review"
 )
 
 func (a *App) sdlcDriveCmd() *cobra.Command {
@@ -51,7 +53,7 @@ func (a *App) sdlcDriveUntilDone(ctx context.Context, runID string) error {
 		if run.Adaptive == nil {
 			return failf("run %s has an unsupported run format", runID)
 		}
-		if run.Adaptive.Role() == "" && run.Adaptive.Stage != "question" && run.Adaptive.Stage != "spawn" {
+		if run.Adaptive.Role() == "" && len(run.Adaptive.Assignments) == 0 && run.Adaptive.Stage != "question" && run.Adaptive.Stage != "spawn" && run.Adaptive.Stage != adaptive.Verifying {
 			a.outf("run %s: %s", runID, run.Adaptive.Stage)
 			if run.Adaptive.Outcome != "" {
 				a.outf(" (%s)", run.Adaptive.Outcome)
@@ -143,12 +145,18 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	if run.StageFlow != nil && run.Adaptive.Stage == "spawn" {
 		return a.sdlcDriveSpawn(ctx, runID, store)
 	}
-	if run.Adaptive.Role() == "" {
+	if run.Adaptive.Role() == "" && len(run.Adaptive.Assignments) == 0 && run.Adaptive.Stage != adaptive.Verifying {
 		a.outf("run %s: %s (%s)\n", runID, run.Adaptive.Stage, run.Adaptive.Outcome)
 		return nil
 	}
 	if handled, err := a.sdlcMaybeDelegate(ctx, run); handled || err != nil {
 		return err
+	}
+	if handled, err := a.sdlcDriveFanout(ctx, runID, store, run); handled || err != nil {
+		return err
+	}
+	if run.Adaptive.ParallelReviews() {
+		return a.sdlcDriveParallelReviews(ctx, runID)
 	}
 	if len(run.Adaptive.Assignments) > 0 {
 		return failf("run %s has pending assignments; report them before driving another action", runID)
@@ -159,6 +167,19 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	}
 	if assignment == nil {
 		return nil
+	}
+	return a.sdlcExecuteAssignment(ctx, runID, *assignment)
+}
+
+func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmentVal adaptive.Assignment) error {
+	assignment := &assignmentVal
+	store := ledger.Open(a.sdlcRunsDir(), runID)
+	run, err := store.ReadRun()
+	if err != nil {
+		return failf("read run: %v", err)
+	}
+	if run.Adaptive == nil {
+		return failf("run %s has an unsupported run format", runID)
 	}
 	a.progressFlush()
 	policy, roster, err := a.sdlcEnrollment()
@@ -171,6 +192,9 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	}
 	if remaining <= 0 {
 		return a.sdlcTimeoutAssignment(runID, *assignment, "run-time-exhausted")
+	}
+	if err := a.sdlcQuotaCheck(runID); err != nil {
+		return a.sdlcFailAssignment(runID, *assignment, err)
 	}
 	var agent *enrollment.Agent
 	for i := range roster.Agents {
@@ -193,7 +217,8 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	if agent.Via != enrollment.Runtime && a.SdlcExecutor == nil {
 		return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("native and host-self assignments need a host executor"))
 	}
-	req := worker.Request{Agent: *agent, Assignment: *assignment, Task: run.Task, WorkDir: a.WorkDir, Workspace: a.WorkDir, AllowRead: run.AllowRead, Yolo: a.Yolo || truthy(a.getenv("JEVKIT_YOLO")), SecurityPolicy: a.SecurityPolicy, LogDir: store.Dir + "/logs"}
+	req := worker.Request{Agent: *agent, Assignment: *assignment, Task: run.Task, WorkDir: a.WorkDir, Workspace: a.WorkDir, AllowRead: run.AllowRead, Yolo: a.Yolo || truthy(a.getenv("JEVKIT_YOLO")), SecurityPolicy: a.SecurityPolicy, SDLCRunID: runID, LogDir: store.Dir + "/logs", LogTailBytes: a.sdlcLogTailBytes()}
+	a.applySDLCRuntimeIntegration(&req, run)
 	if a.sdlcProgress != nil {
 		live, err := a.sdlcLiveOutput(agent.ID)
 		if err != nil {
@@ -225,24 +250,51 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 			return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("read previous plan: %w", err))
 		}
 		req.Plan = string(previous)
-		req.Task += "\n\nHuman feedback on the previous plan: " + run.PlanFeedback + "\nRevise the plan to address this feedback before implementation."
+		feedback := worker.BoundText(run.PlanFeedback, worker.MaxPlanFeedbackInlineBytes)
+		req.Task += "\n\nHuman feedback on the previous plan: " + feedback + "\nRevise the plan to address this feedback before implementation."
+	}
+	if run.OperatorGuidance != "" {
+		req.Task += "\n\nOperator guidance (from the human running this SDLC after it paused; follow it): " + worker.BoundText(run.OperatorGuidance, worker.MaxPlanFeedbackInlineBytes)
 	}
 	if assignment.Role == "implementer" {
+		if note := sdlcVerificationFailureNote(store, run); note != "" {
+			req.Task += "\n\n" + note
+		}
 		if run.ReviewRecovery != nil && run.ReviewRecovery.Applied && run.ReviewRecovery.Outcome == "changes-required" {
-			req.Task += "\n\nLast assessment (" + run.ReviewRecovery.Invocation + "):\n" + run.ReviewRecovery.Content
+			assessmentPath := store.Dir + "/artifacts/last-assessment.md"
+			summary := worker.BoundVerificationSummary(run.ReviewRecovery.Content, assessmentPath, worker.MaxVerificationSummaryBytes)
+			req.Task += "\n\nLast assessment (" + run.ReviewRecovery.Invocation + "):\n" + summary
 			if len(run.ReviewRecovery.Paths) > 0 {
 				req.Task += "\nPaths observed changing during assessment (editor unknown):\n" + strings.Join(run.ReviewRecovery.Paths, "\n")
 			}
 		}
 		if advice, err := store.ReadArtifact("research-advice.md"); err == nil {
-			req.Task += "\n\nResearch advice:\n" + string(advice)
+			req.Task += "\n\nResearch advice:\n" + worker.BoundText(string(advice), worker.MaxResearchAdviceInlineBytes)
+			if len(advice) > worker.MaxResearchAdviceInlineBytes {
+				req.Task += "\nFull research advice saved locally: " + store.Dir + "/artifacts/research-advice.md"
+			}
 		}
 	}
 	if assignment.Role != "planner" {
 		plan, err := store.ReadArtifact("plan.md")
 		if assignment.Role == "implementer" && run.RequirePlanApproval {
-			if err != nil || fmt.Sprintf("%x", sha256.Sum256(plan)) != run.ApprovedPlanRevision || run.ApprovedPlanRevision != run.Adaptive.PlanRevision {
-				return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("approved plan.md changed before implementation"))
+			if err != nil || !planApprovalComplete(run) || adaptive.DigestHex(plan) != run.ApprovedPlanRevision {
+				return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("approved plan artifacts changed before implementation"))
+			}
+			checks, cerr := store.ReadArtifact(adaptive.ArtifactChecks)
+			subtasks, serr := store.ReadArtifact(adaptive.ArtifactSubtasks)
+			if cerr != nil || serr != nil ||
+				adaptive.DigestHex(checks) != run.ApprovedChecksRevision ||
+				adaptive.DigestHex(subtasks) != run.ApprovedSubtasksRevision {
+				return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("approved plan artifacts changed before implementation"))
+			}
+		}
+		if assignment.Role == "implementer" {
+			checks, _ := store.ReadArtifact(adaptive.ArtifactChecks)
+			var parsed adaptive.ChecksFile
+			_ = json.Unmarshal(checks, &parsed)
+			if argvChecksNeedAuthorization(parsed.Checks, run.AuthorizedChecksRevision, adaptive.DigestHex(checks)) {
+				return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("planner-proposed commands are not authorized for this run"))
 			}
 		}
 		if err != nil && assignment.Role == "assessor" {
@@ -255,6 +307,15 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	if assignment.Role == "assessor" || assignment.Role == "qa" || assignment.Role == "security" || assignment.Role == "code-review" {
 		if assignment.Role == "assessor" && run.ReviewRecovery != nil && run.ReviewRecovery.Applied && len(run.ReviewRecovery.Paths) > 0 {
 			req.Task += "\n\nWorkspace paths observed changing during the previous assessment (editor unknown). Inspect the current workspace before approving:\n" + strings.Join(run.ReviewRecovery.Paths, "\n")
+		}
+		if run.Adaptive != nil && len(run.Adaptive.CheckReceipts) > 0 {
+			req.Task += "\n\n" + adaptive.FormatReceiptsForAssessor(run.Adaptive.CheckReceipts, run.Adaptive.DiffRevision)
+		} else if run.Verification != nil && len(run.Verification.Receipts) > 0 {
+			rev := ""
+			if run.Adaptive != nil {
+				rev = run.Adaptive.DiffRevision
+			}
+			req.Task += "\n\n" + adaptive.FormatReceiptsForAssessor(run.Verification.Receipts, rev)
 		}
 		diff, err := store.ReadArtifact("patch.diff")
 		if err != nil {
@@ -278,8 +339,11 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	reply, execErr := executor.Execute(stepCtx, req)
+	if rec, ok := review.PendingRun(a.stateHome(), runID); ok {
+		return a.sdlcPauseInjectionReview(runID, rec.ID)
+	}
 	if execErr != nil {
-		if reply.InputTokens != nil || reply.OutputTokens != nil || reply.CostReported {
+		if reply.InputTokens != nil || reply.OutputTokens != nil || reply.ToolCalls != nil || reply.CostReported {
 			if err := a.saveInvocationUsage(store, *assignment, agent.Model, reply); err != nil {
 				return a.sdlcFailAssignment(runID, *assignment, err)
 			}
@@ -326,6 +390,7 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	result := adaptive.Result{InvocationID: assignment.InvocationID, AgentID: assignment.AgentID, Outcome: reply.Outcome, CostUSD: reply.CostUSD, Focus: reply.Focus, Reason: reply.Reason}
 	artifactName := ""
 	var artifact []byte
+	var extraArtifacts map[string][]byte
 	if reply.Outcome == "planned" || reply.Outcome == "changed" {
 		artifact = []byte(reply.Content)
 		if len(artifact) == 0 {
@@ -347,7 +412,12 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 		}
 		result.Revision = fmt.Sprintf("%x", sha256.Sum256(artifact))
 		if reply.Outcome == "planned" {
-			artifactName = "plan.md"
+			artifactName = adaptive.ArtifactPlan
+			planned, err := preparePlannedArtifacts(reply, run.Adaptive.MaxConcurrent, remainingAssignmentBudget(run))
+			if err != nil {
+				return a.sdlcFailAssignment(runID, *assignment, err)
+			}
+			extraArtifacts = planned
 		} else {
 			artifactName = "patch.diff"
 		}
@@ -359,12 +429,35 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 		if assignment.Role == "research" && reply.Outcome == "advice" {
 			artifactName = "research-advice.md"
 		}
+		if (assignment.Role == "assessor" || assignment.Role == "qa" || assignment.Role == "security" || assignment.Role == "code-review") &&
+			(reply.Outcome == "changes-required" || reply.Outcome == "approved") {
+			_ = store.WriteArtifact("last-assessment.md", []byte(reply.Content))
+		}
 		artifact = []byte(reply.Content)
 	}
-	if err := a.sdlcRecordResult(runID, result, artifactName, artifact); err != nil {
+	if err := a.sdlcRecordResultExtras(runID, result, artifactName, artifact, extraArtifacts); err != nil {
 		return a.sdlcFailAssignment(runID, *assignment, err)
 	}
 	return nil
+}
+
+func preparePlannedArtifacts(reply worker.Reply, maxConcurrent, remainingAssignments int) (map[string][]byte, error) {
+	if err := adaptive.ValidatePlannedHandoff(reply.Content, reply.NextSteps, reply.AcceptanceCriteria, reply.Checks); err != nil {
+		return nil, err
+	}
+	graph := adaptive.BoundGraphConcurrency(adaptive.NormalizeSubtaskGraph(reply.Subtasks), maxConcurrent, remainingAssignments)
+	checksRaw, err := adaptive.MarshalChecks(reply.Checks)
+	if err != nil {
+		return nil, err
+	}
+	subtasksRaw, err := adaptive.MarshalSubtasks(graph)
+	if err != nil {
+		return nil, err
+	}
+	return map[string][]byte{
+		adaptive.ArtifactChecks:   checksRaw,
+		adaptive.ArtifactSubtasks: subtasksRaw,
+	}, nil
 }
 
 func validateReviewArtifact(diff []byte) error {

@@ -175,7 +175,12 @@ agents:
   - {id: assessor-two, roles: [assessor], rubric: Assess., via: runtime, runtime: codex, model: b}
 `)
 	fj.resp = &jev.Response{Answers: map[string]jev.Answer{"route": jev.ChoiceAnswer{Choice: "ready", Confidence: .98}}}
-	a.SdlcExecutor = &fakeSDLCExecutor{replies: []worker.Reply{{Outcome: "planned", Content: "Plan."}, {Outcome: "changed", Content: "diff --git a/a b/a\n+new\n"}, {Outcome: "changes-required"}, {Outcome: "approved"}}}
+	a.SdlcExecutor = &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Plan."},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+new\n"},
+		{Outcome: "changes-required"},
+		{Outcome: "changes-required"}, // concurrent sibling cancelled after decisive rejection
+	}}
 	code, _, errs := run(a, "", "sdlc", "init", "custom-review")
 	if code != exitOK {
 		t.Fatalf("init: %d %s", code, errs)
@@ -185,17 +190,25 @@ agents:
 		t.Fatalf("start: %d %q %q", code, out, errs)
 	}
 	runID := strings.Fields(out)[1]
-	for range 5 {
+	for range 8 {
 		code, out, errs = run(a, "", "sdlc", "drive", runID)
 		if code != exitOK {
 			t.Fatalf("drive: %d %q %q", code, out, errs)
+		}
+		r, err := ledger.Open(a.sdlcRunsDir(), runID).ReadRun()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.StageFlow != nil && len(r.StageFlow.Transitions) > 0 {
+			last := r.StageFlow.Transitions[len(r.StageFlow.Transitions)-1]
+			if last.Answer == "changes-required" && r.StageFlow.Current == "implement" && r.Adaptive.Stage == adaptive.Implementing {
+				return
+			}
 		}
 	}
 	r, err := ledger.Open(a.sdlcRunsDir(), runID).ReadRun()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.StageFlow.Current != "implement" || r.Adaptive.Stage != adaptive.Implementing || r.StageFlow.Transitions[len(r.StageFlow.Transitions)-1].Answer != "changes-required" {
-		t.Fatalf("quorum route: %+v", r)
-	}
+	t.Fatalf("quorum route: current=%s stage=%s transitions=%+v", r.StageFlow.Current, r.Adaptive.Stage, r.StageFlow.Transitions)
 }

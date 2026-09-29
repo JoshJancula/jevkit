@@ -38,5 +38,6 @@ Redaction is pattern based, so check it against your own data before using Jevki
 
 - [Ask Jev directly](docs/ASK.md) from the terminal.
 - [Run an agent workflow](docs/SDLC.md) with planning and review.
+- [Inspect local usage and state](docs/USAGE.md).
 - [Browse all guides and references](docs/README.md).
 - [Contribute](CONTRIBUTING.md) or read the [MIT License](LICENSE).

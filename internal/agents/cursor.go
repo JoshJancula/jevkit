@@ -93,6 +93,9 @@ func (c *Cursor) Passthrough(event Event) []byte {
 }
 
 func (c *Cursor) HandlePreTool(ctx context.Context, req Request) (Response, error) {
+	if response, ok := latched(c.StateDir, CursorName, req.Raw); ok {
+		return response, nil
+	}
 	var payload struct {
 		HookEventName string `json:"hook_event_name"`
 		ToolName      string `json:"tool_name"`
@@ -117,9 +120,10 @@ func (c *Cursor) HandlePreTool(ctx context.Context, req Request) (Response, erro
 	if response, deny := securityDecision(ctx, c.Security, c.SecurityDecider, payload.ToolInput.Command, payload.CWD, workspace, CursorName); deny {
 		return response, nil
 	}
+	key, _ := hookSession(req.Raw, CursorName)
 	body, err := json.Marshal(map[string]any{
 		"permission":    "allow",
-		"updated_input": map[string]string{"command": buildSecurityShellWrapperCommand(c.binary(), workspace, payload.ToolInput.Command, CursorName, c.Security != nil && c.Security.Yolo, securityPolicyName(c.Security))},
+		"updated_input": map[string]string{"command": buildSecurityShellWrapperCommand(c.binary(), workspace, payload.ToolInput.Command, CursorName, c.Security != nil && c.Security.Yolo, securityPolicyName(c.Security), c.Security != nil && c.Security.Injection.Mode != "off") + " --session " + shellQuote(key)},
 	})
 	if err != nil {
 		return Response{Body: c.Passthrough(EventPreTool)}, nil
@@ -158,6 +162,21 @@ func (c *Cursor) HandlePostTool(ctx context.Context, req Request) (Response, err
 		return passthrough, nil
 	}
 
+	if c.Security != nil && c.Security.Injection.Mode != "off" && isCursorMCPTool(tool) {
+		if value, _, ok := extractCursorToolOutput(payload.ToolOutput); ok {
+			key, workspace := hookSession(req.Raw, CursorName)
+			pointer, e := storeRawResult(c.StateDir, CursorName, value)
+			if e == nil {
+				if rec, halt := scanToolOutput(ctx, c.Security, c.SecurityDecider, CursorName, tool, string(payload.ToolInput), value, workspace, key, pointer); halt {
+					updated, e := replaceCursorToolOutputText(json.RawMessage(`{}`), reviewNotice(rec.ID))
+					if e == nil {
+						body, _ := json.Marshal(map[string]any{"updated_mcp_tool_output": updated})
+						return Response{Body: body, Deny: true, Outcome: OutcomeHalt}, nil
+					}
+				}
+			}
+		}
+	}
 	if !c.compactEnabled() {
 		return passthrough, nil
 	}

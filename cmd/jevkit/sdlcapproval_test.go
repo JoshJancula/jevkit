@@ -312,3 +312,322 @@ func TestSDLCNestedRunCanReviseChildPlan(t *testing.T) {
 		t.Fatalf("nested completion: %+v requests=%d err=%v", parent, len(executor.requests), err)
 	}
 }
+
+func TestSDLCPlanApprovalShowsChecksAndGraph(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{{
+		Outcome:            "planned",
+		Content:            "Ship the API and UI.",
+		NextSteps:          []string{"implement api", "implement ui"},
+		AcceptanceCriteria: []string{"tests pass"},
+		Checks: []adaptive.Check{
+			{ID: "unit", Argv: []string{"go", "test", "./..."}, WorkingDir: ".", TimeoutSeconds: 60},
+			{ID: "manual-ui", Manual: "Click through the settings page"},
+		},
+		Subtasks: &adaptive.SubtaskGraph{
+			IndependenceReason: "separate packages",
+			LatencyBenefit:     "parallel builds",
+			Parallelize:        true,
+			IntegrationOwner:   "api",
+			SharedPaths:        []string{"internal/api/types.go"},
+			Subtasks: []adaptive.Subtask{
+				{ID: "api", Objective: "API", ExpectedOutput: "api patch", OwnedPaths: []string{"internal/api/"}, MergeOrder: 1, AcceptanceCriteria: []string{"ok"}},
+				{ID: "ui", Objective: "UI", ExpectedOutput: "ui patch", OwnedPaths: []string{"web/"}, MergeOrder: 2, AcceptanceCriteria: []string{"ok"}},
+			},
+		},
+	}}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "ship it")
+	if code != exitOK || !strings.Contains(out, "PAUSED (plan-approval-required)") {
+		t.Fatalf("run: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	var display bytes.Buffer
+	a.Stdout = &display
+	if err := a.sdlcShowPlan(id); err != nil {
+		t.Fatal(err)
+	}
+	shown := display.String()
+	for _, want := range []string{
+		"PROPOSED CHECKS", "argv: go test ./...", "workingDir: .", "timeoutSeconds: 60",
+		"manual: Click through the settings page",
+		"PROPOSED SUBTASK GRAPH", "mode: fan-out", "effectiveConcurrency:",
+		"integrationOrder:", "api — owner scope: internal/api/", "ui — owner scope: web/",
+		"ARTIFACT DIGESTS", "checks.json:",
+	} {
+		if !strings.Contains(shown, want) {
+			t.Fatalf("missing %q in:\n%s", want, shown)
+		}
+	}
+}
+
+func TestSDLCApprovalRejectsChangedChecksOrSubtasks(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{{
+		Outcome: "planned", Content: "Original plan.",
+		Checks: []adaptive.Check{{ID: "t", Argv: []string{"go", "test", "./..."}}},
+	}}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it")
+	if code != exitOK {
+		t.Fatalf("run: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	store := ledger.Open(a.sdlcRunsDir(), id)
+	if err := store.WriteArtifact(adaptive.ArtifactChecks, []byte(`{"checks":[{"id":"evil","argv":["rm","-rf","/"]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs = run(a, "", "sdlc", "resume", id, "--approve-plan")
+	if code == exitOK || !strings.Contains(errs, "checks.json") || len(executor.requests) != 1 {
+		t.Fatalf("changed checks approved: %d %q requests=%d", code, errs, len(executor.requests))
+	}
+}
+
+func TestSDLCApprovalInvalidatesAfterApprovedArtifactEdit(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Original plan.", Checks: []adaptive.Check{{ID: "t", Argv: []string{"true"}}}},
+		{Outcome: "changed", Content: "diff"},
+	}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it")
+	if code != exitOK {
+		t.Fatalf("run: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	if err := a.sdlcApprovePlan(id); err != nil {
+		t.Fatal(err)
+	}
+	store := ledger.Open(a.sdlcRunsDir(), id)
+	if err := store.WriteArtifact(adaptive.ArtifactSubtasks, []byte(`{"mode":"single","fallbackReason":"tampered"}`)); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ = run(a, "", "sdlc", "resume", id)
+	saved, err := store.ReadRun()
+	if code != exitOK || err != nil || saved.Adaptive.Outcome != "plan-artifact-mismatch" || len(executor.requests) != 1 {
+		t.Fatalf("tampered subtasks launched work: code=%d run=%+v requests=%d err=%v", code, saved, len(executor.requests), err)
+	}
+}
+
+func TestSDLCAutoPausesForCommandAuthorization(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Plan with command.", Checks: []adaptive.Check{{ID: "t", Argv: []string{"true"}}}},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+new\n"},
+		{Outcome: "approved"},
+	}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it", "--auto")
+	if code != exitOK || !strings.Contains(out, "command-authorization-required") || len(executor.requests) != 1 {
+		t.Fatalf("auto without allowance: %d %q %q requests=%d", code, out, errs, len(executor.requests))
+	}
+	id := strings.Fields(out)[1]
+	code, _, errs = run(a, "", "sdlc", "resume", id)
+	if code == exitOK || !strings.Contains(errs, "authorize-checks") {
+		t.Fatalf("resume without auth: %d %q", code, errs)
+	}
+	code, out, errs = run(a, "", "sdlc", "resume", id, "--authorize-checks")
+	if code != exitOK || !strings.Contains(out, "DONE (approved)") || len(executor.requests) != 3 {
+		t.Fatalf("authorized resume: %d %q %q requests=%d", code, out, errs, len(executor.requests))
+	}
+	saved, err := ledger.Open(a.sdlcRunsDir(), id).ReadRun()
+	if err != nil || saved.AuthorizedChecksRevision == "" || saved.AuthorizedChecksRevision != saved.Adaptive.ChecksRevision {
+		t.Fatalf("authorized digest: %+v %v", saved, err)
+	}
+}
+
+func TestSDLCAutoDeniesMismatchedAuthorizeDigest(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Plan with command.", Checks: []adaptive.Check{{ID: "t", Argv: []string{"go", "test", "./..."}}}},
+	}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it", "--auto")
+	if code != exitOK {
+		t.Fatalf("run: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	code, _, errs = run(a, "", "sdlc", "resume", id, "--authorize-checks-digest", "deadbeef")
+	if code == exitOK || !strings.Contains(errs, "does not match") {
+		t.Fatalf("bad digest accepted: %d %q", code, errs)
+	}
+}
+
+func TestSDLCHeadlessApprovePlanBindsAllDigests(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Headless plan.", Checks: []adaptive.Check{{ID: "t", Argv: []string{"true"}}}},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+new\n"},
+		{Outcome: "approved"},
+	}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it")
+	if code != exitOK {
+		t.Fatalf("run: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	code, out, errs = run(a, "", "sdlc", "resume", id, "--approve-plan", "--silent")
+	if code != exitOK {
+		t.Fatalf("approve: %d %q %q", code, out, errs)
+	}
+	saved, err := ledger.Open(a.sdlcRunsDir(), id).ReadRun()
+	if err != nil || saved.Adaptive.Stage != adaptive.Done {
+		t.Fatalf("done: %+v %v", saved, err)
+	}
+	if saved.ApprovedPlanRevision != saved.Adaptive.PlanRevision ||
+		saved.ApprovedChecksRevision != saved.Adaptive.ChecksRevision ||
+		saved.ApprovedSubtasksRevision != saved.Adaptive.SubtasksRevision ||
+		saved.AuthorizedChecksRevision != saved.Adaptive.ChecksRevision {
+		t.Fatalf("digests not bound: %+v", saved)
+	}
+}
+
+func TestSDLCVerificationFailureReturnsToImplementerUntilRevisionBudget(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Plan with failing check.", Checks: []adaptive.Check{{ID: "t", Argv: []string{"false"}}}},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+one\n"},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+two\n"},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+three\n"},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+four\n"},
+	}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it", "--auto")
+	if code != exitOK {
+		t.Fatalf("run: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	code, out, errs = run(a, "", "sdlc", "resume", id, "--authorize-checks")
+	saved, err := ledger.Open(a.sdlcRunsDir(), id).ReadRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Adaptive.Outcome == "implementer-failed" {
+		t.Fatalf("verification failure paused as implementer-failed instead of retrying: %d %q %q", code, out, errs)
+	}
+	if saved.Adaptive.Outcome != "revision-budget-exhausted" || len(executor.requests) < 3 {
+		t.Fatalf("want retries until revision budget: outcome=%q requests=%d out=%q errs=%q", saved.Adaptive.Outcome, len(executor.requests), out, errs)
+	}
+}
+
+func TestSDLCRetriedImplementerSeesVerificationFailures(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Plan with failing check.", Checks: []adaptive.Check{{ID: "t", Argv: []string{"false"}}}},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+one\n"},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+two\n"},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+three\n"},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+four\n"},
+	}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it", "--auto")
+	if code != exitOK {
+		t.Fatalf("run: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	_, _, _ = run(a, "", "sdlc", "resume", id, "--authorize-checks")
+	if len(executor.requests) < 3 {
+		t.Fatalf("implementer was not retried: requests=%d", len(executor.requests))
+	}
+	if strings.Contains(executor.requests[1].Task, "Supervisor verification of your previous revision failed") {
+		t.Fatalf("first implementer prompt claims a prior failure: %q", executor.requests[1].Task)
+	}
+	retried := executor.requests[2].Task
+	if !strings.Contains(retried, "Supervisor verification of your previous revision failed") || !strings.Contains(retried, "t: exit 1") {
+		t.Fatalf("retried implementer prompt lacks the failure summary: %q", retried)
+	}
+}
+
+func TestSDLCVerificationEnvironmentFailureEscalatesWithoutSpendingRevision(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Plan with missing tool.", Checks: []adaptive.Check{{ID: "t", Argv: []string{"jevkit-missing-verification-tool"}}}},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+one\n"},
+	}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it", "--auto")
+	if code != exitOK {
+		t.Fatalf("run: %d %q %q", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	_, out, errs = run(a, "", "sdlc", "resume", id, "--authorize-checks")
+	store := ledger.Open(a.sdlcRunsDir(), id)
+	saved, err := store.ReadRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Adaptive.Outcome != adaptive.OutcomeVerificationEnvironment || len(executor.requests) != 2 {
+		t.Fatalf("want environment escalation after one implementer: outcome=%q requests=%d out=%q errs=%q", saved.Adaptive.Outcome, len(executor.requests), out, errs)
+	}
+	if !strings.Contains(saved.Adaptive.PendingReason, "jevkit-missing-verification-tool") || !strings.Contains(saved.Adaptive.PendingReason, "no revision was spent") {
+		t.Fatalf("cause does not name the missing command: %q", saved.Adaptive.PendingReason)
+	}
+	if got := sdlcRetryAction(saved); !strings.Contains(got, "re-run verification") {
+		t.Fatalf("retry action: %q", got)
+	}
+	revisions := saved.Adaptive.RevisionCount
+	// Retrying re-runs verification on the same candidate, not the implementer.
+	_, _, _ = run(a, "", "sdlc", "resume", id, "--retry-failed")
+	saved, err = store.ReadRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.requests) != 2 || saved.Adaptive.RevisionCount != revisions || saved.Adaptive.Outcome != adaptive.OutcomeVerificationEnvironment {
+		t.Fatalf("retry should only re-verify: requests=%d revisions=%d->%d outcome=%q", len(executor.requests), revisions, saved.Adaptive.RevisionCount, saved.Adaptive.Outcome)
+	}
+	decisions, err := store.ReadDecisions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifications := 0
+	for _, d := range decisions {
+		if d.Kind == "supervisor-verification" {
+			verifications++
+		}
+	}
+	if verifications != 2 {
+		t.Fatalf("want verification re-run on retry, got %d verification decisions", verifications)
+	}
+}
+
+func TestSDLCResumeGuidanceRetriesAndReachesNextAgent(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	executor := &fakeSDLCExecutor{replies: []worker.Reply{
+		{Outcome: "planned", Content: "Plan."},
+		{Outcome: "failed", Reason: "cannot tell which API to use"},
+		{Outcome: "changed", Content: "diff --git a/a b/a\n+new\n"},
+		{Outcome: "approved"},
+	}}
+	a.SdlcExecutor = executor
+	code, out, errs := run(a, "", "sdlc", "run", "bugfix", "--task", "fix it", "--auto")
+	id := strings.Fields(out)[1]
+	store := ledger.Open(a.sdlcRunsDir(), id)
+	saved, err := store.ReadRun()
+	if err != nil || saved.Adaptive.Outcome != "implementer-failed" {
+		t.Fatalf("setup: want implementer-failed pause: %d %q %q %+v %v", code, out, errs, saved.Adaptive, err)
+	}
+	code, out, errs = run(a, "", "sdlc", "resume", id, "--guidance", "use the v2 client API")
+	if code != exitOK || !strings.Contains(out, "DONE (approved)") {
+		t.Fatalf("guided resume: %d %q %q", code, out, errs)
+	}
+	if len(executor.requests) != 4 || !strings.Contains(executor.requests[2].Task, "Operator guidance") || !strings.Contains(executor.requests[2].Task, "use the v2 client API") {
+		t.Fatalf("guidance missing from retried implementer: requests=%d", len(executor.requests))
+	}
+	if strings.Contains(executor.requests[3].Task, "use the v2 client API") {
+		t.Fatalf("consumed guidance repeated to the assessor: %q", executor.requests[3].Task)
+	}
+	saved, err = store.ReadRun()
+	if err != nil || saved.OperatorGuidance != "" {
+		t.Fatalf("guidance not cleared after use: %q %v", saved.OperatorGuidance, err)
+	}
+}

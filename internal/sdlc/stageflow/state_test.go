@@ -53,6 +53,22 @@ func TestQuestionLoopStopsAtMaxSteps(t *testing.T) {
 	}
 }
 
+func TestMigrateSavedKeepsVersionOneReadable(t *testing.T) {
+	s := State{Workflow: spec.Workflow{Version: 0, Name: "old"}}
+	if err := MigrateSaved(&s); err != nil || s.Workflow.Version != CurrentStageFormatVersion {
+		t.Fatalf("migrate v0: %+v err=%v", s, err)
+	}
+	s.Workflow.Version = CurrentStageFormatVersion
+	if err := MigrateSaved(&s); err != nil {
+		t.Fatal(err)
+	}
+	s.Workflow.Version = 2
+	if err := MigrateSaved(&s); err == nil {
+		t.Fatal("expected unsupported version error")
+	}
+}
+
+
 func TestStageValidationRejectsUnknownTargetAndFallbackChoice(t *testing.T) {
 	for _, tc := range []struct{ from, to, want string }{
 		{"finish: done", "finish: absent", "not a declared stage"},

@@ -69,7 +69,7 @@ func TestSDLCRunStepAndResumeContinueActiveRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Adaptive.Stage != adaptive.Assessing || len(executor.requests) != 2 {
+	if r.Adaptive.Stage != adaptive.Verifying || len(executor.requests) != 2 {
 		t.Fatalf("after resume step: %+v, requests=%d", r.Adaptive, len(executor.requests))
 	}
 	code, out, errs = run(a, "", "sdlc", "resume", runID)

@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/JoshJancula/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 	"github.com/spf13/cobra"
@@ -30,6 +31,9 @@ func (a *App) sdlcWatch(ctx context.Context, root string) error {
 func (a *App) sdlcWatchDrive(ctx context.Context, root string, drive func() error, retry func(string) error) error {
 	err := a.sdlcWatchLoop(ctx, root, drive, retry)
 	a.sdlcFinalSummary(a.Stdout, root, err)
+	if err == nil {
+		return a.sdlcReviewFollowup(ctx, root)
+	}
 	return err
 }
 
@@ -43,19 +47,16 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 	var inputParser watchInputParser
 	if tty {
 		var restore func()
-		mouse := false
 		if input, ok := a.Stdin.(*os.File); ok && term.IsTerminal(int(input.Fd())) {
 			if old, err := term.MakeRaw(int(input.Fd())); err == nil {
 				restore = func() { _ = term.Restore(int(input.Fd()), old) }
-				mouse = true
 			}
 		}
 		inputBytes = a.sdlcTTYInput()
-		// Keep refreshes out of the shell's scrollback. SGR mouse tracking lets
-		// a wheel over the agent pane navigate its saved activity.
-		_, _ = fmt.Fprint(stdout, watchTTYEnter(mouse))
+		// Leave mouse selection to the terminal so users can copy visible text.
+		_, _ = fmt.Fprint(stdout, watchTTYEnter())
 		defer func() {
-			_, _ = fmt.Fprint(stdout, watchTTYLeave(mouse))
+			_, _ = fmt.Fprint(stdout, watchTTYLeave())
 			if restore != nil {
 				restore()
 			}
@@ -63,6 +64,7 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 	}
 	last := ""
 	selected := -1 // Follow the newest invocation until the user switches agents.
+	following := ""
 	logScroll := 0
 	detailScroll := 0
 	details, showLogs, allActivity, toolView, help := false, true, false, false, true
@@ -76,12 +78,23 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 	}
 	var driveErr error
 	paused := false
+	frozen := false
 	canRetry := false
+	retryAction := ""
+	composing := false
+	var draft []byte
 	finished := false
+	tree := newSdlcTreeWatcher(root)
 	for {
-		runs, err := a.sdlcTree(root)
+		runs, err := tree.refresh(a)
 		if err != nil {
 			return failf("%v", err)
+		}
+		invocation := watchActiveInvocation(runs)
+		if invocation != following {
+			following = invocation
+			selected, logScroll, detailScroll = -1, 0, 0
+			allActivity = false
 		}
 		var b strings.Builder
 		if drive != nil {
@@ -204,7 +217,7 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 		}
 		if paused {
 			if canRetry {
-				fmt.Fprintln(&b, "Paused. Choose: r auto, f fresh, s resume session, c compact session, l logs, q leave paused.")
+				fmt.Fprintf(&b, "Paused. r: %s; g: type guidance for the next agent, then retry; f/s/c: retry in a new/same/compacted session; q: leave paused.\n", retryAction)
 			} else {
 				fmt.Fprintln(&b, "Paused. Review the cause and logs; press q to leave this run paused.")
 			}
@@ -223,17 +236,22 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 			}
 			view = a.sdlcTTYView(runs, decisions, watchTTYState{
 				selected: selected, scroll: logScroll, detailScroll: detailScroll, details: details, logs: showLogs, all: allActivity, toolView: toolView, help: help,
-				paused: paused, canRetry: canRetry, driving: driveDone != nil,
+				focusInvocation: invocation,
+				paused:          paused, canRetry: canRetry, driving: driveDone != nil, frozen: frozen,
+				retryAction: retryAction, composing: composing, draft: string(draft),
 				cause:       a.sdlcPauseCause(root, driveErr),
 				inputTokens: usage.InputTokens, outputTokens: usage.OutputTokens,
 				unknownInput: usage.UnknownInput, unknownOutput: usage.UnknownOutput,
 				cost: usage.SuppliedCostUSD,
 			}, width, height)
-			a.outf("\x1b[H%s\x1b[J", view)
+			if view != last && (!frozen || last == "") {
+				a.outf("\x1b[H%s\x1b[J", view)
+				last = view
+			}
 		} else if view != last {
 			a.outf("%s", view)
+			last = view
 		}
-		last = view
 		if finished {
 			return driveErr
 		}
@@ -254,13 +272,57 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 				return readErr
 			}
 			paused = fresh.Adaptive != nil && fresh.Adaptive.Stage == "paused"
-			canRetry = paused && (failedPauseRole(fresh.Adaptive.Outcome) != "" || fresh.Adaptive.PendingDecision != "" || fresh.Adaptive.Outcome == "automatic-child-paused" || fresh.Adaptive.Outcome == "review-workspace-drift" || fresh.Adaptive.Outcome == "review-recovery-invalid")
+			canRetry = paused && (pauseRetryable(fresh.Adaptive.Outcome) || fresh.Adaptive.PendingDecision != "" || fresh.Adaptive.Outcome == "automatic-child-paused")
+			retryAction = ""
+			if canRetry {
+				retryAction = sdlcRetryAction(fresh)
+			}
 			if !paused || !tty || fresh.Adaptive.Outcome == "plan-approval-required" || fresh.Adaptive.Outcome == "child-plan-approval-required" {
 				finished = true
 			}
 		case b, open := <-inputBytes:
 			if !open {
 				inputBytes = nil
+				if paused || drive == nil {
+					return driveErr
+				}
+				continue
+			}
+			if composing {
+				// The guidance box takes raw bytes so p, q and r are ordinary text.
+				switch b {
+				case 3: // Ctrl-C
+					return context.Canceled
+				case 0x1b:
+					composing, draft = false, nil
+				case '\r', '\n':
+					text := strings.TrimSpace(string(draft))
+					composing, draft = false, nil
+					if text == "" || !paused || !canRetry || retry == nil {
+						continue
+					}
+					if err := a.sdlcSetOperatorGuidance(root, text); err != nil {
+						driveErr = err
+						continue
+					}
+					paused = false
+					startDrive(func() error { return retry("auto") })
+				case 0x7f, 0x08:
+					if len(draft) > 0 {
+						_, size := utf8.DecodeLastRune(draft)
+						draft = draft[:len(draft)-size]
+					}
+				case 0x15: // Ctrl-U
+					draft = draft[:0]
+				default:
+					if (b >= 0x20 || b == '\t') && len(draft) < worker.MaxPlanFeedbackInlineBytes {
+						if b == '\t' {
+							b = ' '
+						}
+						draft = append(draft, b)
+					}
+				}
+				last = ""
 				continue
 			}
 			event, complete := inputParser.feed(b)
@@ -268,18 +330,27 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 				continue
 			}
 			key := event.key
-			if event.mouse {
-				top, bottom := watchAgentPaneRows(view)
-				if event.row < top || event.row > bottom {
-					continue
+			if key == 3 { // Ctrl-C is a byte while the terminal is in raw mode.
+				if drive == nil || driveDone == nil {
+					return nil
 				}
+				return context.Canceled
 			}
 			if strategy := watchRetryStrategy(key); strategy != "" && paused && canRetry && retry != nil {
 				paused = false
 				startDrive(func() error { return retry(strategy) })
 				continue
 			}
+			if (key == 'g' || key == 'G') && paused && canRetry && retry != nil {
+				composing, draft = true, nil
+				frozen = false
+				last = ""
+				continue
+			}
 			switch key {
+			case 'p', 'P':
+				frozen = !frozen
+				last = ""
 			case 'q', 'Q':
 				if drive == nil {
 					return nil
@@ -305,28 +376,50 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 				allActivity = !allActivity
 				logScroll = 0
 				detailScroll = 0
-			case 'j':
-				logScroll = min(logScroll+1, 200)
-				detailScroll = 0
-			case 'u':
-				logScroll = min(logScroll+5, 200)
-				detailScroll = 0
-			case 'k':
-				logScroll = max(0, logScroll-1)
-				detailScroll = 0
-			case 'v':
-				logScroll = max(0, logScroll-5)
-				detailScroll = 0
-			case 'J':
-				detailScroll = min(detailScroll+1, 200)
-			case 'K':
-				detailScroll = max(0, detailScroll-1)
+			case watchKeyHistoryOlder, watchKeyHistoryNewer, watchKeyHistoryPageOlder, watchKeyHistoryPageNewer, 'j', 'J', 'k', 'K':
+				logScroll, detailScroll = watchScrollOffsets(key, logScroll, detailScroll)
 			case 't', 'T':
 				toolView = !toolView
 				detailScroll = 0
 			}
 		case <-time.After(time.Second):
 		}
+	}
+}
+
+// The most recent pending invocation drives the expanded agent view. Invocation
+// IDs include a timestamp, and the run tree may contain concurrent assignments.
+func watchActiveInvocation(runs []ledger.Run) string {
+	latest := ""
+	for _, run := range runs {
+		if run.Adaptive == nil {
+			continue
+		}
+		for _, assignment := range run.Adaptive.Pending() {
+			if assignment.InvocationID > latest {
+				latest = assignment.InvocationID
+			}
+		}
+	}
+	return latest
+}
+
+func watchScrollOffsets(key byte, history, detail int) (int, int) {
+	switch key {
+	case watchKeyHistoryOlder:
+		return min(history+1, 200), 0
+	case watchKeyHistoryNewer:
+		return max(0, history-1), 0
+	case watchKeyHistoryPageOlder:
+		return min(history+5, 200), 0
+	case watchKeyHistoryPageNewer:
+		return max(0, history-5), 0
+	case 'j', 'J':
+		return history, min(detail+1, 200)
+	case 'k', 'K':
+		return history, max(0, detail-1)
+	default:
+		return history, detail
 	}
 }
 
@@ -346,10 +439,15 @@ func watchRetryStrategy(key byte) string {
 }
 
 type watchInputEvent struct {
-	key   byte
-	row   int
-	mouse bool
+	key byte
 }
+
+const (
+	watchKeyHistoryOlder byte = 1 + iota
+	watchKeyHistoryNewer
+	watchKeyHistoryPageOlder
+	watchKeyHistoryPageNewer
+)
 
 type watchInputParser struct {
 	state byte
@@ -384,61 +482,25 @@ func (p *watchInputParser) feed(b byte) (watchInputEvent, bool) {
 		seq := string(p.csi)
 		switch seq {
 		case "A":
-			return watchInputEvent{key: 'j'}, true
+			return watchInputEvent{key: watchKeyHistoryOlder}, true
 		case "B":
-			return watchInputEvent{key: 'k'}, true
+			return watchInputEvent{key: watchKeyHistoryNewer}, true
 		case "5~":
-			return watchInputEvent{key: 'u'}, true
+			return watchInputEvent{key: watchKeyHistoryPageOlder}, true
 		case "6~":
-			return watchInputEvent{key: 'v'}, true
+			return watchInputEvent{key: watchKeyHistoryPageNewer}, true
 		}
-		if !strings.HasPrefix(seq, "<") || !strings.HasSuffix(seq, "M") {
-			return watchInputEvent{}, false
-		}
-		parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(seq, "<"), "M"), ";")
-		if len(parts) != 3 {
-			return watchInputEvent{}, false
-		}
-		button, errButton := strconv.Atoi(parts[0])
-		row, errRow := strconv.Atoi(parts[2])
-		if errButton != nil || errRow != nil || button&64 == 0 {
-			return watchInputEvent{}, false
-		}
-		if button&1 == 0 {
-			return watchInputEvent{key: 'j', row: row, mouse: true}, true
-		}
-		return watchInputEvent{key: 'k', row: row, mouse: true}, true
+		return watchInputEvent{}, false
 	}
 	return watchInputEvent{}, false
 }
 
-func watchTTYEnter(mouse bool) string {
-	sequence := "\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J"
-	if mouse {
-		sequence += "\x1b[?1000h\x1b[?1006h"
-	}
-	return sequence
+func watchTTYEnter() string {
+	return "\x1b[?1000l\x1b[?1006l\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J"
 }
 
-func watchTTYLeave(mouse bool) string {
-	sequence := ""
-	if mouse {
-		sequence = "\x1b[?1006l\x1b[?1000l"
-	}
-	return sequence + "\x1b[?25h\x1b[?1049l"
-}
-
-func watchAgentPaneRows(view string) (top, bottom int) {
-	for i, line := range strings.Split(view, "\r\n") {
-		line = ansiSGR.ReplaceAllString(line, "")
-		if strings.HasPrefix(line, "┌─ AGENT") {
-			top = i + 1
-		} else if top != 0 && strings.HasPrefix(line, "└") {
-			bottom = i + 1
-			break
-		}
-	}
-	return top, bottom
+func watchTTYLeave() string {
+	return "\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l"
 }
 
 func (a *App) sdlcPauseCause(root string, driveErr error) string {
@@ -532,4 +594,35 @@ func sdlcStreamSummary(stream, raw string) string {
 		return "assistant: " + event.Part.Text
 	}
 	return ""
+}
+
+// sdlcRetryAction describes what resuming a paused run does, so the operator
+// is not guessing what "retry" means for this particular pause.
+func sdlcRetryAction(run ledger.Run) string {
+	st := run.Adaptive
+	if st == nil {
+		return "resume the run"
+	}
+	switch st.Outcome {
+	case adaptive.OutcomeVerificationEnvironment:
+		return "re-run verification (no revision is spent)"
+	case "review-workspace-drift", "review-recovery-invalid":
+		return "reassess the current workspace"
+	case "automatic-child-paused":
+		return "resume the parent after the child run"
+	}
+	if st.PendingDecision != "" {
+		return "retry the pending " + st.PendingDecision + " decision"
+	}
+	switch role := failedPauseRole(st.Outcome); role {
+	case "":
+		return "resume the run"
+	case "implementer":
+		if run.Verification != nil && !run.Verification.AllPassed && run.Verification.CandidateFingerprint == st.DiffRevision {
+			return "send the implementer back with the verification failures"
+		}
+		return "retry the implementer"
+	default:
+		return "retry the " + role
+	}
 }

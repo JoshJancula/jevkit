@@ -50,7 +50,7 @@ func (a *App) scheduleSpecialists(ctx context.Context, run ledger.Run, st *adapt
 	revision := st.PlanRevision
 	if kind == "diff" {
 		roles = []string{"qa", "security", "code-review"}
-		next = adaptive.Assessing
+		next = adaptive.Verifying
 		revision = st.DiffRevision
 	}
 	if err != nil {

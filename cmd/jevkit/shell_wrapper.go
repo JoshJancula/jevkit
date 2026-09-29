@@ -15,15 +15,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/JoshJancula/jevkit/internal/compact"
+	"github.com/JoshJancula/jevkit/internal/registry"
 	"github.com/JoshJancula/jevkit/internal/security"
 	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/security/review"
 )
 
 // shellWrapperCmd is invoked only after a runtime's PreToolUse hook rewrites a
 // shell call. Capturing here makes the compacted text the runtime's actual
 // tool result; no post-tool output mutation is required.
 func (a *App) shellWrapperCmd() *cobra.Command {
-	var workspace, runtime, command string
+	var workspace, runtime, command, session string
 	c := &cobra.Command{
 		Use:    "shell-wrapper",
 		Hidden: true,
@@ -33,16 +35,21 @@ func (a *App) shellWrapperCmd() *cobra.Command {
 			if strings.TrimSpace(workspace) == "" || strings.TrimSpace(command) == "" {
 				return usagef("shell wrapper requires --workspace and --command")
 			}
-			return a.runShellWrapper(workspace, runtime, command)
+			return a.runShellWrapperSession(workspace, runtime, command, session)
 		},
 	}
 	c.Flags().StringVar(&workspace, "workspace", "", "private runtime workspace")
 	c.Flags().StringVar(&runtime, "runtime", "", "private runtime name")
 	c.Flags().StringVar(&command, "command", "", "private original shell command")
+	c.Flags().StringVar(&session, "session", "", "private runtime session key")
 	return c
 }
 
 func (a *App) runShellWrapper(workspace, runtime, command string) error {
+	return a.runShellWrapperSession(workspace, runtime, command, "")
+}
+
+func (a *App) runShellWrapperSession(workspace, runtime, command, session string) error {
 	opts := a.securityLoadOptions()
 	// The wrapper's explicit workspace is authoritative even when the
 	// process's current directory differs from the invoking project.
@@ -71,6 +78,29 @@ func (a *App) runShellWrapper(workspace, runtime, command string) error {
 	}
 
 	raw := joinShellStreams(stdout.String(), stderr.String())
+	if cfg != nil && cfg.Injection.Mode != "off" && raw != "" {
+		if session == "" {
+			session = review.SessionKey(runtime, "", "", workspace)
+		}
+		pointer, storeErr := a.storeShellResult(runtime, raw)
+		if storeErr == nil {
+			cfg.Asker = a.securityAsker(context.Background())
+			reg, _ := registry.Load()
+			decider := &registry.Decider{Registry: reg, StateDir: a.stateHome(), Getenv: a.getenv}
+			v := security.CheckInjection(context.Background(), cfg, security.InjectionRequest{Body: raw, Runtime: runtime, Tool: "shell", ToolInput: command, Workspace: workspace, SessionKey: session, RawPointer: pointer, SDLCRunID: a.getenv("JEVKIT_SDLC_RUN_ID")}, decider)
+			if v.Halt {
+				rec, e := review.Create(a.stateHome(), review.Record{Runtime: runtime, SessionKey: session, Workspace: workspace, Tool: "shell", ToolInput: command, Score: v.Score, Confidence: v.Confidence, Reason: v.Reason, HeuristicHits: v.Hits, Excerpt: v.Excerpt, RawPointer: pointer, ContentSHA256: v.Hash, SDLCRunID: a.getenv("JEVKIT_SDLC_RUN_ID")})
+				if e == nil {
+					_ = registry.AppendDecision(a.stateHome(), registry.Decision{Timestamp: rec.Created.Format("2006-01-02T15:04:05Z07:00"), Decision: "halt", QuestionSetID: security.InjectionQuestionSetID, Surface: "security", Runtime: runtime, Confidence: v.Confidence, Reason: v.Reason, ReviewID: rec.ID})
+					a.outf("jevkit: tool output held for prompt-injection review %s. Run: jevkit security review %s\n", rec.ID, rec.ID)
+					if exitStatus != 0 {
+						return &exitError{code: exitStatus}
+					}
+					return nil
+				}
+			}
+		}
+	}
 	body := raw
 	compacted := false
 	if truthy(a.getenv("JEVKIT_COMPACT")) || truthy(a.getenv("JEVKIT_COMPACT_GENERIC")) {

@@ -59,6 +59,9 @@ func (a *App) runtimePassthrough(agentName, eventName string) int {
 }
 
 func (a *App) hook(ctx context.Context, agentName, eventName string) int {
+	if a.getenv("JEVKIT_SDLC_RUN_ID") != "" && a.getenv("JEVKIT_SDLC_HOOKS") == "0" {
+		return a.runtimePassthrough(agentName, eventName)
+	}
 	event, ok := parseHookEvent(eventName)
 	agent, loadErr := a.runtimeAgent(ctx, agentName)
 	if !ok {
@@ -89,7 +92,7 @@ func (a *App) runtimeAgent(ctx context.Context, name string) (agents.Agent, stri
 		loadError = securityErr.Error()
 	}
 	client, policy := a.compactionClient(ctx)
-	if securityCfg != nil && securityCfg.JevScoring {
+	if securityCfg != nil && (securityCfg.JevScoring || securityCfg.Injection.Mode != "off") {
 		securityCfg.Asker = a.securityAsker(ctx)
 	}
 	reg, _ := registry.Load()
@@ -112,6 +115,7 @@ func (a *App) runtimeAgent(ctx context.Context, name string) (agents.Agent, stri
 		return &clone, loadError
 	case *agents.Antigravity:
 		clone := *typed
+		clone.StateDir = a.stateHome()
 		clone.Security, clone.SecurityDecider = securityCfg, decider
 		return &clone, loadError
 	case *agents.OpenCode:
@@ -140,7 +144,7 @@ func (a *App) securityLoadOptions() securityconfig.LoadOptions {
 	if a.Yolo {
 		environ = append(environ, "JEVKIT_YOLO=1")
 	}
-	return securityconfig.LoadOptions{ConfigDir: a.ConfigDir, StateDir: a.StateDir, WorkDir: a.WorkDir, Name: a.SecurityPolicy, Environ: environ}
+	return securityconfig.LoadOptions{ConfigDir: a.ConfigDir, StateDir: a.stateHome(), WorkDir: a.WorkDir, Name: a.SecurityPolicy, Environ: environ}
 }
 
 func (a *App) compactionClient(ctx context.Context) (compact.Asker, *compact.Policy) {

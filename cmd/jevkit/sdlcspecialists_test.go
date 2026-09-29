@@ -138,7 +138,7 @@ func TestResumeLegacySpecialistPauseWithAdvisoryPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.PlanRevision = "existing-plan"
+	st.PlanRevision = adaptive.DigestHex([]byte("Existing plan"))
 	st.PendingDecision = "plan"
 	st.PendingPhase = adaptive.Implementing
 	st.PendingFocus = "research"

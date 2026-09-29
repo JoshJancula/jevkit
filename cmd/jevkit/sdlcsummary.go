@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/JoshJancula/jevkit/internal/redact/config"
 	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 	"github.com/JoshJancula/jevkit/internal/usage"
@@ -68,8 +69,11 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 	} else if driveErr != nil {
 		_, _ = fmt.Fprintf(out, "  Note:     %s\n", summaryText(a, driveErr.Error()))
 	}
-	if root.Adaptive != nil && root.RequirePlanApproval && root.Adaptive.PlanRevision != "" && root.ApprovedPlanRevision != root.Adaptive.PlanRevision {
+	if root.Adaptive != nil && root.RequirePlanApproval && root.Adaptive.PlanRevision != "" && !planApprovalComplete(root) {
 		_, _ = fmt.Fprintf(out, "  Plan:     %s\n", ledger.Open(a.sdlcRunsDir(), rootID).Dir+"/artifacts/plan.md")
+	}
+	if root.Adaptive != nil && root.Adaptive.Outcome == "command-authorization-required" {
+		_, _ = fmt.Fprintf(out, "  Checks:   %s\n", ledger.Open(a.sdlcRunsDir(), rootID).Dir+"/artifacts/checks.json")
 	}
 	if root.Adaptive != nil && root.Adaptive.Outcome == "child-plan-approval-required" && root.StageFlow != nil {
 		_, _ = fmt.Fprintf(out, "  Plan:     %s\n", ledger.Open(a.sdlcRunsDir(), root.StageFlow.ChildRunID).Dir+"/artifacts/plan.md")
@@ -122,6 +126,8 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 			role = "planner"
 		case adaptive.Implementing:
 			role = "implementer"
+		case adaptive.Verifying:
+			role = "verifier"
 		case adaptive.Assessing:
 			role = "assessor"
 		}
@@ -139,6 +145,9 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 			line += " → " + d.Outcome
 		}
 		_, _ = fmt.Fprintf(out, "    %s\n", summaryText(a, line))
+	}
+	if stage == adaptive.Done && outcome == "answer" {
+		a.sdlcSummaryAnswer(out, actions)
 	}
 
 	_, _ = fmt.Fprintln(out, "\n"+a.styled(out, ansiCyan, "  Token usage by runtime and model:"))
@@ -161,6 +170,49 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 	}
 	_, _ = fmt.Fprintf(out, "\n  %s     %s\n", a.styled(out, ansiCyan, "Next:"), summaryText(a, sdlcSummaryNext(root, rootID)))
 	_, _ = fmt.Fprintf(out, "  %s     jevkit sdlc logs %s\n", a.styled(out, ansiCyan, "Logs:"), rootID)
+}
+
+// An answer run's useful result lives in an invocation artifact. Show it in
+// shell scrollback after the live view closes, with the same redaction and
+// terminal-control filtering used for other agent text.
+func (a *App) sdlcSummaryAnswer(out io.Writer, actions []ledger.Decision) {
+	const displayLimit = 64 << 10
+	for i := len(actions) - 1; i >= 0; i-- {
+		d := actions[i]
+		if d.Kind != "invocation-outcome" || d.Choice != "answer" || d.Invocation == "" {
+			continue
+		}
+		artifact := "responses/" + d.Invocation + ".txt"
+		data, err := ledger.Open(a.sdlcRunsDir(), d.RunID).ReadArtifact(artifact)
+		if err != nil || strings.TrimSpace(string(data)) == "" {
+			continue
+		}
+		truncated := len(data) > displayLimit
+		if truncated {
+			data = data[:displayLimit]
+		}
+		cfg, err := config.Load(a.loadOptions())
+		if err != nil {
+			break
+		}
+		redactor, err := cfg.Redactor()
+		if err != nil {
+			break
+		}
+		clean, err := redactor.Apply(string(data))
+		if err != nil {
+			break
+		}
+		_, _ = fmt.Fprintln(out, "\n  Answer:")
+		for _, line := range strings.Split(strings.TrimRight(clean.Text, "\n"), "\n") {
+			_, _ = fmt.Fprintf(out, "    %s\n", ttySafeLine(line))
+		}
+		if truncated {
+			_, _ = fmt.Fprintln(out, "    … Answer shortened for terminal display; the saved response contains the full text.")
+		}
+		return
+	}
+	_, _ = fmt.Fprintln(out, "\n  Answer: Saved agent response unavailable; inspect the run logs and artifacts.")
 }
 
 func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Record) {
@@ -213,8 +265,16 @@ func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Re
 		return
 	}
 	rows := make([][]string, 0, len(keys))
+	var totalInvocations int
+	var totalToolCalls int64
+	var unknownToolCalls int
 	for _, key := range keys {
 		g := groups[key]
+		if key.runtime != "jev" {
+			totalInvocations += g.Invocations
+			totalToolCalls += g.ToolCalls
+			unknownToolCalls += g.UnknownToolCalls
+		}
 		model := key.model
 		if model == "" {
 			model = "(unknown)"
@@ -225,10 +285,15 @@ func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Re
 		} else if g.SuppliedCostUSD != nil {
 			cost = fmt.Sprintf("$%.6f", *g.SuppliedCostUSD)
 		}
-		rows = append(rows, []string{summaryText(a, key.runtime), summaryText(a, model), fmt.Sprint(g.Invocations), usageCount(g.InputTokens, g.UnknownInput), usageCount(g.OutputTokens, g.UnknownOutput), cost})
+		toolCount := "—"
+		if key.runtime != "jev" {
+			toolCount = usageCount(g.ToolCalls, g.UnknownToolCalls)
+		}
+		rows = append(rows, []string{summaryText(a, key.runtime), summaryText(a, model), fmt.Sprint(g.Invocations), toolCount, usageCount(g.InputTokens, g.UnknownInput), usageCount(g.OutputTokens, g.UnknownOutput), cost})
 	}
-	writeTable(out, []string{a.styled(out, ansiCyan, "RUNTIME"), a.styled(out, ansiCyan, "MODEL"), a.styled(out, ansiCyan, "CALLS"), a.styled(out, ansiCyan, "INPUT"), a.styled(out, ansiCyan, "OUTPUT"), a.styled(out, ansiCyan, "COST")}, rows)
-	_, _ = fmt.Fprintln(out, "    Cost: — unavailable; ~ estimated Jev cost. Runtime cost includes only calls that reported it.")
+	writeTable(out, []string{a.styled(out, ansiCyan, "RUNTIME"), a.styled(out, ansiCyan, "MODEL"), a.styled(out, ansiCyan, "INVOCATIONS"), a.styled(out, ansiCyan, "TOOL CALLS"), a.styled(out, ansiCyan, "INPUT"), a.styled(out, ansiCyan, "OUTPUT"), a.styled(out, ansiCyan, "COST")}, rows)
+	_, _ = fmt.Fprintf(out, "    Total: %d invocations, %s tool calls (%d unknown)\n", totalInvocations, formatInt(totalToolCalls), unknownToolCalls)
+	_, _ = fmt.Fprintln(out, "    Cost: — unavailable; ~ estimated Jev cost. Runtime cost includes only invocations that reported it.")
 }
 
 func usageCount(known int64, unknown int) string {
@@ -277,13 +342,19 @@ func sdlcSummaryNext(run ledger.Run, rootID string) string {
 			return "Review the child plan, then run: jevkit sdlc resume " + rootID + " --approve-plan"
 		}
 		if st.Outcome == "plan-approval-required" {
-			return "Review plan.md, then run: jevkit sdlc resume " + rootID + " --approve-plan"
+			return "Review plan.md, checks.json, and subtasks.json, then run: jevkit sdlc resume " + rootID + " --approve-plan"
+		}
+		if st.Outcome == "command-authorization-required" {
+			return "Review checks.json, then run: jevkit sdlc resume " + rootID + " --authorize-checks"
 		}
 		if st.Outcome == "automatic-child-paused" && run.AutoChildRunID != "" {
 			return "Inspect child " + run.AutoChildRunID + ", then resume the parent: jevkit sdlc resume " + rootID
 		}
 		if st.Outcome == "review-workspace-drift" || st.Outcome == "review-recovery-invalid" {
 			return "Reassess the changed workspace: jevkit sdlc resume " + rootID + " --retry-failed"
+		}
+		if st.Outcome == adaptive.OutcomeVerificationEnvironment {
+			return "Fix the supervisor environment named in the cause (e.g. which toolchain is first on PATH), then re-run verification: jevkit sdlc resume " + rootID + " --retry-failed"
 		}
 		if failedPauseRole(st.Outcome) != "" {
 			return "Fix the cause or enroll another eligible agent, then run: jevkit sdlc resume " + rootID + " --retry-failed"
@@ -299,8 +370,8 @@ func sdlcSummaryNext(run ledger.Run, rootID string) string {
 		}
 		return "Review the pause cause and limits; start a new run after addressing them."
 	default:
-		if run.RequirePlanApproval && st.PlanRevision != "" && run.ApprovedPlanRevision != st.PlanRevision {
-			return "Review plan.md, then run: jevkit sdlc resume " + rootID + " --approve-plan"
+		if run.RequirePlanApproval && st.PlanRevision != "" && !planApprovalComplete(run) {
+			return "Review plan.md, checks.json, and subtasks.json, then run: jevkit sdlc resume " + rootID + " --approve-plan"
 		}
 		return "Continue this run: jevkit sdlc resume " + rootID
 	}

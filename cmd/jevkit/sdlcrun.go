@@ -137,6 +137,10 @@ func (a *App) sdlcSilentStatus(out io.Writer, id string, step bool, completed st
 }
 
 func (a *App) sdlcRun(ctx context.Context, name, task, taskFile string, files []string, profile string, step bool) error {
+	return a.sdlcRunCreated(ctx, name, task, taskFile, files, profile, step, nil)
+}
+
+func (a *App) sdlcRunCreated(ctx context.Context, name, task, taskFile string, files []string, profile string, step bool, created *string) error {
 	name, taskFile, files, restore, err := a.sdlcProjectInputs(name, taskFile, files)
 	if err != nil {
 		return failf("%v", err)
@@ -146,19 +150,26 @@ func (a *App) sdlcRun(ctx context.Context, name, task, taskFile string, files []
 	if err := a.sdlcStartWithRunID(ctx, name, task, taskFile, files, false, "text", profile, &runID, true); err != nil {
 		return err
 	}
+	if created != nil {
+		*created = runID
+	}
 	if a.sdlcInteractive() {
+		// The live view reads Ctrl-C as a byte in raw mode. Give its worker
+		// a context we can cancel when the view exits, including on Ctrl-C.
+		driveCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		drive := func() error {
 			worker := a.sdlcDashboardWorker()
 			if step {
-				return worker.sdlcDrive(ctx, runID)
+				return worker.sdlcDrive(driveCtx, runID)
 			}
-			return worker.sdlcDriveUntilDone(ctx, runID)
+			return worker.sdlcDriveUntilDone(driveCtx, runID)
 		}
 		if !step {
-			return a.sdlcInteractiveDrive(ctx, runID, drive, false)
+			return a.sdlcInteractiveDrive(driveCtx, runID, drive, false)
 		}
-		return a.sdlcWatchDrive(ctx, runID, drive, func(strategy string) error {
-			return a.sdlcDashboardRetry(ctx, runID, strategy)
+		return a.sdlcWatchDrive(driveCtx, runID, drive, func(strategy string) error {
+			return a.sdlcDashboardRetry(driveCtx, runID, strategy)
 		})
 	}
 	a.sdlcProgress = &sdlcProgress{root: runID, out: a.Stdout, seen: map[string]int{}, last: map[string]string{}}

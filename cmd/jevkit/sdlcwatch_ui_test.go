@@ -37,6 +37,29 @@ func TestTTYFrameUsesCarriageReturnsAndKeepsLinesInsideTerminal(t *testing.T) {
 	}
 }
 
+func TestFrozenWatchShowsHowToResumeAndStop(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260928T183517Z-03827b88"}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{frozen: true, driving: true}, 80, 24)
+	if !strings.Contains(view, "DISPLAY FROZEN") || !strings.Contains(view, "p resume display") || !strings.Contains(view, "Ctrl-C stop") {
+		t.Fatalf("frozen watch has no recovery controls: %q", view)
+	}
+}
+
+func TestWatchShowsClaudeToolRequestBeforeFollowingText(t *testing.T) {
+	saved := worker.LogLine{Stream: "stdout", Text: `{"type":"assistant","message":{"content":[{"type":"text","text":"Checking the plan"},{"type":"tool_use","id":"tool-1","name":"Read","input":{"file_path":"plan.md"}}]}}`}
+	label, key, started, completed := watchActivity(saved)
+	if label != "Using Read plan.md" || key != "tool-1" || !started || completed {
+		t.Fatalf("Claude tool request hidden behind message text: %q %q %t %t", label, key, started, completed)
+	}
+	saved.Text = `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":[{"type":"text","text":"The plan calls for a lock."}]}]}}`
+	label, key, started, completed = watchActivity(saved)
+	title, detail := watchClaudeToolResult(saved.Text)
+	if label != "Tool result received" || key != "tool-1" || started || !completed || title != "Tool result" || len(detail) == 0 || !strings.Contains(strings.Join(detail, " "), "calls for a lock") {
+		t.Fatalf("Claude tool result missing: %q %q %t %t %q %#v", label, key, started, completed, title, detail)
+	}
+}
+
 func TestTTYWrappedCodeDiffAndControlStripping(t *testing.T) {
 	text := "    ┃ +" + strings.Repeat("added", 15) + "\x1b]8;;https://example.com\a\x1b[31m"
 	rows := ttyWrapPreserve(text, 32)
@@ -274,7 +297,7 @@ func TestTTYViewKeepsPauseAndControlsVisibleAtNarrowSize(t *testing.T) {
 	run := ledger.Run{RunID: runID, Task: strings.Repeat("Improve the contributor workflow ", 8), Adaptive: &adaptive.State{Stage: adaptive.Paused, Outcome: "planner-failed"}}
 	decisions := []ledger.Decision{{Kind: "invocation-outcome", Choice: "failed", Outcome: "paused"}, {Kind: "stage-transition", Choice: "paused", Outcome: "planner-failed"}}
 	view := a.sdlcTTYView([]ledger.Run{run}, decisions, watchTTYState{selected: -1, logs: true, help: true, paused: true, canRetry: true, cause: "invalid planning outcome"}, 80, 16)
-	if !strings.Contains(view, "AGENT 1/1") || !strings.Contains(view, "PAUSED  invalid planning outcome") || !strings.Contains(view, "r auto") || !strings.Contains(view, "q leave") {
+	if !strings.Contains(view, "AGENT 1/1") || !strings.Contains(view, "PAUSED  invalid planning outcome") || !strings.Contains(view, "r retry") || !strings.Contains(view, "q leave") {
 		t.Fatalf("lost core run information: %q", view)
 	}
 	lines := strings.Split(view, "\r\n")
@@ -308,8 +331,20 @@ func TestWatchNarrowControlsKeepDetachVisible(t *testing.T) {
 	a := newApp(t)
 	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Implementing}}
 	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{}, 80, 16)
-	if !strings.Contains(view, "q detach") || !strings.Contains(view, "wheel: history") {
+	if !strings.Contains(view, "q detach") || !strings.Contains(view, "p copy") {
 		t.Fatalf("navigation clipped at 80 columns: %q", view)
+	}
+}
+
+func TestTTYViewFormatsTokenUsage(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Implementing}}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{
+		inputTokens:  86389,
+		outputTokens: 22254425,
+	}, 100, 24)
+	if !strings.Contains(view, "Usage  86,389 in (0 unknown) · 22,254,425 out (0 unknown)") {
+		t.Fatalf("token usage was not formatted in watch footer: %q", view)
 	}
 }
 
@@ -318,7 +353,7 @@ func TestTTYHelpExplainsNavigationAndCanBeHidden(t *testing.T) {
 	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Implementing}}
 	state := watchTTYState{help: true, logs: true, driving: true}
 	view := a.sdlcTTYView([]ledger.Run{run}, nil, state, 100, 26)
-	for _, want := range []string{"HELP  Press ? to hide", "PgUp/PgDn: jump five", "J/K: scroll message text", "n: next agent", "l: show/hide logs"} {
+	for _, want := range []string{"HELP  Press ? to hide", "PgUp/PgDn: jump five", "j/k (either case): scroll message text", "n: next agent", "p: pause redraw to copy", "l: show/hide logs"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("help missing %q: %s", want, view)
 		}
@@ -335,7 +370,7 @@ func TestTTYHelpKeepsPauseAndRetryVisibleOnSmallTerminal(t *testing.T) {
 	state := watchTTYState{help: true, paused: true, canRetry: true, cause: "assessor reply invalid"}
 	for _, size := range []struct{ width, height int }{{80, 16}, {40, 16}, {32, 16}} {
 		view := a.sdlcTTYView([]ledger.Run{run}, []ledger.Decision{{Kind: "invocation-outcome", Choice: "failed"}}, state, size.width, size.height)
-		for _, want := range []string{"PAUSED  assessor reply invalid", "HELP  ?", "r auto", "q leave"} {
+		for _, want := range []string{"PAUSED  assessor reply invalid", "HELP  ?", "r retry", "q leave"} {
 			if !strings.Contains(view, want) {
 				t.Fatalf("%dx%d help lost %q: %s", size.width, size.height, want, view)
 			}
@@ -471,7 +506,7 @@ func TestTTYViewShowsEditedFileInHistory(t *testing.T) {
 	}
 }
 
-func TestWatchInputParserHandlesWheelArrowsAndIgnoresClicks(t *testing.T) {
+func TestWatchInputParserHandlesArrowsAndIgnoresMouseSequences(t *testing.T) {
 	var parser watchInputParser
 	feed := func(sequence string) []watchInputEvent {
 		var events []watchInputEvent
@@ -485,29 +520,22 @@ func TestWatchInputParserHandlesWheelArrowsAndIgnoresClicks(t *testing.T) {
 	for _, tc := range []struct {
 		sequence string
 		key      byte
-		row      int
-		mouse    bool
 	}{
-		{"\x1b[A", 'j', 0, false},
-		{"\x1b[B", 'k', 0, false},
-		{"\x1b[5~", 'u', 0, false},
-		{"\x1b[<64;20;8M", 'j', 8, true},
-		{"\x1b[<65;20;9M", 'k', 9, true},
+		{"\x1b[A", watchKeyHistoryOlder},
+		{"\x1b[B", watchKeyHistoryNewer},
+		{"\x1b[5~", watchKeyHistoryPageOlder},
+		{"\x1b[6~", watchKeyHistoryPageNewer},
 	} {
 		events := feed(tc.sequence)
-		if len(events) != 1 || events[0].key != tc.key || events[0].row != tc.row || events[0].mouse != tc.mouse {
+		if len(events) != 1 || events[0].key != tc.key {
 			t.Fatalf("%q: %#v", tc.sequence, events)
 		}
 	}
-	if events := feed("\x1b[<0;20;8M"); len(events) != 0 {
-		t.Fatalf("mouse click treated as navigation: %#v", events)
+	if events := feed("\x1b[<64;20;8M"); len(events) != 0 {
+		t.Fatalf("mouse sequence treated as navigation: %#v", events)
 	}
-	if !strings.Contains(watchTTYEnter(true), "\x1b[?1049h") || !strings.Contains(watchTTYEnter(true), "\x1b[?1006h") || !strings.Contains(watchTTYLeave(true), "\x1b[?1049l") {
-		t.Fatal("TTY session does not enter and leave alternate screen with mouse tracking")
-	}
-	frame := "SDLC run\r\n" + strings.Join(ttyBox("AGENT 1/1", []string{"Now  Editing docs"}, 40), "\r\n") + "\r\nUsage  0 in"
-	if top, bottom := watchAgentPaneRows(frame); top != 2 || bottom != 4 {
-		t.Fatalf("wrong mouse zone: %d-%d", top, bottom)
+	if !strings.Contains(watchTTYEnter(), "\x1b[?1049h") || !strings.Contains(watchTTYLeave(), "\x1b[?1049l") || !strings.Contains(watchTTYEnter(), "\x1b[?1000l\x1b[?1006l") || strings.Contains(watchTTYEnter(), "\x1b[?1000h") || strings.Contains(watchTTYEnter(), "\x1b[?1006h") {
+		t.Fatal("TTY session must preserve terminal mouse selection")
 	}
 }
 
@@ -523,6 +551,66 @@ func TestWatchRetryKeysSelectSessionStrategy(t *testing.T) {
 				t.Fatalf("retry key %q: got %q, want %q", tc.keys[i], got, tc.want)
 			}
 		}
+	}
+}
+
+func TestWatchScrollKeysAcceptEitherCaseAndKeepHistorySeparate(t *testing.T) {
+	for _, key := range []byte{'j', 'J'} {
+		if history, detail := watchScrollOffsets(key, 3, 4); history != 3 || detail != 5 {
+			t.Fatalf("%q should scroll message text older: %d, %d", key, history, detail)
+		}
+	}
+	for _, key := range []byte{'k', 'K'} {
+		if history, detail := watchScrollOffsets(key, 3, 4); history != 3 || detail != 3 {
+			t.Fatalf("%q should scroll message text newer: %d, %d", key, history, detail)
+		}
+	}
+	if history, detail := watchScrollOffsets(watchKeyHistoryOlder, 3, 4); history != 4 || detail != 0 {
+		t.Fatalf("up arrow should browse older activity: %d, %d", history, detail)
+	}
+	if history, detail := watchScrollOffsets(watchKeyHistoryNewer, 3, 4); history != 2 || detail != 0 {
+		t.Fatalf("down arrow should browse newer activity: %d, %d", history, detail)
+	}
+}
+
+func TestWatchFollowsActiveInvocationThenReturnsToOverview(t *testing.T) {
+	a := newApp(t)
+	runID := "run-20260924T230044Z-ac3257e1"
+	activeID := "run-20260924T230044Z-ca5e7964"
+	oldID := "run-20260924T230044Z-da5e7964"
+	dir := filepath.Join(a.sdlcRunsDir(), runID, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, agent, started string }{
+		{activeID, "active-builder", "2026-09-24T23:00:44Z"},
+		{oldID, "finished-reviewer", "2026-09-24T23:01:44Z"},
+	} {
+		meta, _ := json.Marshal(worker.LogMeta{Invocation: item.id, Agent: item.agent, Runtime: "codex", StartedAt: item.started})
+		if err := os.WriteFile(filepath.Join(dir, item.id+".json"), meta, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := ledger.Run{RunID: runID, Task: "Write docs", Adaptive: &adaptive.State{
+		Stage: adaptive.Implementing, Assignments: map[string]adaptive.Assignment{
+			activeID: {InvocationID: activeID, AgentID: "active-builder", Role: "implementer"},
+		},
+	}}
+	invocation := watchActiveInvocation([]ledger.Run{run})
+	if invocation != activeID {
+		t.Fatalf("active invocation = %q", invocation)
+	}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{selected: -1, focusInvocation: invocation, logs: true}, 80, 24)
+	if !strings.Contains(view, "AGENT VIEW") || !strings.Contains(view, "active-builder") || strings.Contains(view, "finished-reviewer") || strings.Contains(view, "Task  Write docs") {
+		t.Fatalf("active invocation did not get focused view: %q", view)
+	}
+	run.Adaptive.Assignments = nil
+	if invocation := watchActiveInvocation([]ledger.Run{run}); invocation != "" {
+		t.Fatalf("completed invocation remains active: %q", invocation)
+	}
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{selected: -1, logs: true}, 80, 24)
+	if !strings.Contains(view, "SDLC  ") || !strings.Contains(view, "Task  Write docs") || strings.Contains(view, "AGENT VIEW") {
+		t.Fatalf("overview did not return after completion: %q", view)
 	}
 }
 
@@ -545,5 +633,27 @@ func TestWatchCountsPartialRuntimeUsage(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Measured agent tokens: 120 input (1 unknown), 30 output (1 unknown)") {
 		t.Fatalf("partial runtime usage was dropped: %s", out.String())
+	}
+}
+
+func TestTTYPauseExplainsRetryAndShowsGuidanceBox(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Paused, Outcome: "implementer-failed"}}
+	state := watchTTYState{paused: true, canRetry: true, cause: "verification failed", retryAction: "send the implementer back with the verification failures"}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, state, 120, 24)
+	for _, want := range []string{"NEXT  r: send the implementer back", "g: tell the agent", "g guide+retry", "f new session"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("paused view lost %q: %s", want, view)
+		}
+	}
+	state.composing, state.draft = true, "only fix the new tests"
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, state, 120, 24)
+	if !strings.Contains(view, "GUIDANCE  only fix the new tests") || !strings.Contains(view, "Enter send guidance and retry") || strings.Contains(view, "NEXT  r:") {
+		t.Fatalf("guidance box not shown: %s", view)
+	}
+	state.composing, state.canRetry = false, false
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, state, 120, 24)
+	if !strings.Contains(view, "NEXT  this pause needs a new run") {
+		t.Fatalf("non-retryable pause lacks next step: %s", view)
 	}
 }

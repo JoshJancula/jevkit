@@ -36,6 +36,8 @@ const (
 	OutcomeVersionMismatch = "version_mismatch"
 	OutcomeGarbage         = "garbage"
 	OutcomeUnknownAgent    = "unknown_agent"
+	OutcomeHalt            = "halt"
+	OutcomeLatched         = "latched"
 )
 
 // emptyPassthrough is the framework fallback when no agent is available.
@@ -131,6 +133,9 @@ func Run(ctx context.Context, agent Agent, event Event, in io.Reader, out io.Wri
 	if res.resp.Deny {
 		outcome = OutcomeDeny
 		code = res.resp.ExitCode
+	}
+	if res.resp.Outcome != "" {
+		outcome = res.resp.Outcome
 	}
 	return writeOutcome(out, body, code, opts, usage.HookInvocation{
 		Agent: name, Event: string(event), Outcome: outcome, Tool: tool,

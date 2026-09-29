@@ -337,6 +337,13 @@ func (a *App) sdlcStartWithRunID(ctx context.Context, workflowName, task, taskFi
 		if len(pf.Missing) > 0 {
 			return failf("policy %s cannot start: %s", profile, strings.Join(pf.Missing, "; "))
 		}
+		choice, err := a.chooseSDLCRuntimeIntegration(ctx, format == "text")
+		if err != nil {
+			return failf("SDLC integrations: %v", err)
+		}
+		previousChoice := a.sdlcRuntimeChoice
+		a.sdlcRuntimeChoice = choice
+		defer func() { a.sdlcRuntimeChoice = previousChoice }()
 		if drive && workflowName == "" {
 			wf, selection, err := a.resolveWorkflow(ctx, "", task)
 			if err != nil {
@@ -458,7 +465,7 @@ func (a *App) startStageFlow(wf availableWorkflow, task string, files []seed.Fil
 	now := a.now()
 	runID := a.newRunID(now)
 	ts := now.UTC().Format(time.RFC3339)
-	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, AllowRead: append([]string(nil), a.sdlcAllowRead...), Workflow: wf.Name, GraphSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, StageFlow: &flow, TreeUsage: &ledger.TreeUsage{}, SessionStrategy: a.sdlcSessionChoice, RequirePlanApproval: !a.sdlcAutoChoice}
+	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, AllowRead: append([]string(nil), a.sdlcAllowRead...), Workflow: wf.Name, GraphSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, StageFlow: &flow, TreeUsage: &ledger.TreeUsage{}, SessionStrategy: a.sdlcSessionChoice, RuntimeIntegration: a.sdlcRuntimeChoice, RequirePlanApproval: !a.sdlcAutoChoice}
 	run.DelegateBuiltins, err = a.sdlcDelegationAllowed(p)
 	if err != nil {
 		return err
@@ -583,16 +590,34 @@ func (a *App) startAdaptive(name, task string, files []seed.FileArg, profile str
 			st.PlanRevision = fmt.Sprintf("%x", sha256.Sum256(data))
 			st.Stage = adaptive.Implementing
 		}
+		if artifact == adaptive.ArtifactChecks {
+			st.ChecksRevision = adaptive.DigestHex(data)
+		}
+		if artifact == adaptive.ArtifactSubtasks {
+			st.SubtasksRevision = adaptive.DigestHex(data)
+		}
 		if artifact == "patch.diff" {
 			st.DiffRevision = fmt.Sprintf("%x", sha256.Sum256(data))
-			st.Stage = adaptive.Assessing
+			st.Stage = adaptive.Verifying
+		}
+	}
+	if st.PlanRevision != "" {
+		if _, ok := contents[adaptive.ArtifactChecks]; !ok {
+			raw := emptyChecksBytes()
+			contents[adaptive.ArtifactChecks] = raw
+			st.ChecksRevision = adaptive.DigestHex(raw)
+		}
+		if _, ok := contents[adaptive.ArtifactSubtasks]; !ok {
+			raw := emptySubtasksBytes()
+			contents[adaptive.ArtifactSubtasks] = raw
+			st.SubtasksRevision = adaptive.DigestHex(raw)
 		}
 	}
 	now := a.now()
 	runID := a.newRunID(now)
 	store := ledger.Open(a.sdlcRunsDir(), runID)
 	ts := now.UTC().Format(time.RFC3339)
-	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, AllowRead: append([]string(nil), a.sdlcAllowRead...), Workflow: name, Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, TreeUsage: &ledger.TreeUsage{}, SessionStrategy: a.sdlcSessionChoice, RequirePlanApproval: !a.sdlcAutoChoice}
+	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, AllowRead: append([]string(nil), a.sdlcAllowRead...), Workflow: name, Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, TreeUsage: &ledger.TreeUsage{}, SessionStrategy: a.sdlcSessionChoice, RuntimeIntegration: a.sdlcRuntimeChoice, RequirePlanApproval: !a.sdlcAutoChoice}
 	run.DelegateBuiltins, err = a.sdlcDelegationAllowed(p)
 	if err != nil {
 		return err

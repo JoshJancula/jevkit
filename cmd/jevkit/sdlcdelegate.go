@@ -141,10 +141,22 @@ func (a *App) sdlcMaybeDelegate(ctx context.Context, run ledger.Run) (bool, erro
 	child.DelegateBuiltins = run.DelegateBuiltins
 	child.Adaptive.Stage = adaptive.Implementing
 	child.Adaptive.PlanRevision = run.Adaptive.PlanRevision
+	child.Adaptive.ChecksRevision = run.Adaptive.ChecksRevision
+	child.Adaptive.SubtasksRevision = run.Adaptive.SubtasksRevision
 	child.ApprovedPlanRevision = run.ApprovedPlanRevision
+	child.ApprovedChecksRevision = run.ApprovedChecksRevision
+	child.ApprovedSubtasksRevision = run.ApprovedSubtasksRevision
+	child.AuthorizedChecksRevision = run.AuthorizedChecksRevision
 	if plan, err := store.ReadArtifact("plan.md"); err == nil {
 		if err := childStore.WriteArtifact("plan.md", plan); err != nil {
 			return false, err
+		}
+	}
+	for _, name := range []string{adaptive.ArtifactChecks, adaptive.ArtifactSubtasks} {
+		if data, err := store.ReadArtifact(name); err == nil {
+			if err := childStore.WriteArtifact(name, data); err != nil {
+				return false, err
+			}
 		}
 	}
 	if err := childStore.WriteRun(child); err != nil {
@@ -217,8 +229,9 @@ func (a *App) driveAutoChild(ctx context.Context, parent ledger.Run) (bool, erro
 		parent.Adaptive.DiffRevision = child.Adaptive.DiffRevision
 	}
 	if parent.Adaptive.DiffRevision != "" {
-		parent.Adaptive.Stage = adaptive.Assessing
+		parent.Adaptive.Stage = adaptive.Verifying
 		parent.Adaptive.Assessments = nil
+		parent.Adaptive.CheckReceipts = nil
 		a.scheduleSpecialists(ctx, parent, parent.Adaptive, "diff")
 	} else {
 		parent.Adaptive.Stage = adaptive.Done

@@ -157,3 +157,67 @@ func TestDefaultStateDir(t *testing.T) {
 		t.Errorf("windows: %q", got)
 	}
 }
+
+// TestStatePathsAgreeAcrossOverrideForms confirms every jevkit-owned path
+// resolves under the same root regardless of whether StateDir came from the
+// default (already ends in "jevkit") or an explicit JEVKIT_STATE_DIR that
+// doesn't. auditPath/reviewPath used to bypass stateHome() and read
+// a.StateDir directly, which silently split state across two directories
+// whenever JEVKIT_STATE_DIR omitted the "jevkit" suffix.
+func TestStatePathsAgreeAcrossOverrideForms(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		stateDir string
+		want     string // the resolved <root>/jevkit directory
+	}{
+		{"default-shape (ends in jevkit)", filepath.Join("/home/u", ".local", "state", "jevkit"), filepath.Join("/home/u", ".local", "state", "jevkit")},
+		{"override without jevkit suffix", "/custom/state", filepath.Join("/custom/state", "jevkit")},
+		{"override already ending in jevkit", "/custom/state/jevkit", filepath.Join("/custom/state", "jevkit")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &App{StateDir: tc.stateDir}
+			jevkitDir := filepath.Join(a.stateHome(), "jevkit")
+			if jevkitDir != tc.want {
+				t.Fatalf("stateHome()+jevkit = %q, want %q", jevkitDir, tc.want)
+			}
+			if got := a.auditPath(); filepath.Dir(got) != tc.want {
+				t.Errorf("auditPath() dir = %q, want %q", filepath.Dir(got), tc.want)
+			}
+			if got := a.reviewPath(); filepath.Dir(got) != tc.want {
+				t.Errorf("reviewPath() dir = %q, want %q", filepath.Dir(got), tc.want)
+			}
+			if got := a.sdlcRunsDir(); !strings.HasPrefix(got, tc.want+string(filepath.Separator)) {
+				t.Errorf("sdlcRunsDir() = %q, want prefix %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAuditReviewFilesUsePrivatePermissions confirms the audit and review
+// stores create their files and directories with the same 0700/0600 mode
+// every other jevkit state package uses.
+func TestAuditReviewFilesUsePrivatePermissions(t *testing.T) {
+	a := &App{StateDir: t.TempDir(), Now: func() time.Time { return t0 }}
+	seedAudit(t, a)
+	rv := &audit.Review{Path: a.reviewPath(), Enabled: true, Now: a.Now}
+	if err := rv.Add(audit.Entry{Time: t0}); err != nil {
+		t.Fatalf("review add: %v", err)
+	}
+	dir := filepath.Dir(a.auditPath())
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o700 {
+		t.Errorf("audit dir perm = %o, want 0700", perm)
+	}
+	for _, p := range []string{a.auditPath(), a.reviewPath()} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if perm := fi.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s perm = %o, want 0600", p, perm)
+		}
+	}
+}

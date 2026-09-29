@@ -11,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
+	"github.com/JoshJancula/jevkit/internal/agents"
 	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 	securityconfig "github.com/JoshJancula/jevkit/internal/security/config"
@@ -29,34 +31,62 @@ type Request struct {
 	AllowRead      []string
 	Yolo           bool
 	SecurityPolicy string
+	SDLCRunID      string
 	LogDir         string
-	LiveOutput     func(stream, line string)
-	SessionID      string
-	CaptureSession bool
-	Compact        bool
+	// LogTailBytes overrides MaxLogTail for this invocation's saved
+	// stdout/stderr/lines.jsonl bound. Zero or negative uses MaxLogTail.
+	LogTailBytes     int
+	LiveOutput       func(stream, line string)
+	SessionID        string
+	CaptureSession   bool
+	Compact          bool
+	JevkitHooks      bool
+	JevkitBinary     string
+	JevkitCompaction *bool
 }
 
 type Reply struct {
-	Outcome          string   `json:"outcome"`
-	ReportedOutcome  string   `json:"-"`
-	Content          string   `json:"content"`
-	CostUSD          float64  `json:"costUsd"`
-	CostReported     bool     `json:"-"`
-	Focus            string   `json:"focus,omitempty"`
-	Reason           string   `json:"reason,omitempty"`
-	SessionID        string   `json:"sessionId,omitempty"`
-	InputTokens      *int64   `json:"inputTokens,omitempty"`
-	OutputTokens     *int64   `json:"outputTokens,omitempty"`
-	CompactCompleted bool     `json:"-"`
-	WorkspaceDrift   []string `json:"-"`
-	DriftTruncated   bool     `json:"-"`
+	Outcome                 string                 `json:"outcome"`
+	ReportedOutcome         string                 `json:"-"`
+	Content                 string                 `json:"content"`
+	CostUSD                 float64                `json:"costUsd"`
+	CostReported            bool                   `json:"-"`
+	Focus                   string                 `json:"focus,omitempty"`
+	Reason                  string                 `json:"reason,omitempty"`
+	NextSteps               []string               `json:"nextSteps,omitempty"`
+	AcceptanceCriteria      []string               `json:"acceptanceCriteria,omitempty"`
+	Checks                  []adaptive.Check       `json:"checks,omitempty"`
+	Subtasks                *adaptive.SubtaskGraph `json:"subtasks,omitempty"`
+	SessionID               string                 `json:"sessionId,omitempty"`
+	InputTokens             *int64                 `json:"inputTokens,omitempty"`
+	OutputTokens            *int64                 `json:"outputTokens,omitempty"`
+	ToolCalls               *int64                 `json:"toolCalls,omitempty"`
+	CacheReadTokens         *int64                 `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens     *int64                 `json:"cacheCreationTokens,omitempty"`
+	UsageProvenance         string                 `json:"usageProvenance,omitempty"`
+	StablePrefixBytes       int                    `json:"stablePrefixBytes,omitempty"`
+	StablePrefixFingerprint string                 `json:"stablePrefixFingerprint,omitempty"`
+	CompactCompleted        bool                   `json:"-"`
+	WorkspaceDrift          []string               `json:"-"`
+	DriftTruncated          bool                   `json:"-"`
 }
+
+// Usage provenance labels identify which runtime event supplied measured counts.
+const (
+	ProvenanceClaudeResult       = "claude.result"
+	ProvenanceCodexTurnCompleted = "codex.turn.completed"
+	ProvenanceCursorResult       = "cursor.result"
+	ProvenanceOpenCodeStepFinish = "opencode.step_finish"
+	ProvenanceAntigravityResult  = "antigravity.result"
+)
 
 type Executor interface {
 	Execute(context.Context, Request) (Reply, error)
 }
 
 type CLIExecutor struct{}
+
+var hookInstallMu sync.Mutex
 
 // InvocationFailure means the agent could not produce a usable result and its
 // invocation left the workspace unchanged, so another binding may be tried.
@@ -104,10 +134,23 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 		}
 		req.DiffPath = artifact.Name()
 	}
-	prompt := makePrompt(req)
+	layout := buildPrompt(req)
+	prompt := layout.Prompt
 	binary, args, err := command(req)
 	if err != nil {
 		return Reply{}, &InvocationFailure{Err: err}
+	}
+	if req.JevkitHooks {
+		adapter := agents.Lookup(req.Agent.Runtime)
+		if adapter == nil {
+			return Reply{}, fmt.Errorf("worker: no Jevkit hook adapter for %s", req.Agent.Runtime)
+		}
+		hookInstallMu.Lock()
+		_, err := agents.InstallAgentComponents(adapter, agents.InstallOptions{WorkDir: req.WorkDir, Scope: "project", Binary: req.JevkitBinary}, agents.Components{Hooks: true})
+		hookInstallMu.Unlock()
+		if err != nil {
+			return Reply{}, fmt.Errorf("worker: install Jevkit hooks: %w", err)
+		}
 	}
 	snapshot, err := newWorkspaceSnapshot(ctx, req.WorkDir)
 	if err != nil {
@@ -134,13 +177,28 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	prepareRuntimeCommand(cmd)
 	cmd.Dir = req.WorkDir
-	if req.Yolo || req.SecurityPolicy != "" {
+	if req.Yolo || req.SecurityPolicy != "" || req.SDLCRunID != "" || req.JevkitCompaction != nil {
 		cmd.Env = os.Environ()
 		if req.Yolo {
 			cmd.Env = append(cmd.Env, "JEVKIT_YOLO=1")
 		}
 		if req.SecurityPolicy != "" {
 			cmd.Env = append(cmd.Env, "JEVKIT_SECURITY_POLICY="+req.SecurityPolicy)
+		}
+		if req.SDLCRunID != "" {
+			cmd.Env = append(cmd.Env, "JEVKIT_SDLC_RUN_ID="+req.SDLCRunID)
+		}
+		if req.JevkitCompaction != nil {
+			value := "0"
+			if *req.JevkitCompaction {
+				value = "1"
+			}
+			cmd.Env = append(cmd.Env, "JEVKIT_COMPACT="+value)
+			hooks := "0"
+			if req.JevkitHooks {
+				hooks = "1"
+			}
+			cmd.Env = append(cmd.Env, "JEVKIT_SDLC_HOOKS="+hooks)
 		}
 	}
 	if req.Compact {
@@ -151,7 +209,11 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 		cmd.Stdin = strings.NewReader(prompt)
 	}
 	var stdout, stderr captureBuffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	structured := req.Agent.Runtime == "cursor" || req.Agent.Runtime == "antigravity" ||
+		(req.Agent.Runtime == "claude" && (req.Compact || req.LogDir != "" || req.LiveOutput != nil)) ||
+		((req.Agent.Runtime == "codex" || req.Agent.Runtime == "opencode") && req.CaptureSession)
+	toolCalls := newToolCallCounter(req.Agent.Runtime, structured)
+	cmd.Stdout, cmd.Stderr = io.MultiWriter(&stdout, toolCalls), &stderr
 	if req.LogDir != "" {
 		outLog, err := newInvocationLog(req, "stdout")
 		if err != nil {
@@ -161,17 +223,24 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 		if err != nil {
 			return Reply{}, err
 		}
-		cmd.Stdout = io.MultiWriter(&stdout, outLog)
+		cmd.Stdout = io.MultiWriter(&stdout, toolCalls, outLog)
 		cmd.Stderr = io.MultiWriter(&stderr, errLog)
 		defer func() { _ = outLog.Flush() }()
 		defer func() { _ = errLog.Flush() }()
+		defer func() { _ = outLog.close() }()
+		defer func() { _ = errLog.close() }()
+	}
+	partialUsage := func() Reply {
+		partial := withPromptLayout(failedUsage(req.Agent.Runtime, stdout.Bytes()), layout)
+		partial.ToolCalls = toolCalls.result()
+		return partial
 	}
 	if err := runRuntimeCommand(cmd); err != nil {
 		if ctx.Err() != nil {
-			return Reply{}, ctx.Err()
+			return partialUsage(), ctx.Err()
 		}
 		msg := stderr.String() + " " + stdout.String()
-		partial := failedUsage(req.Agent.Runtime, stdout.Bytes())
+		partial := partialUsage()
 		if authError(msg) {
 			partial.Outcome = "auth-failed"
 			return partial, nil
@@ -182,7 +251,7 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 	if resultPath != "" {
 		raw, err = os.ReadFile(resultPath)
 		if err != nil {
-			return Reply{}, retryableIfUnchanged(ctx, snapshot, before, fmt.Errorf("worker: read Codex result: %w", err))
+			return partialUsage(), retryableIfUnchanged(ctx, snapshot, before, fmt.Errorf("worker: read Codex result: %w", err))
 		}
 	}
 	var cursorSessionID string
@@ -191,13 +260,13 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 		var found bool
 		raw, cursorSessionID, cursorInput, cursorOutput, found = cursorResult(raw)
 		if !found {
-			return failedUsage(req.Agent.Runtime, stdout.Bytes()), retryableIfUnchanged(ctx, snapshot, before, fmt.Errorf("worker: Cursor stream ended without a final result; inspect the saved stdout and stderr logs"))
+			return partialUsage(), retryableIfUnchanged(ctx, snapshot, before, fmt.Errorf("worker: Cursor stream ended without a final result; inspect the saved stdout and stderr logs"))
 		}
 	}
 	compactCompleted := false
 	var compactSessionID string
 	var compactInput, compactOutput *int64
-	if req.Agent.Runtime == "claude" && (req.Compact || req.LiveOutput != nil) {
+	if req.Agent.Runtime == "claude" && (req.Compact || req.LogDir != "" || req.LiveOutput != nil) {
 		for _, line := range bytes.Split(stdout.Bytes(), []byte{'\n'}) {
 			var event struct {
 				Type      string `json:"type"`
@@ -224,7 +293,7 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 			}
 		}
 		if req.Compact && !compactCompleted {
-			return Reply{}, fmt.Errorf("worker: Claude /compact did not confirm completion: %s", truncate(stderr.String()+" "+stdout.String(), 500))
+			return partialUsage(), fmt.Errorf("worker: Claude /compact did not confirm completion: %s", truncate(stderr.String()+" "+stdout.String(), 500))
 		}
 	}
 	if req.Agent.Runtime == "opencode" && req.CaptureSession {
@@ -248,7 +317,7 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 		if content.Len() > 0 {
 			raw = []byte(content.String())
 		} else {
-			return failedUsage(req.Agent.Runtime, stdout.Bytes()), retryableIfUnchanged(ctx, snapshot, before, fmt.Errorf("worker: OpenCode returned no text reply; inspect saved stdout and stderr logs: %s", truncate(stderr.String(), 250)))
+			return partialUsage(), retryableIfUnchanged(ctx, snapshot, before, fmt.Errorf("worker: OpenCode returned no text reply; inspect saved stdout and stderr logs: %s", truncate(stderr.String(), 250)))
 		}
 	}
 	var sessionID string
@@ -279,7 +348,7 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 					sessionID = event.Result.ConversationID
 				}
 				if event.Result.Status != "SUCCESS" {
-					return Reply{}, fmt.Errorf("worker: Antigravity result status %s", event.Result.Status)
+					return partialUsage(), fmt.Errorf("worker: Antigravity result status %s", event.Result.Status)
 				}
 				raw = []byte(event.Result.Response)
 				inputTokens, outputTokens = &event.Result.Usage.InputTokens, &event.Result.Usage.OutputTokens
@@ -365,12 +434,19 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 	}
 	reply, err := ParseReply(raw)
 	if err != nil {
-		return failedUsage(req.Agent.Runtime, stdout.Bytes()), retryableIfUnchanged(ctx, snapshot, before, err)
+		return partialUsage(), retryableIfUnchanged(ctx, snapshot, before, err)
 	}
 	if !allowedOutcome(req.Assignment.Role, reply.Outcome) {
-		return failedUsage(req.Agent.Runtime, stdout.Bytes()), retryableIfUnchanged(ctx, snapshot, before, fmt.Errorf("worker: %s reply outcome %q is not allowed; expected %s", req.Assignment.Role, reply.Outcome, strings.Join(allowedOutcomes(req.Assignment.Role), ", ")))
+		return partialUsage(), retryableIfUnchanged(ctx, snapshot, before, fmt.Errorf("worker: %s reply outcome %q is not allowed; expected %s", req.Assignment.Role, reply.Outcome, strings.Join(allowedOutcomes(req.Assignment.Role), ", ")))
+	}
+	if req.Assignment.Role == "planner" {
+		if err := validatePlannerReply(reply); err != nil {
+			return partialUsage(), retryableIfUnchanged(ctx, snapshot, before, err)
+		}
+		reply = normalizePlannerReply(reply)
 	}
 	reply.SessionID, reply.InputTokens, reply.OutputTokens = sessionID, inputTokens, outputTokens
+	reply.ToolCalls = toolCalls.result()
 	measured := failedUsage(req.Agent.Runtime, stdout.Bytes())
 	if req.Agent.Runtime == "opencode" && measured.InputTokens != nil {
 		reply.InputTokens, reply.OutputTokens = measured.InputTokens, measured.OutputTokens
@@ -378,6 +454,8 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 	if measured.CostReported && !reply.CostReported {
 		reply.CostUSD, reply.CostReported = measured.CostUSD, true
 	}
+	applyMeasuredCache(&reply, measured)
+	reply = withPromptLayout(reply, layout)
 	reply.CompactCompleted = compactCompleted
 	after, err := snapshot.capture(ctx)
 	if err != nil {
@@ -413,31 +491,41 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 }
 
 // failedUsage extracts counts only from runtime events that explicitly report
-// them. It is used when the final structured reply is unavailable.
+// them. It is used when the final structured reply is unavailable, and also to
+// recover provider cache fields that adapters emit beside input/output.
+// Absent fields stay nil; present zeros are preserved as measured values.
+//
+// Result is kept as RawMessage because Claude/Cursor put the reply text in
+// result (a string) while Antigravity puts an object there. A typed struct
+// field would reject the whole line and drop usage/cost for those runtimes.
 func failedUsage(runtime string, raw []byte) Reply {
 	var reply Reply
 	for _, line := range bytes.Split(raw, []byte{'\n'}) {
 		var event struct {
-			Type         string   `json:"type"`
-			TotalCostUSD *float64 `json:"total_cost_usd"`
-			Result       struct {
-				Usage *struct {
-					Input  int64 `json:"input_tokens"`
-					Output int64 `json:"output_tokens"`
-				} `json:"usage"`
-			} `json:"result"`
-			Part struct {
+			Type         string          `json:"type"`
+			TotalCostUSD *float64        `json:"total_cost_usd"`
+			Result       json.RawMessage `json:"result"`
+			Part         struct {
 				Cost   *float64 `json:"cost"`
 				Tokens *struct {
 					Input  int64 `json:"input"`
 					Output int64 `json:"output"`
+					Cache  *struct {
+						Read  *int64 `json:"read"`
+						Write *int64 `json:"write"`
+					} `json:"cache"`
 				} `json:"tokens"`
 			} `json:"part"`
 			Usage *struct {
-				Input       int64 `json:"input_tokens"`
-				Output      int64 `json:"output_tokens"`
-				InputCamel  int64 `json:"inputTokens"`
-				OutputCamel int64 `json:"outputTokens"`
+				Input           *int64 `json:"input_tokens"`
+				Output          *int64 `json:"output_tokens"`
+				InputCamel      *int64 `json:"inputTokens"`
+				OutputCamel     *int64 `json:"outputTokens"`
+				CachedInput     *int64 `json:"cached_input_tokens"`
+				CacheRead       *int64 `json:"cache_read_input_tokens"`
+				CacheCreation   *int64 `json:"cache_creation_input_tokens"`
+				CacheReadCamel  *int64 `json:"cacheReadTokens"`
+				CacheWriteCamel *int64 `json:"cacheWriteTokens"`
 			} `json:"usage"`
 		}
 		if json.Unmarshal(line, &event) != nil {
@@ -449,34 +537,131 @@ func failedUsage(runtime string, raw []byte) Reply {
 			}
 			*reply.InputTokens += event.Part.Tokens.Input
 			*reply.OutputTokens += event.Part.Tokens.Output
+			if event.Part.Tokens.Cache != nil {
+				if event.Part.Tokens.Cache.Read != nil {
+					if reply.CacheReadTokens == nil {
+						reply.CacheReadTokens = new(int64)
+					}
+					*reply.CacheReadTokens += *event.Part.Tokens.Cache.Read
+				}
+				if event.Part.Tokens.Cache.Write != nil {
+					if reply.CacheCreationTokens == nil {
+						reply.CacheCreationTokens = new(int64)
+					}
+					*reply.CacheCreationTokens += *event.Part.Tokens.Cache.Write
+				}
+			}
+			reply.UsageProvenance = ProvenanceOpenCodeStepFinish
 		}
 		if runtime == "opencode" && event.Type == "step_finish" && event.Part.Cost != nil {
 			reply.CostUSD += *event.Part.Cost
 			reply.CostReported = true
+			if reply.UsageProvenance == "" {
+				reply.UsageProvenance = ProvenanceOpenCodeStepFinish
+			}
 		}
 		if event.TotalCostUSD != nil && (runtime == "claude" || runtime == "cursor") {
 			reply.CostUSD, reply.CostReported = *event.TotalCostUSD, true
 		}
 		if (runtime == "codex" || runtime == "claude") && event.Usage != nil && (event.Type == "turn.completed" || event.Type == "result") {
-			in, out := event.Usage.Input, event.Usage.Output
-			reply.InputTokens, reply.OutputTokens = &in, &out
+			in, out := derefOrZero(event.Usage.Input), derefOrZero(event.Usage.Output)
+			if event.Usage.Input != nil || event.Usage.Output != nil {
+				reply.InputTokens, reply.OutputTokens = &in, &out
+			}
+			if runtime == "claude" {
+				applyClaudeCache(&reply, event.Usage.CacheRead, event.Usage.CacheCreation)
+				reply.UsageProvenance = ProvenanceClaudeResult
+			}
+			if runtime == "codex" {
+				if event.Usage.CachedInput != nil {
+					v := *event.Usage.CachedInput
+					reply.CacheReadTokens = &v
+				}
+				reply.UsageProvenance = ProvenanceCodexTurnCompleted
+			}
 		}
 		if runtime == "cursor" && event.Usage != nil {
-			in, out := event.Usage.Input, event.Usage.Output
-			if event.Usage.InputCamel != 0 {
-				in = event.Usage.InputCamel
+			in := firstInt64(event.Usage.Input, event.Usage.InputCamel)
+			out := firstInt64(event.Usage.Output, event.Usage.OutputCamel)
+			if in != nil || out != nil {
+				reply.InputTokens, reply.OutputTokens = in, out
 			}
-			if event.Usage.OutputCamel != 0 {
-				out = event.Usage.OutputCamel
+			read := firstInt64(event.Usage.CacheRead, event.Usage.CacheReadCamel)
+			write := firstInt64(event.Usage.CacheCreation, event.Usage.CacheWriteCamel)
+			if read != nil {
+				reply.CacheReadTokens = read
 			}
-			reply.InputTokens, reply.OutputTokens = &in, &out
+			if write != nil {
+				reply.CacheCreationTokens = write
+			}
+			reply.UsageProvenance = ProvenanceCursorResult
 		}
-		if runtime == "antigravity" && event.Result.Usage != nil {
-			in, out := event.Result.Usage.Input, event.Result.Usage.Output
-			reply.InputTokens, reply.OutputTokens = &in, &out
+		if runtime == "antigravity" && len(event.Result) > 0 && event.Result[0] == '{' {
+			var result struct {
+				Usage *struct {
+					Input         *int64 `json:"input_tokens"`
+					Output        *int64 `json:"output_tokens"`
+					CacheRead     *int64 `json:"cache_read_input_tokens"`
+					CacheCreation *int64 `json:"cache_creation_input_tokens"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal(event.Result, &result) == nil && result.Usage != nil {
+				in, out := derefOrZero(result.Usage.Input), derefOrZero(result.Usage.Output)
+				if result.Usage.Input != nil || result.Usage.Output != nil {
+					reply.InputTokens, reply.OutputTokens = &in, &out
+				}
+				if result.Usage.CacheRead != nil || result.Usage.CacheCreation != nil {
+					applyClaudeCache(&reply, result.Usage.CacheRead, result.Usage.CacheCreation)
+				}
+				reply.UsageProvenance = ProvenanceAntigravityResult
+			}
 		}
 	}
 	return reply
+}
+
+func applyMeasuredCache(dst *Reply, measured Reply) {
+	if measured.CacheReadTokens != nil {
+		dst.CacheReadTokens = measured.CacheReadTokens
+	}
+	if measured.CacheCreationTokens != nil {
+		dst.CacheCreationTokens = measured.CacheCreationTokens
+	}
+	if measured.UsageProvenance != "" && dst.UsageProvenance == "" {
+		dst.UsageProvenance = measured.UsageProvenance
+	}
+	// Prefer measured provenance whenever cache counts came from the stream.
+	if measured.CacheReadTokens != nil || measured.CacheCreationTokens != nil {
+		dst.UsageProvenance = measured.UsageProvenance
+	}
+}
+
+func applyClaudeCache(reply *Reply, read, creation *int64) {
+	if read != nil {
+		v := *read
+		reply.CacheReadTokens = &v
+	}
+	if creation != nil {
+		v := *creation
+		reply.CacheCreationTokens = &v
+	}
+}
+
+func derefOrZero(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func firstInt64(values ...*int64) *int64 {
+	for _, v := range values {
+		if v != nil {
+			out := *v
+			return &out
+		}
+	}
+	return nil
 }
 
 func cursorResult(raw []byte) ([]byte, string, *int64, *int64, bool) {
@@ -500,13 +685,15 @@ func cursorResult(raw []byte) ([]byte, string, *int64, *int64, bool) {
 			inputTokens, outputTokens = nil, nil
 			for _, key := range []string{"inputTokens", "input_tokens"} {
 				if value, ok := event.Usage[key]; ok {
-					inputTokens = &value
+					v := value
+					inputTokens = &v
 					break
 				}
 			}
 			for _, key := range []string{"outputTokens", "output_tokens"} {
 				if value, ok := event.Usage[key]; ok {
-					outputTokens = &value
+					v := value
+					outputTokens = &v
 					break
 				}
 			}
@@ -561,7 +748,10 @@ func command(req Request) (string, []string, error) {
 		if req.CaptureSession {
 			args[4] = "json"
 		}
-		if req.Compact || req.LiveOutput != nil {
+		// The TUI reads the saved log instead of using LiveOutput. Request
+		// Claude's stream whenever logging is enabled so tool events reach
+		// that log while the invocation is still running.
+		if req.Compact || req.LogDir != "" || req.LiveOutput != nil {
 			args[4] = "stream-json"
 			args = append(args, "--verbose")
 		}
@@ -621,20 +811,10 @@ func command(req Request) (string, []string, error) {
 	}
 }
 
-func makePrompt(req Request) string {
-	diff := req.Diff
-	if len(diff) > 64*1024 {
-		diff = diff[:64*1024] + "\n[report excerpt ends here; inspect the saved artifact or workspace for the rest]"
-	}
-	if req.DiffPath != "" {
-		diff = fmt.Sprintf("Saved full change artifact: %s\nInspect this file and the workspace as needed. The excerpt below is bounded so the runtime accepts the prompt.\n%s", req.DiffPath, diff)
-	}
-	allowed := allowedOutcomes(req.Assignment.Role)
-	example := "answer"
-	if len(allowed) > 0 {
-		example = allowed[0]
-	}
-	return fmt.Sprintf("You are enrolled as agent %q for the %s role. Task: %s\nFocus: %s\nRouting context: %s\nPlan revision: %s\nPlan:\n%s\nChange report revision: %s\nChange report:\n%s\nReturn exactly one JSON object with outcome and content fields. For this role, outcome MUST be exactly one of: %s. Use a bare outcome value, for example {\"outcome\":\"%s\",\"content\":\"...\"}. Never include the role name in the outcome value. Complete the assigned role with available tools when possible. Return handoff with required focus and reason only when you cannot proceed; another agent may not be available. A handoff must leave the workspace unchanged. For planned, content is the complete plan. For changed, content is a concise description; Jevkit computes the change report from the workspace. For other outcomes, content is a concise explanation. Do not include Markdown fences. Reviewers must review the change report and changed files for this revision and must not edit files.", req.Agent.ID, req.Assignment.Role, req.Task, req.Assignment.Objective, req.Assignment.Reason, req.Assignment.Revision, req.Plan, req.Assignment.Revision, diff, strings.Join(allowed, ", "), example)
+func withPromptLayout(reply Reply, layout PromptLayout) Reply {
+	reply.StablePrefixBytes = layout.StablePrefixBytes
+	reply.StablePrefixFingerprint = layout.StablePrefixFingerprint
+	return reply
 }
 
 func allowedOutcomes(role string) []string {
@@ -702,6 +882,29 @@ func ParseReply(raw []byte) (Reply, error) {
 		return Reply{}, fmt.Errorf("worker: %s requires content", r.Outcome)
 	}
 	return r, nil
+}
+
+func validatePlannerReply(r Reply) error {
+	switch r.Outcome {
+	case "planned":
+		if err := adaptive.ValidatePlannedHandoff(r.Content, r.NextSteps, r.AcceptanceCriteria, r.Checks); err != nil {
+			return fmt.Errorf("worker: %w", err)
+		}
+	case "handoff":
+		if strings.TrimSpace(r.Focus) == "" || strings.TrimSpace(r.Reason) == "" {
+			return fmt.Errorf("worker: handoff requires focus and reason naming what is needed next")
+		}
+	}
+	return nil
+}
+
+func normalizePlannerReply(r Reply) Reply {
+	if r.Outcome != "planned" {
+		return r
+	}
+	normalized := adaptive.NormalizeSubtaskGraph(r.Subtasks)
+	r.Subtasks = &normalized
+	return r
 }
 
 func canonicalOutcome(raw string) string {

@@ -13,7 +13,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
+
+// sdlcRuntimeBinaries maps each known CLI runtime to the binary jevkit
+// invokes for it. Kept in one place so cliReach() and the capabilities
+// command never disagree about which binary a runtime name means.
+var sdlcRuntimeBinaries = map[string]string{"claude": "claude", "codex": "codex", "cursor": "cursor-agent", "opencode": "opencode", "antigravity": "agy"}
 
 func (a *App) sdlcPolicyPath() string {
 	return filepath.Join(a.WorkDir, ".jevkit", "sdlc", "policy.yaml")
@@ -182,7 +188,7 @@ func (a *App) cliReach() enrollment.Reach {
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
-	for runtime, binary := range map[string]string{"claude": "claude", "codex": "codex", "cursor": "cursor-agent", "opencode": "opencode", "antigravity": "agy"} {
+	for runtime, binary := range sdlcRuntimeBinaries {
 		if _, err := lookPath(binary); err == nil {
 			// Codex, Claude, and Cursor adapters use their read-only modes.
 			// OpenCode has no enforced read-only CLI mode here.
@@ -447,6 +453,64 @@ func (a *App) sdlcAgentsEnrollCmd() *cobra.Command {
 	c.Use = "enroll <id>"
 	c.Hidden = true
 	return c
+}
+
+// sdlcAgentsCapabilitiesCmd surfaces worker.RuntimeMatrices, the tested,
+// evidence-backed per-runtime capability contract, plus an actual CLI
+// version probe (not just a PATH lookup) for whichever runtimes are
+// installed. This is the discoverable form of the matrix built and verified
+// by internal/sdlc/worker's matrix tests.
+func (a *App) sdlcAgentsCapabilitiesCmd() *cobra.Command {
+	return &cobra.Command{Use: "capabilities", Short: "show the tested per-runtime CLI capability matrix", Args: cobra.NoArgs,
+		Long: `Reports, per CLI runtime, what CLIExecutor actually does: whether a
+read-only invocation can be enforced (and why not, when it can't), whether a
+writable invocation is supported and what approval argument it passes,
+whether a permission-bypass flag is used, whether the installed pre-tool
+hook can inspect and rewrite shell calls before they run, whether session
+resume is supported, and the CLI version jevkit can actually reach by
+running it. Cancellation and child-process cleanup are enforced the same way
+for every runtime (a process group killed on context cancellation or normal
+exit), not by a per-runtime flag, so they are not re-probed here.`,
+		Example: "  jevkit sdlc agents capabilities",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			lookPath := a.LookPath
+			if lookPath == nil {
+				lookPath = exec.LookPath
+			}
+			matrices := worker.RuntimeMatrices()
+			names := make([]string, 0, len(matrices))
+			for name := range matrices {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				m := matrices[name]
+				a.heading(strings.ToUpper(name))
+				binary := sdlcRuntimeBinaries[name]
+				resolved, lookErr := lookPath(binary)
+				if lookErr != nil {
+					a.outf("  CLI reach: %s not found on PATH\n", binary)
+				} else if version, err := worker.ProbeVersion(cmd.Context(), resolved, m.VersionArgs); err != nil {
+					a.outf("  CLI reach: %s found at %s but the version probe failed: %v\n", binary, resolved, err)
+				} else {
+					a.outf("  CLI reach: %s (%s)\n", resolved, version)
+				}
+				if m.ReadOnlyExecution {
+					a.outf("  Read-only execution: enforced (%s)\n", m.ReadOnlyApprovals)
+				} else {
+					a.outf("  Read-only execution: not enforced; jevkit fails closed instead of running a read-only role with write access (%s)\n", m.ReadOnlyUnenforceable)
+				}
+				a.outf("  Writable execution: %v (%s)\n", m.WritableExecution, m.WritableApprovals)
+				if m.PermissionBypassArgument != "" {
+					a.outf("  Permission-bypass argument: %s\n", m.PermissionBypassArgument)
+				}
+				a.outf("  Shell hook coverage: %v\n", m.ShellHookCoverage)
+				a.outf("  Workdir scoped: %v\n", m.WorkdirScoped)
+				a.outf("  Session resume: %v\n", m.SessionResume)
+				a.outf("  Cancellation / child cleanup: %v / %v (process-group based, same for every runtime)\n", m.Cancellation, m.ChildCleanup)
+			}
+			return nil
+		}}
 }
 
 type preflight struct {

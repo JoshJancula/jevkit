@@ -35,8 +35,8 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 			}
 			sort.Slice(runs, func(i, j int) bool { return runs[i].CreatedAt < runs[j].CreatedAt })
 		}
-		var input, output int64
-		unknownInput, unknownOutput := 0, 0
+		var input, output, cacheRead, cacheCreate, toolCalls int64
+		unknownInput, unknownOutput, unknownCacheRead, unknownCacheCreate, unknownCost, unknownToolCalls := 0, 0, 0, 0, 0, 0
 		for _, r := range runs {
 			seen := map[string]ledger.InvocationUsage{}
 			for _, u := range r.Usage {
@@ -49,9 +49,17 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 			sort.Strings(keys)
 			for _, key := range keys {
 				u := seen[key]
-				_, _ = fmt.Fprintf(a.Stdout, "%s %s %s/%s via %s/%s: input %s, output %s", r.RunID, u.Invocation, u.Agent, u.Role, u.Runtime, u.Model, tokenCount(u.InputTokens), tokenCount(u.OutputTokens))
+				_, _ = fmt.Fprintf(a.Stdout, "%s %s %s/%s via %s/%s: input %s, output %s, cache-read %s, cache-creation %s, tool calls %s",
+					r.RunID, u.Invocation, u.Agent, u.Role, u.Runtime, u.Model,
+					tokenCount(u.InputTokens), tokenCount(u.OutputTokens), tokenCount(u.CacheReadTokens), tokenCount(u.CacheCreationTokens), tokenCount(u.ToolCalls))
 				if u.CostUSD != nil {
 					_, _ = fmt.Fprintf(a.Stdout, ", cost $%.4f", *u.CostUSD)
+				} else {
+					_, _ = fmt.Fprintf(a.Stdout, ", cost unknown")
+					unknownCost++
+				}
+				if u.UsageProvenance != "" {
+					_, _ = fmt.Fprintf(a.Stdout, " [%s]", u.UsageProvenance)
 				}
 				_, _ = fmt.Fprintln(a.Stdout)
 				if u.InputTokens == nil {
@@ -59,14 +67,30 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 				} else {
 					input += *u.InputTokens
 				}
+				if u.ToolCalls == nil {
+					unknownToolCalls++
+				} else {
+					toolCalls += *u.ToolCalls
+				}
 				if u.OutputTokens == nil {
 					unknownOutput++
 				} else {
 					output += *u.OutputTokens
 				}
+				if u.CacheReadTokens == nil {
+					unknownCacheRead++
+				} else {
+					cacheRead += *u.CacheReadTokens
+				}
+				if u.CacheCreationTokens == nil {
+					unknownCacheCreate++
+				} else {
+					cacheCreate += *u.CacheCreationTokens
+				}
 			}
 		}
-		_, _ = fmt.Fprintf(a.Stdout, "Measured total: input %s (%d unknown), output %s (%d unknown)\n", formatInt(input), unknownInput, formatInt(output), unknownOutput)
+		_, _ = fmt.Fprintf(a.Stdout, "Measured total: input %s (%d unknown), output %s (%d unknown), cache-read %s (%d unknown), cache-creation %s (%d unknown), tool calls %s (%d unknown), cost (%d unknown)\n",
+			formatInt(input), unknownInput, formatInt(output), unknownOutput, formatInt(cacheRead), unknownCacheRead, formatInt(cacheCreate), unknownCacheCreate, formatInt(toolCalls), unknownToolCalls, unknownCost)
 		records, err := usage.ReadRecords(usage.Path(a.stateHome()))
 		if err != nil {
 			return err

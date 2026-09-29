@@ -27,7 +27,7 @@ func TestDecisionJourneyLogsAndUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, errs := run(a, "", "sdlc", "logs", id, "--stream", "decisions")
-	if code != exitOK || errs != "" || !strings.Contains(out, "specialist-check") || !strings.Contains(out, "continue implementation") {
+	if code != exitOK || !strings.Contains(errs, "session history") || !strings.Contains(out, "specialist-check") || !strings.Contains(out, "continue implementation") {
 		t.Fatalf("logs: %d %q %q", code, out, errs)
 	}
 	code, out, errs = run(a, "", "sdlc", "usage", id)
@@ -44,7 +44,7 @@ func TestSessionStrategyPersistsAndNewRoleStartsFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := ledger.Open(a.sdlcRunsDir(), id)
-	r := ledger.Run{RunID: id, Workflow: "feature", CreatedAt: time.Now().UTC().Format(time.RFC3339), Adaptive: &st, Sessions: map[string]string{"binding/planner": "prior-session"}}
+	r := ledger.Run{RunID: id, Workflow: "feature", WorkDir: "/proj-a", CreatedAt: time.Now().UTC().Format(time.RFC3339), Adaptive: &st, Sessions: map[string]string{"binding/planner": "prior-session"}}
 	if err := store.WriteRun(r); err != nil {
 		t.Fatal(err)
 	}
@@ -62,5 +62,44 @@ func TestSessionStrategyPersistsAndNewRoleStartsFresh(t *testing.T) {
 	role, session, err = a.chooseSession(context.Background(), store, r, adaptive.Assignment{InvocationID: "inv2", Binding: "binding", Role: "planner"}, "auto")
 	if err != nil || role != "resume" || session != "prior-session" {
 		t.Fatalf("same role: %q %q %v", role, session, err)
+	}
+}
+
+func TestSessionInvalidatesOnWorkdirAndRevisionChange(t *testing.T) {
+	a := newApp(t)
+	id := "session-stale"
+	st, err := adaptive.New("feature", "lean", 1, 2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.PlanRevision = "plan-2"
+	st.DiffRevision = "diff-2"
+	store := ledger.Open(a.sdlcRunsDir(), id)
+	r := ledger.Run{
+		RunID: id, Workflow: "feature", WorkDir: "/proj-b", SessionStrategy: "resume",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339), Adaptive: &st,
+		Sessions: map[string]string{"binding/planner": "prior-session"},
+		SessionContexts: map[string]ledger.SessionContext{
+			"binding/planner": {WorkDir: "/proj-a", PlanRevision: "plan-1", DiffRevision: "diff-1"},
+		},
+	}
+	if err := store.WriteRun(r); err != nil {
+		t.Fatal(err)
+	}
+	role, session, err := a.chooseSession(context.Background(), store, r, adaptive.Assignment{InvocationID: "inv", Binding: "binding", Role: "planner", Runtime: "claude"}, "auto")
+	if err != nil || role != "fresh" || session != "" {
+		t.Fatalf("workdir change: %q %q %v", role, session, err)
+	}
+
+	r.WorkDir = "/proj-a"
+	r.SessionContexts["binding/planner"] = ledger.SessionContext{WorkDir: "/proj-a", PlanRevision: "plan-1", DiffRevision: "diff-1"}
+	role, session, err = a.chooseSession(context.Background(), store, r, adaptive.Assignment{InvocationID: "inv2", Binding: "binding", Role: "planner", Runtime: "claude"}, "auto")
+	if err != nil || role != "compact" || session != "prior-session" {
+		t.Fatalf("revision change with compact runtime: %q %q %v", role, session, err)
+	}
+
+	role, session, err = a.chooseSession(context.Background(), store, r, adaptive.Assignment{InvocationID: "inv3", Binding: "binding", Role: "planner", Runtime: "opencode"}, "auto")
+	if err != nil || role != "fresh" || session != "" {
+		t.Fatalf("revision change without compact: %q %q %v", role, session, err)
 	}
 }

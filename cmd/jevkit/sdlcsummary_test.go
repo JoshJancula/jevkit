@@ -14,13 +14,13 @@ import (
 func TestFinalSummaryReportsPausedRunAndUsage(t *testing.T) {
 	a := newApp(t)
 	id := "run-20260925T154040Z-d74628dc"
-	in, out, cost := int64(120), int64(45), 0.0025
+	in, out, toolCalls, cost := int64(120), int64(45), int64(3), 0.0025
 	run := ledger.Run{
 		RunID: id, Workflow: "feature", Task: "Fix the review loop\x1b[31m", Adaptive: &adaptive.State{
 			Stage: adaptive.Paused, Outcome: "assessor-failed", PendingReason: "assessor reply invalid\x1b[31m",
 		},
 		Usage: []ledger.InvocationUsage{
-			{Invocation: "one", Runtime: "cursor", Model: "auto", Role: "planner", InputTokens: &in, OutputTokens: &out, CostUSD: &cost},
+			{Invocation: "one", Runtime: "cursor", Model: "auto", Role: "planner", InputTokens: &in, OutputTokens: &out, ToolCalls: &toolCalls, CostUSD: &cost},
 			{Invocation: "two", Runtime: "claude", Model: "sonnet", Role: "assessor"},
 		},
 	}
@@ -44,7 +44,8 @@ func TestFinalSummaryReportsPausedRunAndUsage(t *testing.T) {
 		"Run summary", "State:    PAUSED (assessor-failed)", "Cause:    assessor reply invalid",
 		"planner cursor-planner: planned", "assessor claude-reviewer: failed",
 		"Token usage by runtime and model:", "cursor", "auto", "claude", "sonnet",
-		"120", "45", "0 (1 unknown)", "$0.002500", "jev", "jev-test", "25", "6", "~$",
+		"INVOCATIONS", "TOOL CALLS", "120", "45", "0 (1 unknown)", "$0.002500", "jev", "jev-test", "25", "6", "~$",
+		"Total: 2 invocations, 3 tool calls (1 unknown)",
 		"jevkit sdlc resume " + id + " --retry-failed", "jevkit sdlc logs " + id,
 	} {
 		if !strings.Contains(got, want) {
@@ -53,6 +54,9 @@ func TestFinalSummaryReportsPausedRunAndUsage(t *testing.T) {
 	}
 	if strings.Contains(got, "\x1b") {
 		t.Fatalf("terminal controls leaked into summary: %q", got)
+	}
+	if !strings.Contains(strings.ReplaceAll(got, " ", ""), "│jev│jev-test│1│—│25│6") {
+		t.Fatalf("Jev tool calls should be inapplicable: %s", got)
 	}
 }
 
@@ -83,13 +87,34 @@ func TestFinalSummaryExplainsActiveAndCompletedRuns(t *testing.T) {
 	}
 }
 
+func TestFinalSummaryPrintsSavedAnswer(t *testing.T) {
+	a := newApp(t)
+	id := "answer-run"
+	store := ledger.Open(a.sdlcRunsDir(), id)
+	if err := store.WriteRun(ledger.Run{RunID: id, Workflow: "review", Adaptive: &adaptive.State{Stage: adaptive.Done, Outcome: "answer"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteArtifact("responses/inv.txt", []byte("Verdict: fix the race.\n- Check the lock\n\x1b[31mThen rerun tests\x1b[0m")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendDecision(ledger.Decision{RunID: id, Kind: "invocation-outcome", Invocation: "inv", Stage: adaptive.Planning, Choice: "answer", Outcome: adaptive.Done}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	a.sdlcFinalSummary(&out, id, nil)
+	got := out.String()
+	if !strings.Contains(got, "Answer:\n    Verdict: fix the race.\n    - Check the lock\n    Then rerun tests") || strings.Contains(got, "\x1b") {
+		t.Fatalf("saved answer missing or terminal controls leaked: %q", got)
+	}
+}
+
 func TestFinalSummaryUsesColorAndAlignedUsageTable(t *testing.T) {
 	a := newApp(t)
 	a.Environ = append(a.Environ, "CLICOLOR_FORCE=1")
 	id := "run-20260925T154040Z-d74628dc"
-	input, output := int64(27713), int64(2431)
+	input, output, toolCalls := int64(27713), int64(2431), int64(1200)
 	run := ledger.Run{RunID: id, Workflow: "bugfix", Adaptive: &adaptive.State{Stage: adaptive.Done, Outcome: "approved"},
-		Usage: []ledger.InvocationUsage{{Invocation: "one", Runtime: "cursor", Role: "planner", InputTokens: &input, OutputTokens: &output}}}
+		Usage: []ledger.InvocationUsage{{Invocation: "one", Runtime: "cursor", Role: "planner", InputTokens: &input, OutputTokens: &output, ToolCalls: &toolCalls}}}
 	if err := ledger.Open(a.sdlcRunsDir(), id).WriteRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +138,7 @@ func TestFinalSummaryUsesColorAndAlignedUsageTable(t *testing.T) {
 	if width == 0 {
 		t.Fatal("no usage table rendered")
 	}
-	if !strings.Contains(strings.ReplaceAll(got, " ", ""), "│cursor│(unknown)│1│27,713│2,431") {
+	if !strings.Contains(strings.ReplaceAll(got, " ", ""), "│cursor│(unknown)│1│1,200│27,713│2,431") {
 		t.Fatalf("token counts were not comma-grouped: %q", got)
 	}
 }
@@ -141,16 +166,16 @@ func TestFormatInt(t *testing.T) {
 
 func TestFinalUsageSeparatesModelsWithinRuntime(t *testing.T) {
 	a := newApp(t)
-	one, two := int64(10), int64(20)
+	one, two, tools := int64(10), int64(20), int64(4)
 	runs := []ledger.Run{{Usage: []ledger.InvocationUsage{
-		{Invocation: "a", Runtime: "codex", Model: "small", InputTokens: &one, OutputTokens: &one},
+		{Invocation: "a", Runtime: "codex", Model: "small", InputTokens: &one, OutputTokens: &one, ToolCalls: &tools},
 		{Invocation: "b", Runtime: "codex", Model: "large", InputTokens: &two, OutputTokens: &two},
 		{Invocation: "b", Runtime: "codex", Model: "large", InputTokens: &two, OutputTokens: &two},
 	}}}
 	var b bytes.Buffer
 	a.sdlcUsageTable(&b, runs, nil)
 	lines := strings.Split(b.String(), "\n")
-	for _, want := range []string{"│codex│large│1│20│20", "│codex│small│1│10│10"} {
+	for _, want := range []string{"│codex│large│1│0(1unknown)│20│20", "│codex│small│1│4│10│10"} {
 		found := false
 		for _, line := range lines {
 			if strings.Contains(strings.ReplaceAll(line, " ", ""), want) {
@@ -160,5 +185,8 @@ func TestFinalUsageSeparatesModelsWithinRuntime(t *testing.T) {
 		if !found {
 			t.Fatalf("missing model row %q:\n%s", want, b.String())
 		}
+	}
+	if !strings.Contains(b.String(), "Total: 2 invocations, 4 tool calls (1 unknown)") {
+		t.Fatalf("missing runtime totals: %s", b.String())
 	}
 }
