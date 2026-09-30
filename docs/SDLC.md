@@ -23,10 +23,22 @@ From a Git project directory, add a CLI agent with a model supported by that CLI
 ```bash
 jevkit sdlc agents add codex --model YOUR_MODEL --rubric "General coding work" --role all
 jevkit sdlc doctor --policy lean
-jevkit sdlc agents capabilities   # tested per-runtime read-only / write boundaries
+jevkit sdlc agents c                   # per-agent tool configuration and runtime support
 ```
 
 `jevkit sdlc agents` shows your roster. `jevkit sdlc agents discover` is optional inventory; it does not grant permission to use an agent. You can enroll separate planners, implementers, and assessors later.
+
+Use `jevkit sdlc agents c` or `jevkit sdlc agents caps` for the roster path, supported
+tool settings, and copyable per-agent YAML examples. Focus on one runtime with
+`jevkit sdlc agents c -r claude`; add `--details` for CLI versions, hooks, and
+execution diagnostics. The full `agents capabilities` command remains available.
+
+Inspect or configure project integration defaults with `jevkit sdlc i` or
+`jevkit sdlc int`. For example:
+
+```sh
+jevkit sdlc i --hooks on --mcp on --compaction on
+```
 
 ## Run a task
 
@@ -215,6 +227,128 @@ agents:
 
 ## Project policy
 
+### Tool allowances for SDLC agents
+
+Tool configuration follows the invocation's agent selection. An entry with
+`agent: security-reviewer`, for example, launches Claude with
+`--agent security-reviewer`; Claude owns that definition's tool allowances.
+Jevkit does not generate tool restrictions, role-derived permission modes, or
+permission-bypass flags for named Claude, OpenCode, or Antigravity agents.
+Host-native subagents likewise keep their host configuration.
+
+For a runtime/model entry without `agent`, you can narrow built-in tools in
+the personal roster with an optional `tools` block:
+
+```yaml
+version: 1
+agents:
+  - id: focused-builder
+    via: runtime
+    runtime: codex
+    model: YOUR_MODEL
+    roles: [implementer]
+    rubric: Implement the approved plan using local project context.
+    tools:
+      shell: true
+      web: false
+      delegate: false
+```
+
+Use `tools: auto` to explicitly inherit the runtime's existing tool settings
+and approval rules. Omitting `tools` has the same behavior. `auto` works for
+every runtime and for native agents, where the selected native definition owns
+the settings. It does not infer permissions from the SDLC role or bypass
+runtime denials. `tools: all` is not supported.
+
+These controls currently support **Codex and Claude**. `false` disables the
+specified built-in tool family; `true` or an omitted field keeps the runtime's
+existing behavior and approval rules. `true` does not bypass approvals or
+override a runtime's own denial. Omit the entire block to keep existing
+behavior. Empty blocks, unknown fields, restrictions on unsupported runtimes,
+and restriction mappings combined with a native agent selection are rejected
+when loading the roster.
+Optional project suggestions in `agents.yaml` can carry the same block; it
+is copied when the suggestion is enrolled.
+
+| Field | Codex | Claude |
+| --- | --- | --- |
+| `shell` | Default shell tool (`features.shell_tool`) | `Bash`, `PowerShell` |
+| `web` | Built-in web search (`web_search`) | `WebSearch`, `WebFetch` |
+| `delegate` | Built-in collaboration tools (`features.multi_agent`) | `Agent`, legacy `Task` |
+
+These settings control those built-in tools. They do not filter MCP tools,
+disable shell network access, or prevent shell commands from launching
+another program. File write boundaries remain governed by the existing role
+and agent settings. A CLI invocation selecting a named agent cannot satisfy
+a requirement for Jevkit-enforced read-only execution: use a runtime/model entry for that
+requirement, or let the native definition own permissions under a role that
+does not require Jevkit enforcement.
+
+Settings are passed only to the individual CLI invocation. `sdlc agents`
+shows configured restrictions and native ownership; `sdlc agents capabilities`
+shows how to configure each entry, with a compact runtime support table.
+Use `jevkit sdlc agents c` as a shortcut. Sessions are reused only for the
+same binding, role, and tool settings. Changes after an assignment was saved
+pause that assignment; retry to select using the current settings.
+
+Runtime controls: [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference),
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
+
+### Additional runtime arguments
+
+CLI entries (`via: runtime`) can set `runtimeArgs` to a string of additional
+options. This works for Codex, Claude, Cursor, OpenCode, and Antigravity,
+including entries selecting a named native agent:
+
+```yaml
+version: 1
+agents:
+  - id: autonomous-builder
+    via: runtime
+    runtime: claude
+    model: YOUR_MODEL
+    roles: [implementer]
+    rubric: Implement approved changes.
+    tools: auto
+    runtimeArgs: '--dangerously-skip-permissions --effort high'
+```
+
+Jevkit splits the string on whitespace, respecting single quotes, double
+quotes, and backslash escapes. Each resulting word is passed directly as a CLI
+argument after generated defaults and before the task prompt. There is no shell
+execution, variable expansion, command substitution, or glob expansion. For
+example, `--append-system-prompt "Use local project context"` passes the quoted
+text as one argument. Unclosed quotes and unfinished escapes are rejected.
+
+Explicit permission options replace the adapter's default permission mode;
+for example, Claude's `--dangerously-skip-permissions` is passed without an
+additional role-derived `--permission-mode plan`. These are user-selected
+options, so native agents receive them too. Empty or omitted `runtimeArgs`
+preserves existing behavior. Runtime-specific options are validated by the CLI.
+
+Jevkit reserves options for model and agent selection, prompt transport, output
+format, working directory, and session routing. Use `model` and `agent` in the
+roster for those bindings. Permission overrides cannot be combined with an
+explicit `readOnly` requirement, and competing tool flags cannot override a
+`tools` restriction mapping. Jevkit's Codex tool configuration overrides are
+applied after user arguments. These checks cover known CLI controls; custom
+configuration files and extensions remain governed by the runtime.
+
+Project suggestions can carry `runtimeArgs`; enrollment copies them into the
+personal roster. You can also set them when adding an entry:
+
+```sh
+jevkit sdlc agents add autonomous-builder --runtime claude --model MODEL --role implementer --rubric 'Implement approved changes' --runtime-args='--dangerously-skip-permissions --effort high'
+```
+
+`sdlc agents` displays the configured string. Changing it prevents reuse of an
+existing session and pauses assignments reserved with the previous value.
+Additional arguments do not create independent quorum bindings. They apply to
+task invocations and Claude's in-session compaction, rather than the separate
+Codex app-server maintenance command.
+
+### Role and run policy
+
 Create `.jevkit/sdlc/policy.yaml` to narrow the default policy. The default permits all three roles to use enrolled host-self, native, or CLI agents, but grants no enrollment. The default profile is `lean`, the concurrency limit is 3, and the assignment limit is 20.
 
 The default workflow uses planner, implementer, and assessor roles. These are
@@ -259,7 +393,7 @@ roles:
     write: true
 ```
 
-Each role can set `via`, `runtimes`, `write`, `readOnly`, `isolated`, and `writeScopes`. Set `write: false` to require enforced read-only execution. A scoped or restricted assignment is eligible only when its host or runtime adapter reports that it can enforce the restriction. Codex enforces an OS sandbox mode; Claude and Cursor use prompting modes; OpenCode has no read-only flag and fails closed for read-only roles; Antigravity writable invocations pass `--dangerously-skip-permissions` (surfaced by `jevkit sdlc agents capabilities`). None claims isolation or scoped-write enforcement beyond worktree isolation for fan-out. The project may set `quorums` by profile. `lean` defaults to one assessor, `collaborative` to two, and `assured` to three. Agents with different IDs but the same binding count once toward quorum.
+Each role can set `via`, `runtimes`, `write`, `readOnly`, `isolated`, and `writeScopes`. Set `write: false` to require enforced read-only execution. A scoped or restricted assignment is eligible only when its host or runtime adapter reports that it can enforce the restriction. For runtime/model entries without a native agent selection, Codex enforces an OS sandbox mode; Claude and Cursor use prompting modes; OpenCode has no read-only flag and fails closed for read-only roles; Antigravity writable invocations pass `--dangerously-skip-permissions` (surfaced by `jevkit sdlc agents capabilities`). Named native agents own their permission configuration and receive no such overrides. None claims isolation or scoped-write enforcement beyond worktree isolation for fan-out. The project may set `quorums` by profile. `lean` defaults to one assessor, `collaborative` to two, and `assured` to three. Agents with different IDs but the same binding count once toward quorum, even with different tool settings.
 
 `adaptiveBuiltinDelegation` is `off` by default. `--delegate-builtins` enables
 built-in delegation for a single `run` or `start`, including when the project
@@ -336,10 +470,10 @@ agents running in a worktree. Tool-output compaction is separate from the
 processes and requires hooks and a configured Jevkit API key; when Jevkit is
 unavailable, the hooks keep the original tool output. Noninteractive runs do
 not prompt and use these features off unless a default has been saved.
-Configure them with `jevkit sdlc integrations --hooks on --compaction on --mcp on`,
-or inspect the current choice with `jevkit sdlc integrations`. For MCP alone,
-use `jevkit sdlc integrations --mcp on`.
-Use `jevkit sdlc integrations --ask-every-run` to clear a saved default, or
+Configure them with `jevkit sdlc i --hooks on --compaction on --mcp on`,
+or inspect the current choice with `jevkit sdlc i`. For MCP alone,
+use `jevkit sdlc i --mcp on`.
+Use `jevkit sdlc i --ask-every-run` to clear a saved default, or
 `--hooks off` or `--mcp off` to change an individual auto-install default.
 If hooks are declined for a run, previously installed Jevkit hooks pass
 through during that run. Project hook files remain installed; remove them with

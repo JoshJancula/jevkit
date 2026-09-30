@@ -57,9 +57,11 @@ type Agent struct {
 	Model        string            `yaml:"model,omitempty" json:"model,omitempty"`
 	RuntimeAgent string            `yaml:"agent,omitempty" json:"agent,omitempty"`
 	Binary       string            `yaml:"binary,omitempty" json:"binary,omitempty"`
+	RuntimeArgs  string            `yaml:"runtimeArgs,omitempty" json:"runtimeArgs,omitempty"`
 	WriteScopes  []string          `yaml:"writeScopes,omitempty" json:"writeScopes,omitempty"`
 	ReadOnly     bool              `yaml:"readOnly,omitempty" json:"readOnly,omitempty"`
 	Isolated     bool              `yaml:"isolated,omitempty" json:"isolated,omitempty"`
+	Tools        *ToolPolicy       `yaml:"tools,omitempty" json:"tools,omitempty"`
 }
 
 // Ready reports whether a roster entry may be offered for work. Starter
@@ -210,6 +212,12 @@ func (r Roster) Validate() error {
 			return fmt.Errorf("agent IDs must be nonempty and unique: %q", a.ID)
 		}
 		seen[a.ID] = true
+		if err := a.ValidateTools(); err != nil {
+			return err
+		}
+		if _, err := a.ParseRuntimeArgs(a.ReadOnly); err != nil {
+			return err
+		}
 		if len(a.Roles) == 0 || strings.TrimSpace(a.Rubric) == "" {
 			return fmt.Errorf("agent %q needs roles and rubric", a.ID)
 		}
@@ -263,6 +271,12 @@ func Eligible(p Policy, roster Roster, reach Reach, req Requirement) []Candidate
 	req.Isolated = req.Isolated || rule.Isolated
 	var out []Candidate
 	for _, a := range roster.Agents {
+		if a.ValidateTools() != nil {
+			continue
+		}
+		if _, err := a.ParseRuntimeArgs(req.ReadOnly || a.ReadOnly); err != nil {
+			continue
+		}
 		if !a.Ready() || req.Excluded[a.ID] || !contains(a.Roles, req.Role) || !contains(rule.Via, a.Via) {
 			continue
 		}
@@ -298,6 +312,11 @@ func Eligible(p Policy, roster Roster, reach Reach, req Requirement) []Candidate
 			}
 			binding = "native:" + a.Subagent
 		case Runtime:
+			// A named definition owns its permissions. Do not claim that the
+			// scaffold adapter's read-only flag constrains that definition.
+			if a.RuntimeAgent != "" && (req.ReadOnly || a.ReadOnly) {
+				continue
+			}
 			cap, ok := reach.Runtimes[a.Runtime]
 			if a.Binary != "" {
 				cap, ok = reach.Binaries[a.Binary]

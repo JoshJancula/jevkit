@@ -148,26 +148,28 @@ type SessionContext struct {
 // ReviewRecovery is durable evidence for a parsed review that was interrupted
 // by workspace drift or a crash before its result was applied.
 type ReviewRecovery struct {
-	Invocation          string   `json:"invocation"`
-	Agent               string   `json:"agent"`
-	Binding             string   `json:"binding"`
-	Runtime             string   `json:"runtime"`
-	Model               string   `json:"model,omitempty"`
-	Revision            string   `json:"revision"`
-	Outcome             string   `json:"outcome"`
-	Content             string   `json:"content,omitempty"`
-	Reason              string   `json:"reason,omitempty"`
-	SessionID           string   `json:"sessionId,omitempty"`
-	InputTokens         *int64   `json:"inputTokens,omitempty"`
-	OutputTokens        *int64   `json:"outputTokens,omitempty"`
-	ToolCalls           *int64   `json:"toolCalls,omitempty"`
-	CacheReadTokens     *int64   `json:"cacheReadTokens,omitempty"`
-	CacheCreationTokens *int64   `json:"cacheCreationTokens,omitempty"`
-	CostUSD             *float64 `json:"costUsd,omitempty"`
-	UsageProvenance     string   `json:"usageProvenance,omitempty"`
-	Paths               []string `json:"paths,omitempty"`
-	Truncated           bool     `json:"truncated,omitempty"`
-	Applied             bool     `json:"applied,omitempty"`
+	ToolPolicyFingerprint  string   `json:"toolPolicyFingerprint,omitempty"`
+	RuntimeArgsFingerprint string   `json:"runtimeArgsFingerprint,omitempty"`
+	Invocation             string   `json:"invocation"`
+	Agent                  string   `json:"agent"`
+	Binding                string   `json:"binding"`
+	Runtime                string   `json:"runtime"`
+	Model                  string   `json:"model,omitempty"`
+	Revision               string   `json:"revision"`
+	Outcome                string   `json:"outcome"`
+	Content                string   `json:"content,omitempty"`
+	Reason                 string   `json:"reason,omitempty"`
+	SessionID              string   `json:"sessionId,omitempty"`
+	InputTokens            *int64   `json:"inputTokens,omitempty"`
+	OutputTokens           *int64   `json:"outputTokens,omitempty"`
+	ToolCalls              *int64   `json:"toolCalls,omitempty"`
+	CacheReadTokens        *int64   `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens    *int64   `json:"cacheCreationTokens,omitempty"`
+	CostUSD                *float64 `json:"costUsd,omitempty"`
+	UsageProvenance        string   `json:"usageProvenance,omitempty"`
+	Paths                  []string `json:"paths,omitempty"`
+	Truncated              bool     `json:"truncated,omitempty"`
+	Applied                bool     `json:"applied,omitempty"`
 }
 
 // TreeUsage is charged at the root as work is reserved or completed.

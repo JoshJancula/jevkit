@@ -39,7 +39,14 @@ func (a *App) setRunSessionStrategy(id, strategy string) error {
 }
 
 func sessionKey(assignment adaptive.Assignment) string {
-	return assignment.Binding + "/" + assignment.Role
+	key := assignment.Binding + "/" + assignment.Role
+	if assignment.ToolPolicyFingerprint != "" {
+		key += "/tools/" + assignment.ToolPolicyFingerprint
+	}
+	if assignment.RuntimeArgsFingerprint != "" {
+		key += "/args/" + assignment.RuntimeArgsFingerprint
+	}
+	return key
 }
 
 func (a *App) chooseSession(ctx context.Context, store *ledger.Store, run ledger.Run, assignment adaptive.Assignment, policyStrategy string) (string, string, error) {

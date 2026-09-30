@@ -106,6 +106,12 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 	if req.Agent.Via != enrollment.Runtime || req.Agent.Runtime != req.Assignment.Runtime {
 		return Reply{}, fmt.Errorf("worker: assignment is not a matching CLI runtime")
 	}
+	if req.Assignment.ToolPolicyFingerprint != req.Agent.Tools.Fingerprint() {
+		return Reply{}, fmt.Errorf("worker: agent tool settings changed after assignment")
+	}
+	if req.Assignment.RuntimeArgsFingerprint != req.Agent.RuntimeArgsFingerprint() {
+		return Reply{}, fmt.Errorf("worker: agent runtimeArgs changed after assignment")
+	}
 	if req.Assignment.Isolated || len(req.Assignment.AgentWriteScopes)+len(req.Assignment.ProjectWriteScopes) > 0 {
 		return Reply{}, fmt.Errorf("worker: requested isolation or write scopes cannot be enforced by CLI adapter")
 	}
@@ -727,6 +733,18 @@ func retryableIfUnchanged(ctx context.Context, snapshot *workspaceSnapshot, befo
 
 func command(req Request) (string, []string, error) {
 	a := req.Agent
+	if err := a.ValidateTools(); err != nil {
+		return "", nil, err
+	}
+	extra, err := a.ParseRuntimeArgs(req.Assignment.ReadOnly || a.ReadOnly)
+	if err != nil {
+		return "", nil, err
+	}
+	userPermissions := a.HasRuntimePermissionArgs(extra)
+	native := a.RuntimeAgent != ""
+	if native && (req.Assignment.ReadOnly || a.ReadOnly) {
+		return "", nil, fmt.Errorf("worker: named agent %q owns its native permissions; Jevkit cannot enforce a read-only assignment without overriding them", a.RuntimeAgent)
+	}
 	bin := a.Binary
 	if bin == "" {
 		switch a.Runtime {
@@ -741,7 +759,7 @@ func command(req Request) (string, []string, error) {
 	switch a.Runtime {
 	case "codex":
 		sandbox := "workspace-write"
-		if req.Assignment.ReadOnly || req.Assignment.Role != "implementer" {
+		if req.Assignment.ReadOnly || a.ReadOnly || req.Assignment.Role != "implementer" {
 			sandbox = "read-only"
 		}
 		args := []string{"exec"}
@@ -749,14 +767,22 @@ func command(req Request) (string, []string, error) {
 			args = append(args, "--dangerously-bypass-hook-trust")
 		}
 		if req.SessionID != "" {
-			args = append(args, "resume", req.SessionID, "-c", "sandbox_mode="+sandbox)
+			args = append(args, "resume", req.SessionID)
+			if !userPermissions {
+				args = append(args, "-c", "sandbox_mode="+sandbox)
+			}
 			args = append(args, "--model", a.Model)
 		} else {
-			args = append(args, "--model", a.Model, "--sandbox", sandbox)
+			args = append(args, "--model", a.Model)
+			if !userPermissions {
+				args = append(args, "--sandbox", sandbox)
+			}
 		}
 		if req.CaptureSession {
 			args = append(args, "--json")
 		}
+		args = append(args, extra...)
+		args = append(args, toolArgs(req)...)
 		return bin, args, nil
 	case "claude":
 		args := []string{"-p", "--model", a.Model, "--output-format", "text"}
@@ -779,21 +805,24 @@ func command(req Request) (string, []string, error) {
 		if req.SessionID != "" {
 			args = append(args, "--resume", req.SessionID)
 		}
-		if req.Assignment.ReadOnly || req.Assignment.Role != "implementer" {
+		if !native && !userPermissions && (req.Assignment.ReadOnly || a.ReadOnly || req.Assignment.Role != "implementer") {
 			args = append(args, "--permission-mode", "plan")
 		}
+		args = append(args, extra...)
+		args = append(args, toolArgs(req)...)
 		return bin, args, nil
 	case "cursor":
 		args := []string{"-p", "--output-format", "stream-json", "--model", a.Model}
 		if req.SessionID != "" {
 			args = append(args, "--resume", req.SessionID)
 		}
-		if req.Assignment.ReadOnly || req.Assignment.Role != "implementer" {
+		if !userPermissions && (req.Assignment.ReadOnly || a.ReadOnly || req.Assignment.Role != "implementer") {
 			args = append(args, "--mode", "ask")
 		}
+		args = append(args, extra...)
 		return bin, append(args, makePrompt(req)), nil
 	case "opencode":
-		if req.Assignment.ReadOnly {
+		if req.Assignment.ReadOnly || a.ReadOnly {
 			return "", nil, fmt.Errorf("worker: OpenCode CLI cannot enforce read-only assignment")
 		}
 		args := []string{"run", "--model", a.Model}
@@ -806,6 +835,7 @@ func command(req Request) (string, []string, error) {
 		if a.RuntimeAgent != "" {
 			args = append(args, "--agent", a.RuntimeAgent)
 		}
+		args = append(args, extra...)
 		return bin, append(args, makePrompt(req)), nil
 	case "antigravity":
 		args := []string{"--model", a.Model, "--output-format", "stream-json"}
@@ -815,11 +845,12 @@ func command(req Request) (string, []string, error) {
 		if req.SessionID != "" {
 			args = append(args, "--conversation", req.SessionID)
 		}
-		if req.Assignment.ReadOnly || req.Assignment.Role != "implementer" {
+		if !native && !userPermissions && (req.Assignment.ReadOnly || a.ReadOnly || req.Assignment.Role != "implementer") {
 			args = append(args, "--mode", "plan")
-		} else {
+		} else if !native && !userPermissions {
 			args = append(args, "--mode", "accept-edits", "--dangerously-skip-permissions")
 		}
+		args = append(args, extra...)
 		return bin, append(args, "--print", makePrompt(req)), nil
 	default:
 		return "", nil, fmt.Errorf("worker: unsupported CLI runtime %q", a.Runtime)

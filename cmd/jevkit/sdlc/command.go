@@ -1,6 +1,8 @@
 package sdlc
 
 import (
+	"sync"
+
 	"github.com/spf13/cobra"
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
@@ -20,6 +22,17 @@ type App struct {
 	sdlcInputBytes     chan byte
 	sdlcPendingByte    byte
 	sdlcHasPending     bool
+	outputMu           *sync.Mutex
+}
+
+// Outf serializes output while concurrent reviews share the same CLI writer.
+// A pointer keeps cloned SDLC apps using the same output lock.
+func (a *App) Outf(format string, args ...any) {
+	if a.outputMu != nil {
+		a.outputMu.Lock()
+		defer a.outputMu.Unlock()
+	}
+	a.App.Outf(format, args...)
 }
 
 // Command returns the sdlc command.

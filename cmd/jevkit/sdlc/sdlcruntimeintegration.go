@@ -82,8 +82,15 @@ func (a *App) sdlcIntegrationsCmd() *cobra.Command {
 	var hooks, compaction, mcp string
 	var askEveryRun bool
 	c := &cobra.Command{
-		Use: "integrations", Short: "configure Jevkit hooks, MCP, and tool-output compaction for SDLC agents",
-		Args: cobra.NoArgs,
+		Use: "integrations", Aliases: []string{"i", "int"}, Short: "configure Jevkit hooks, MCP, and tool-output compaction for SDLC agents",
+		Long: `Show or save personal integration defaults for this project.
+Use "sdlc i" or "sdlc int" as shorter forms.
+
+Hooks and MCP auto-install during SDLC CLI invocations. Tool-output compaction
+requires hooks. These defaults are separate from per-agent tool permissions;
+use "sdlc agents c" for those configuration examples.`,
+		Example: "  jevkit sdlc i\n  jevkit sdlc i --hooks on --compaction on --mcp on\n  jevkit sdlc i --ask-every-run",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if askEveryRun {
 				if cmd.Flags().Changed("hooks") || cmd.Flags().Changed("compaction") || cmd.Flags().Changed("mcp") {
@@ -96,7 +103,7 @@ func (a *App) sdlcIntegrationsCmd() *cobra.Command {
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 					return err
 				}
-				a.Outf("SDLC integrations: ask at each new interactive run.\n")
+				a.printSDLCIntegrationDefaults(sdlcRuntimeIntegration{}, false)
 				return nil
 			}
 			choice, configured, err := a.loadSDLCRuntimeIntegration()
@@ -134,14 +141,7 @@ func (a *App) sdlcIntegrationsCmd() *cobra.Command {
 				}
 				configured = true
 			}
-			if !configured || !choice.KeepDefault {
-				a.Outf("SDLC integrations: ask at each new interactive run.\n")
-				return nil
-			}
-			a.Outf("SDLC default hook auto-install: %t\nSDLC default MCP auto-install: %t\nSDLC default tool-output compaction: %t\n", choice.Hooks, choice.MCP, choice.Compaction)
-			if choice.Hooks {
-				a.Outf("Codex project hooks: %s\n", a.codexHookReadiness(a.WorkDir))
-			}
+			a.printSDLCIntegrationDefaults(choice, configured && choice.KeepDefault)
 			return nil
 		},
 	}
@@ -150,6 +150,33 @@ func (a *App) sdlcIntegrationsCmd() *cobra.Command {
 	c.Flags().StringVar(&compaction, "compaction", "", "enable Jevkit tool-output compaction in SDLC CLI agents: on or off")
 	c.Flags().BoolVar(&askEveryRun, "ask-every-run", false, "clear the saved default and prompt on each new interactive run")
 	return c
+}
+
+func (a *App) printSDLCIntegrationDefaults(choice sdlcRuntimeIntegration, saved bool) {
+	a.Heading("SDLC INTEGRATIONS")
+	a.Outf("  Project: %s\n", a.WorkDir)
+	if saved {
+		a.Outf("  Personal defaults saved for this project.\n")
+	} else {
+		a.Outf("  Defaults: ask at each new interactive run; noninteractive runs use off.\n")
+		choice = sdlcRuntimeIntegration{}
+	}
+	a.Outf("\n")
+	state := func(enabled bool) string {
+		if enabled {
+			return a.Styled(a.Stdout, app.ANSIGreen, "on")
+		}
+		return "off"
+	}
+	a.Table([]string{"FEATURE", "DEFAULT"}, [][]string{
+		{"Hooks auto-install", state(choice.Hooks)},
+		{"MCP auto-install", state(choice.MCP)},
+		{"Tool-output compaction", state(choice.Compaction)},
+	})
+	a.Outf("\n  Configure: jevkit sdlc i --hooks on --mcp on --compaction on\n")
+	a.Outf("  Reset:     jevkit sdlc i --ask-every-run\n")
+	a.Outf("  Compaction requires hooks. Hooks / MCP install on the next CLI invocation.\n")
+	a.Outf("  Per-agent tool permissions: jevkit sdlc agents c\n")
 }
 
 // Codex records trust against each exact hook definition for standalone runs.

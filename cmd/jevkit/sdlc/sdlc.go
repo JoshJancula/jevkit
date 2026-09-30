@@ -40,6 +40,7 @@ Create writes an optional custom workflow file with authored questions and
 routes. Built-in task kinds need no workflow file. Agents discover is optional
 inventory; you can add your own agent directly. Integrations configures
 optional Jevkit hooks and tool-output compaction for SDLC CLI agents.`
+	c.Long += "\n\nShortcuts: sdlc agents c (or caps) shows agent configuration;\nsdlc i (or int) configures integrations."
 	return c
 }
 
@@ -112,6 +113,7 @@ func (a *App) loadCatalog() (*catalog.Catalog, error) {
 }
 
 func (a *App) sdlcAgentsCmd() *cobra.Command {
+	capabilities := a.sdlcAgentsCapabilitiesCmd()
 	list := &cobra.Command{
 		Use:   "agents",
 		Short: "show the agents Jevkit can assign work to",
@@ -121,7 +123,8 @@ examples if your roster does not exist.
 
 Use "sdlc agents discover" to look at possible agents. Looking does not add
 them to your team. Use "sdlc agents add" to add one, or edit your roster.
-Several agents can share a role; Jev chooses among them using each rubric.`,
+Several agents can share a role; Jev chooses among them using each rubric.
+Use "sdlc agents c" or "sdlc agents caps" for tool configuration examples.`,
 		Example: "  jevkit sdlc agents",
 		Args:    cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
@@ -202,6 +205,24 @@ Several agents can share a role; Jev chooses among them using each rubric.`,
 			a.Heading("WHEN TO CHOOSE")
 			for _, ag := range roster.Agents {
 				a.Outf("  %-20s %s\n", ag.ID, firstLine(ag.Rubric))
+				if ag.RuntimeArgs != "" {
+					a.Outf("    Runtime args: %q\n", ag.RuntimeArgs)
+				}
+				if ag.RuntimeAgent != "" || ag.Via == enrollment.Native {
+					a.Outf("    Tools: native runtime configuration\n")
+				} else if ag.Tools != nil {
+					if ag.Tools.Auto {
+						a.Outf("    Tools: auto (runtime configuration)\n")
+					}
+					for _, field := range []struct {
+						name  string
+						value *bool
+					}{{"shell", ag.Tools.Shell}, {"web", ag.Tools.Web}, {"delegate", ag.Tools.Delegate}} {
+						if field.value != nil {
+							a.Outf("    Tools: %s=%t\n", field.name, *field.value)
+						}
+					}
+				}
 			}
 			if needsSetup {
 				a.Outf("\n")
@@ -212,7 +233,7 @@ Several agents can share a role; Jev chooses among them using each rubric.`,
 			return nil
 		},
 	}
-	list.AddCommand(a.sdlcAgentsAddCmd(), a.sdlcAgentsDiscoverCmd(), a.sdlcAgentsEnrollCmd(), a.sdlcAgentsCapabilitiesCmd())
+	list.AddCommand(a.sdlcAgentsAddCmd(), a.sdlcAgentsDiscoverCmd(), a.sdlcAgentsEnrollCmd(), capabilities)
 	return list
 }
 

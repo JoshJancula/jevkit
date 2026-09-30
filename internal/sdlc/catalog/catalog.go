@@ -7,6 +7,8 @@ package catalog
 import (
 	"fmt"
 	"sort"
+
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 )
 
 // Provenance values.
@@ -47,8 +49,10 @@ type Agent struct {
 	Model        string
 	RuntimeAgent string // the foreign runtime's own named agent, e.g. opencode --agent
 	Binary       string // override path for the runtime's CLI
+	RuntimeArgs  string // additional CLI arguments; parsed without a shell
 	WriteScopes  []string
 	ReadOnly     bool
+	Tools        *enrollment.ToolPolicy
 
 	// Source names where this entry came from, for `sdlc agents` and
 	// diagnostics: "native:<path>", "ledger:<path>" or "ledger-override:<path>".
@@ -159,6 +163,11 @@ func (c *Catalog) ApplyUserOverride(l LedgerFile) error {
 		if e.ReadOnly {
 			return fmt.Errorf("sdlc: catalog: user override %s: agent %q may not change readOnly (a capability claim, not reach)", l.Path, e.ID)
 		}
+		if e.Tools != nil {
+			return fmt.Errorf("sdlc: catalog: user override %s: agent %q may not change tools; edit the personal roster instead", l.Path, e.ID)
+		}
+		updated := *base
+		base = &updated
 		if e.Runtime != "" {
 			base.Runtime = e.Runtime
 		}
@@ -171,7 +180,17 @@ func (c *Catalog) ApplyUserOverride(l LedgerFile) error {
 		if e.Binary != "" {
 			base.Binary = e.Binary
 		}
+		if e.RuntimeArgs != "" {
+			base.RuntimeArgs = e.RuntimeArgs
+		}
+		if _, err := (enrollment.Agent{ID: base.ID, Via: base.Via, Runtime: base.Runtime, RuntimeArgs: base.RuntimeArgs, ReadOnly: base.ReadOnly, Tools: base.Tools}).ParseRuntimeArgs(base.ReadOnly); err != nil {
+			return err
+		}
+		if err := (enrollment.Agent{ID: base.ID, Via: base.Via, Runtime: base.Runtime, RuntimeAgent: base.RuntimeAgent, Tools: base.Tools}).ValidateTools(); err != nil {
+			return err
+		}
 		base.Source = "ledger-override:" + l.Path + " (base: " + base.Source + ")"
+		c.agents[e.ID] = base
 	}
 	return nil
 }

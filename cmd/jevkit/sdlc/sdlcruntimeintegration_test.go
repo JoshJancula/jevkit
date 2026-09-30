@@ -129,11 +129,11 @@ func TestSDLCIntegrationCommandConfiguresNoninteractiveRuns(t *testing.T) {
 		t.Fatalf("noninteractive run should use disabled integrations until configured: %+v, %v", initial, err)
 	}
 	code, out, errs := run(a, "", "sdlc", "integrations", "--hooks", "on", "--compaction", "on")
-	if code != app.ExitOK || errs != "" || !strings.Contains(out, "compaction: true") {
+	if code != app.ExitOK || errs != "" || !strings.Contains(out, "Tool-output compaction │ on") {
 		t.Fatalf("configure: %d %q %q", code, out, errs)
 	}
 	code, out, errs = run(a, "", "sdlc", "integrations", "--mcp", "on")
-	if code != app.ExitOK || errs != "" || !strings.Contains(out, "MCP auto-install: true") {
+	if code != app.ExitOK || errs != "" || !strings.Contains(out, "MCP auto-install       │ on") {
 		t.Fatalf("enable MCP: %d %q %q", code, out, errs)
 	}
 	code, _, errs = run(a, "", "sdlc", "integrations", "--hooks", "off")
@@ -154,5 +154,36 @@ func TestSDLCIntegrationCommandConfiguresNoninteractiveRuns(t *testing.T) {
 	}
 	if _, configured, err := a.loadSDLCRuntimeIntegration(); err != nil || configured {
 		t.Fatalf("default remains after reset: configured=%v, err=%v", configured, err)
+	}
+}
+
+func TestIntegrationShortcutsConfigureAndInspectTheSameDefaults(t *testing.T) {
+	for _, shortcut := range [][]string{
+		{"sdlc", "integrations"},
+		{"sdlc", "i"},
+		{"sdlc", "int"},
+	} {
+		t.Run(strings.Join(shortcut, "/"), func(t *testing.T) {
+			a := newApp(t)
+			code, out, errs := run(a, "", append(shortcut, "--hooks", "on", "--mcp", "on", "--compaction", "on")...)
+			if code != app.ExitOK || errs != "" || !strings.Contains(out, "FEATURE") || !strings.Contains(out, "DEFAULT") {
+				t.Fatalf("configure shortcut: %d %s %s", code, out, errs)
+			}
+			choice, saved, err := a.loadSDLCRuntimeIntegration()
+			if err != nil || !saved || !choice.KeepDefault || !choice.Hooks || !choice.MCP || !choice.Compaction {
+				t.Fatalf("shortcut did not persist preferences: %+v %t %v", choice, saved, err)
+			}
+			code, out, errs = run(a, "", "sdlc", "i")
+			if code != app.ExitOK || errs != "" || !strings.Contains(out, "Tool-output compaction │ on") || !strings.Contains(out, "Per-agent tool permissions: jevkit sdlc agents c") {
+				t.Fatalf("inspect shortcut: %d %s %s", code, out, errs)
+			}
+			code, out, errs = run(a, "", append(shortcut, "--ask-every-run")...)
+			if code != app.ExitOK || errs != "" || !strings.Contains(out, "ask at each") {
+				t.Fatalf("reset shortcut: %d %s %s", code, out, errs)
+			}
+			if _, saved, err := a.loadSDLCRuntimeIntegration(); err != nil || saved {
+				t.Fatalf("shortcut did not clear defaults: %t %v", saved, err)
+			}
+		})
 	}
 }

@@ -26,6 +26,10 @@ func (a *App) progressFlush() {
 	if p == nil {
 		return
 	}
+	if a.outputMu != nil {
+		a.outputMu.Lock()
+		defer a.outputMu.Unlock()
+	}
 	if p.seen == nil {
 		p.seen = map[string]int{}
 	}

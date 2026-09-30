@@ -14,7 +14,6 @@ import (
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
 	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
-	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
 
 // sdlcRuntimeBinaries maps each known CLI runtime to the binary jevkit
@@ -79,6 +78,10 @@ const sdlcRosterStarter = `version: 1
 # Pick a supported model for each CLI, then set disabled: false to enroll it.
 # IDs are your labels. roles decide which step an agent can do; rubric tells
 # Jev when to choose it among eligible agents. Add more agents for any role.
+# tools: auto inherits runtime or native agent settings (also the default).
+# runtimeArgs: '--dangerously-skip-permissions' adds CLI options without a shell.
+# Codex/Claude runtime-model entries can set tools: {web: false, delegate: false}.
+# Entries selecting agent: NAME use native tool configuration; omit tools there.
 # Check setup with: jevkit sdlc doctor --policy lean
 agents:
   - id: claude-architect
@@ -307,6 +310,7 @@ func (a *App) sdlcAgentsAddCmd() *cobra.Command {
 	var writeScopes []string
 	var readOnly, isolated bool
 	var via, subagent, runtime, model, runtimeAgent, rubric, binary string
+	var runtimeArgs string
 	c := &cobra.Command{Use: "add <id>", Short: "put one agent in your personal SDLC roster", Args: cobra.ExactArgs(1),
 		Long: `Add puts an agent on your SDLC team by writing to your personal
 sdlc/roster.yaml. Jevkit creates the file if needed. You can also edit it
@@ -318,7 +322,7 @@ and --role. For codex, claude, cursor, opencode, or antigravity, the CLI name ca
 the agent ID. Discovery is optional. Adding an agent does not install its
 CLI; "sdlc doctor" checks whether it can actually run.`,
 		Example: "  jevkit sdlc agents add security-reviewer --runtime codex --model MODEL --rubric 'Review authentication and secrets' --role security\n  jevkit sdlc agents add full-stack --runtime codex --model MODEL --rubric 'Web application work' --role all --role-rubric planner='Plan API changes' --role-rubric assessor='Review API behavior'",
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			if a.ConfigDir == "" {
 				return app.Failf("no user config directory for agent roster")
@@ -335,7 +339,7 @@ CLI; "sdlc doctor" checks whether it can actually run.`,
 					}
 				}
 			}
-			ag := enrollment.Agent{ID: id, Roles: roles, Rubric: rubric, Via: via, Subagent: subagent, Runtime: runtime, Model: model, RuntimeAgent: runtimeAgent, Binary: binary}
+			ag := enrollment.Agent{ID: id, Roles: roles, Rubric: rubric, Via: via, Subagent: subagent, Runtime: runtime, Model: model, RuntimeAgent: runtimeAgent, Binary: binary, RuntimeArgs: runtimeArgs}
 			if len(roleRubricFlags) > 0 {
 				ag.RoleRubrics = make(map[string]string, len(roleRubricFlags))
 				for _, item := range roleRubricFlags {
@@ -382,6 +386,10 @@ CLI; "sdlc doctor" checks whether it can actually run.`,
 						}
 						ag.Binary = found.Binary
 						ag.ReadOnly = found.ReadOnly
+						ag.Tools = found.Tools
+						if !cmd.Flags().Changed("runtime-args") {
+							ag.RuntimeArgs = found.RuntimeArgs
+						}
 						ag.WriteScopes = found.WriteScopes
 						if ag.Rubric == "" {
 							ag.Rubric = found.Rubric
@@ -442,6 +450,7 @@ CLI; "sdlc doctor" checks whether it can actually run.`,
 	c.Flags().StringVar(&rubric, "rubric", "", "when Jev should choose this agent among eligible agents")
 	c.Flags().StringArrayVar(&roleRubricFlags, "role-rubric", nil, "role-specific selection rubric, ROLE=TEXT (repeatable)")
 	c.Flags().StringVar(&binary, "binary", "", "runtime binary override")
+	c.Flags().StringVar(&runtimeArgs, "runtime-args", "", "additional CLI options as a quoted string (parsed without a shell)")
 	c.Flags().BoolVar(&readOnly, "read-only", false, "enroll only when the driver can enforce read-only execution")
 	c.Flags().BoolVar(&isolated, "isolated", false, "enroll only when the driver can enforce isolation")
 	c.Flags().StringArrayVar(&writeScopes, "write-scope", nil, "allowed write scope (repeatable; requires driver enforcement)")
@@ -454,64 +463,6 @@ func (a *App) sdlcAgentsEnrollCmd() *cobra.Command {
 	c.Use = "enroll <id>"
 	c.Hidden = true
 	return c
-}
-
-// sdlcAgentsCapabilitiesCmd surfaces worker.RuntimeMatrices, the tested,
-// evidence-backed per-runtime capability contract, plus an actual CLI
-// version probe (not just a PATH lookup) for whichever runtimes are
-// installed. This is the discoverable form of the matrix built and verified
-// by internal/sdlc/worker's matrix tests.
-func (a *App) sdlcAgentsCapabilitiesCmd() *cobra.Command {
-	return &cobra.Command{Use: "capabilities", Short: "show the tested per-runtime CLI capability matrix", Args: cobra.NoArgs,
-		Long: `Reports, per CLI runtime, what CLIExecutor actually does: whether a
-read-only invocation can be enforced (and why not, when it can't), whether a
-writable invocation is supported and what approval argument it passes,
-whether a permission-bypass flag is used, whether the installed pre-tool
-hook can inspect and rewrite shell calls before they run, whether session
-resume is supported, and the CLI version jevkit can actually reach by
-running it. Cancellation and child-process cleanup are enforced the same way
-for every runtime (a process group killed on context cancellation or normal
-exit), not by a per-runtime flag, so they are not re-probed here.`,
-		Example: "  jevkit sdlc agents capabilities",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			lookPath := a.LookPath
-			if lookPath == nil {
-				lookPath = exec.LookPath
-			}
-			matrices := worker.RuntimeMatrices()
-			names := make([]string, 0, len(matrices))
-			for name := range matrices {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			for _, name := range names {
-				m := matrices[name]
-				a.Heading(strings.ToUpper(name))
-				binary := sdlcRuntimeBinaries[name]
-				resolved, lookErr := lookPath(binary)
-				if lookErr != nil {
-					a.Outf("  CLI reach: %s not found on PATH\n", binary)
-				} else if version, err := worker.ProbeVersion(cmd.Context(), resolved, m.VersionArgs); err != nil {
-					a.Outf("  CLI reach: %s found at %s but the version probe failed: %v\n", binary, resolved, err)
-				} else {
-					a.Outf("  CLI reach: %s (%s)\n", resolved, version)
-				}
-				if m.ReadOnlyExecution {
-					a.Outf("  Read-only execution: enforced (%s)\n", m.ReadOnlyApprovals)
-				} else {
-					a.Outf("  Read-only execution: not enforced; jevkit fails closed instead of running a read-only role with write access (%s)\n", m.ReadOnlyUnenforceable)
-				}
-				a.Outf("  Writable execution: %v (%s)\n", m.WritableExecution, m.WritableApprovals)
-				if m.PermissionBypassArgument != "" {
-					a.Outf("  Permission-bypass argument: %s\n", m.PermissionBypassArgument)
-				}
-				a.Outf("  Shell hook coverage: %v\n", m.ShellHookCoverage)
-				a.Outf("  Workdir scoped: %v\n", m.WorkdirScoped)
-				a.Outf("  Session resume: %v\n", m.SessionResume)
-				a.Outf("  Cancellation / child cleanup: %v / %v (process-group based, same for every runtime)\n", m.Cancellation, m.ChildCleanup)
-			}
-			return nil
-		}}
 }
 
 type preflight struct {

@@ -282,19 +282,21 @@ func (a *App) sdlcDriveFanout(ctx context.Context, runID string, store *ledger.S
 		}
 		rule := policy.Roles["implementer"]
 		assignment := adaptive.Assignment{
-			InvocationID:       a.newRunID(now),
-			AgentID:            choice.Agent.ID,
-			Binding:            choice.Binding,
-			Via:                choice.Agent.Via,
-			Runtime:            choice.Agent.Runtime,
-			Role:               "implementer",
-			Revision:           run.Adaptive.PlanRevision,
-			ReadOnly:           !rule.Write || rule.ReadOnly || choice.Agent.ReadOnly,
-			Isolated:           rule.Isolated || choice.Agent.Isolated,
-			ProjectWriteScopes: append([]string(nil), rule.WriteScopes...),
-			AgentWriteScopes:   append([]string(nil), choice.Agent.WriteScopes...),
-			Objective:          st.Objective,
-			Reason:             "fan-out subtask " + id,
+			InvocationID:           a.newRunID(now),
+			AgentID:                choice.Agent.ID,
+			Binding:                choice.Binding,
+			Via:                    choice.Agent.Via,
+			Runtime:                choice.Agent.Runtime,
+			Role:                   "implementer",
+			Revision:               run.Adaptive.PlanRevision,
+			ReadOnly:               !rule.Write || rule.ReadOnly || choice.Agent.ReadOnly,
+			Isolated:               rule.Isolated || choice.Agent.Isolated,
+			ProjectWriteScopes:     append([]string(nil), rule.WriteScopes...),
+			AgentWriteScopes:       append([]string(nil), choice.Agent.WriteScopes...),
+			Objective:              st.Objective,
+			Reason:                 "fan-out subtask " + id,
+			ToolPolicyFingerprint:  choice.Agent.Tools.Fingerprint(),
+			RuntimeArgsFingerprint: choice.Agent.RuntimeArgsFingerprint(),
 		}
 		writable := !assignment.ReadOnly
 		readOnlyEnforced := false

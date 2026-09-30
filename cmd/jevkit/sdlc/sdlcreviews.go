@@ -18,6 +18,9 @@ import (
 // against the same candidate revision and verification receipts, and cancels
 // excess work when a decisive rejection or quorum result lands.
 func (a *App) sdlcDriveParallelReviews(ctx context.Context, runID string) error {
+	if a.outputMu == nil {
+		a.outputMu = &sync.Mutex{}
+	}
 	store := ledger.Open(a.SDLCRunsDir(), runID)
 	policy, _, err := a.sdlcEnrollment()
 	if err != nil {

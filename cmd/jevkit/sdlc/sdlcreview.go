@@ -24,7 +24,9 @@ func (a *App) saveReviewRecovery(store *ledger.Store, assignment adaptive.Assign
 			return err
 		}
 		run.ReviewRecovery = &ledger.ReviewRecovery{
-			Invocation: assignment.InvocationID, Agent: assignment.AgentID, Binding: assignment.Binding,
+			ToolPolicyFingerprint:  assignment.ToolPolicyFingerprint,
+			RuntimeArgsFingerprint: assignment.RuntimeArgsFingerprint,
+			Invocation:             assignment.InvocationID, Agent: assignment.AgentID, Binding: assignment.Binding,
 			Runtime: assignment.Runtime, Model: model, Revision: assignment.Revision, Outcome: reply.Outcome,
 			Content: reply.Content, Reason: reply.Reason, Paths: reply.WorkspaceDrift,
 			Truncated: reply.DriftTruncated, SessionID: reply.SessionID,
@@ -148,7 +150,7 @@ func (a *App) recoverReview(ctx context.Context, runID string) error {
 		return app.Failf("saved review cannot be reused: %v; inspect the run and resume with --retry-failed to reassess", err)
 	}
 	assignment := adaptive.Assignment{InvocationID: recovery.Invocation, AgentID: recovery.Agent,
-		Binding: recovery.Binding, Runtime: recovery.Runtime, Role: "assessor", Revision: recovery.Revision}
+		Binding: recovery.Binding, Runtime: recovery.Runtime, Role: "assessor", Revision: recovery.Revision, ToolPolicyFingerprint: recovery.ToolPolicyFingerprint, RuntimeArgsFingerprint: recovery.RuntimeArgsFingerprint}
 	if _, ok := run.Adaptive.Assignments[assignment.InvocationID]; !ok {
 		if err := store.WithRunLock(func() error {
 			fresh, err := store.ReadRun()

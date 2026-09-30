@@ -85,6 +85,36 @@ func TestLoadLedgerRejectsUnknownField(t *testing.T) {
 	}
 }
 
+func TestLedgerToolControlsUseEnrollmentValidation(t *testing.T) {
+	for _, tc := range []struct{ fields, want string }{
+		{"runtime: codex, tools: {shell: false}", ""},
+		{"runtime: claude, agent: reviewer, tools: {shell: false}", "native runtime"},
+		{"runtime: opencode, tools: {web: false}", "not supported"},
+		{"runtime: claude, tools: {typo: false}", "field typo"},
+	} {
+		path := filepath.Join(t.TempDir(), "agents.yaml")
+		writeFile(t, path, "version: 1\nagents:\n  - {id: a, via: runtime, rubric: Work, "+tc.fields+"}\n")
+		l, err := LoadLedger(path)
+		if tc.want != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %s", err, tc.want)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := Merge(nil, l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, _ := c.Agent("a")
+		if a.Tools == nil || a.Tools.Shell == nil || *a.Tools.Shell {
+			t.Fatalf("catalog lost controls: %+v", a)
+		}
+	}
+}
+
 func TestLoadLedgerRejectsDuplicateID(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agents.yaml")

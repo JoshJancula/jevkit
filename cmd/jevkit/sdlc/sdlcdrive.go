@@ -207,6 +207,12 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 	if agent == nil {
 		return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("agent was removed from roster"))
 	}
+	if assignment.ToolPolicyFingerprint != agent.Tools.Fingerprint() {
+		return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("agent tool settings changed after assignment; retry to select an agent with the current settings"))
+	}
+	if assignment.RuntimeArgsFingerprint != agent.RuntimeArgsFingerprint() {
+		return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("agent runtimeArgs changed after assignment; retry to select an agent with the current settings"))
+	}
 	if a.sdlcProgress != nil {
 		a.Outf("  live agent output: jevkit sdlc logs %s --follow --invocation %s\n", runID, assignment.InvocationID)
 	}

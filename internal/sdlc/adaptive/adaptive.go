@@ -18,20 +18,22 @@ const (
 )
 
 type Assignment struct {
-	InvocationID       string   `json:"invocationId"`
-	StageID            string   `json:"stageId,omitempty"`
-	Objective          string   `json:"objective,omitempty"`
-	Reason             string   `json:"reason,omitempty"`
-	AgentID            string   `json:"agentId"`
-	Binding            string   `json:"binding"`
-	Via                string   `json:"via,omitempty"`
-	Runtime            string   `json:"runtime,omitempty"`
-	Role               string   `json:"role"`
-	Revision           string   `json:"revision,omitempty"`
-	ReadOnly           bool     `json:"readOnly,omitempty"`
-	Isolated           bool     `json:"isolated,omitempty"`
-	ProjectWriteScopes []string `json:"projectWriteScopes,omitempty"`
-	AgentWriteScopes   []string `json:"agentWriteScopes,omitempty"`
+	InvocationID           string   `json:"invocationId"`
+	StageID                string   `json:"stageId,omitempty"`
+	Objective              string   `json:"objective,omitempty"`
+	Reason                 string   `json:"reason,omitempty"`
+	AgentID                string   `json:"agentId"`
+	Binding                string   `json:"binding"`
+	Via                    string   `json:"via,omitempty"`
+	Runtime                string   `json:"runtime,omitempty"`
+	Role                   string   `json:"role"`
+	Revision               string   `json:"revision,omitempty"`
+	ReadOnly               bool     `json:"readOnly,omitempty"`
+	Isolated               bool     `json:"isolated,omitempty"`
+	ProjectWriteScopes     []string `json:"projectWriteScopes,omitempty"`
+	AgentWriteScopes       []string `json:"agentWriteScopes,omitempty"`
+	ToolPolicyFingerprint  string   `json:"toolPolicyFingerprint,omitempty"`
+	RuntimeArgsFingerprint string   `json:"runtimeArgsFingerprint,omitempty"`
 }
 
 type Assessment struct {

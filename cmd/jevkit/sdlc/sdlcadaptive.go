@@ -362,6 +362,8 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 	rule := p.Roles[st.Role()]
 	assignment := adaptive.Assignment{InvocationID: a.newRunID(a.Clock()), AgentID: choice.Agent.ID, Binding: choice.Binding, Via: choice.Agent.Via, Runtime: choice.Agent.Runtime, Role: st.Role(), ReadOnly: !rule.Write || rule.ReadOnly || choice.Agent.ReadOnly, Isolated: rule.Isolated || choice.Agent.Isolated, ProjectWriteScopes: append([]string(nil), rule.WriteScopes...), AgentWriteScopes: append([]string(nil), choice.Agent.WriteScopes...)}
 	assignment.Reason = choice.Agent.Rubric
+	assignment.ToolPolicyFingerprint = choice.Agent.Tools.Fingerprint()
+	assignment.RuntimeArgsFingerprint = choice.Agent.RuntimeArgsFingerprint()
 	if roleRubric := choice.Agent.RoleRubrics[st.Role()]; roleRubric != "" {
 		assignment.Reason = roleRubric
 	}
