@@ -1,34 +1,43 @@
 # Redaction
 
-jevkit sends text to TypeSafe AI's Jev service (`https://api.typesafe.ai/v1/systemone`) so it can classify and rank lines. Everything that is sent is redacted on your machine first, and if redaction cannot be trusted, nothing is sent. This document explains what that promises, how to tune it, and how to check it.
+Jevkit applies local redaction before sending text to TypeSafe AI's Jev service. The API key is sent as an HTTP credential, outside the text being classified. Jevkit keeps the original tool output locally when it compacts an agent result.
 
-## Threat model
+Redaction is **pattern based**. A secret or private detail that matches no rule may still be sent. An invalid configuration or failed verification blocks the API request; agent hooks then pass the original output back to the agent. Check real examples before enabling Jevkit for sensitive work.
 
-**What is sent to api.typesafe.ai**
+- [Check your output](#check-your-output)
+- [Add local rules](#add-local-rules)
+- [HARD and SOFT rules](#hard-and-soft-rules)
+- [Config keys](#config-keys)
+- [Tuning workflow](#tuning-workflow)
+- [Transparency: audit, review and confirm](#transparency-audit-review-and-confirm)
+- [Security checklist](#security-checklist)
 
-- The already-redacted text of a question: command output, log lines or a request you asked jevkit to classify.
-- Your API key, as the credential for the request. It is never part of the payload.
+## Check your output
 
-**What is never sent**
+```bash
+jevkit redact list                    # built-in and custom rules
+jevkit redact test --diff output.txt  # preview what changes; no API call
+jevkit redact check                   # validate config and its tests
+jevkit redact audit                   # see rule hit counts, not payloads
+```
 
-- Anything matching a `never_send` pattern (commands and paths). Their output is not redacted and sent; it is skipped entirely.
-- Your API key value, private keys, tokens, credential assignments and the rest of the HARD rules below, in any payload.
-- The original text. Redaction is line-preserving, so Jev ranks redacted lines and jevkit assembles the final output locally from the original.
-- Matched content in the audit log. It stores rule ids and counts only.
+You can also pipe output to `jevkit redact test --diff -`. Add a rule when sensitive text survives, then use `jevkit redact check` to validate it.
 
-**Fail closed.** An invalid config, a failed redaction, or a failed verification pass over the redacted text rejects the send (exit code 3). Hooks then pass the original output through to the agent unchanged, so a redaction problem never blocks your agent and never leaks.
+## Add local rules
 
-**What redaction cannot do.** It is pattern-based. Sensitive text that matches no rule (a customer name, a proprietary algorithm in prose) is sent as written. Use `literals`, `rules`, `never_send` and `mode: strict` to close gaps you know about, and read the [security checklist](#security-checklist) if you handle regulated data.
+`jevkit redact init` creates a private user config. `jevkit redact init --project` creates `.jevkit/redact.yaml` in the current repository. A project file can only make redaction stricter; it cannot turn off the built-in protections.
 
-## Layered config
+```yaml
+version: 1
+mode: strict
+rules:
+  - id: project.internal-host
+    pattern: 'corp-[a-z0-9-]+\.internal'
+never_send:
+  - terraform output*
+```
 
-Three layers apply, lowest to highest precedence:
-
-1. **Built-ins**, embedded in the binary.
-2. **User file**, `<config_dir>/redact.yaml`. It is trusted and must be mode 0600; jevkit refuses a file that other users can read. Create it with `jevkit redact init`.
-3. **Project file**, `.jevkit/redact.yaml` in the repository. It is untrusted. Create it with `jevkit redact init --project`.
-
-**Why project config is additive-only.** A project file arrives with a repository you may have just cloned, and anyone who can commit to it could otherwise switch redaction off for everyone who uses the repo. So a project file may only make redaction stricter: add `rules`, `literals`, `env_values` and `never_send` entries, embed `tests`, and set `mode: strict`. It can never `disable` a rule, add an `allowlist`, change `tuning` or `placeholder`, or set any of the review and confirm keys. Naming one of those is an error ("not permitted in a project config"), and the send is rejected.
+`never_send` skips matching command or path output entirely. Use it for data that should not be sent even after redaction. For a one-off question, `jevkit redact last` shows the last redacted payload only if you have enabled review mode; review mode is off by default because it stores that payload locally.
 
 ## HARD and SOFT rules
 

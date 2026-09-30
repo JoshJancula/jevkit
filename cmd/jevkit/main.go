@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+
+	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
 )
 
 // version is overridden at build time via -ldflags.
@@ -16,7 +18,7 @@ var version = "dev"
 
 func main() {
 	wd, _ := os.Getwd()
-	app := &App{
+	app := &app.App{
 		Stdin:     os.Stdin,
 		Stdout:    os.Stdout,
 		Stderr:    os.Stderr,
@@ -28,7 +30,7 @@ func main() {
 		Dial:      (&net.Dialer{}).DialContext,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := app.RunContext(ctx, os.Args[1:])
+	code := app.RunContext(ctx, os.Args[1:], commands(app)...)
 	stop()
 	os.Exit(code)
 }

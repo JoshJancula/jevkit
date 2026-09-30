@@ -338,12 +338,17 @@ func TestFixtureTransport(t *testing.T) {
 	})
 	t.Run("429 sequence then success", func(t *testing.T) {
 		c, sleeps, _ := newFixtureClient()
+		var attempts []Attempt
+		c.ObserveAttempt = func(a Attempt) { attempts = append(attempts, a) }
 		resp, err := c.Ask(context.Background(), req("retry-429-then-success"))
 		if err != nil || len(*sleeps) != 1 {
 			t.Fatalf("err = %v sleeps = %v", err, *sleeps)
 		}
 		if resp.Answers["relevant_lines"].(ChoiceAnswer).Choice != "L000" {
 			t.Errorf("resp = %#v", resp)
+		}
+		if len(attempts) != 2 || attempts[0].Status != 429 || attempts[1].Status != 200 {
+			t.Errorf("attempts = %+v", attempts)
 		}
 	})
 	t.Run("missing fixture is input rejection", func(t *testing.T) {

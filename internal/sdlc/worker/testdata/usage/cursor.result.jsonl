@@ -1,0 +1,1 @@
+{"type":"result","session_id":"cursor-cache-1","result":"{\"outcome\":\"planned\",\"content\":\"Plan\"}","usage":{"inputTokens":1227,"outputTokens":13,"cacheReadTokens":10624,"cacheWriteTokens":3136}}

@@ -1,13 +1,17 @@
-// Package stageflow advances authored SDLC stages using questions and
-// structured worker outcomes. Worker eligibility remains with enrollment.
 package stageflow
 
 import (
 	"fmt"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
+
+// CurrentStageFormatVersion is the authored stage-workflow version on disk and
+// in saved run snapshots. Older version-1 workflows remain readable: routes
+// such as `changed: assess` still mean the implement stage advances only after
+// supervisor fan-out join and verification finish.
+const CurrentStageFormatVersion = 1
 
 type Transition struct {
 	Stage      string `json:"stage"`
@@ -24,6 +28,24 @@ type State struct {
 	Transitions []Transition  `json:"transitions,omitempty"`
 }
 
+// MigrateSaved upgrades a persisted stageflow snapshot when needed. Version 1
+// workflows need no rewrite; unsupported versions fail closed with a migration
+// hint so operators can re-author rather than silently reinterpret routes.
+func MigrateSaved(s *State) error {
+	if s == nil {
+		return fmt.Errorf("stageflow: nil state")
+	}
+	if s.Workflow.Version == 0 {
+		// Snapshots that omitted version before validation still behave as v1.
+		s.Workflow.Version = CurrentStageFormatVersion
+		return nil
+	}
+	if s.Workflow.Version == CurrentStageFormatVersion {
+		return nil
+	}
+	return fmt.Errorf("stageflow: saved workflow version %d is not readable; re-author as version %d or start a new run", s.Workflow.Version, CurrentStageFormatVersion)
+}
+
 func New(w spec.Workflow, worker *adaptive.State) (State, error) {
 	if err := w.ValidateStages(); err != nil {
 		return State{}, err
@@ -35,6 +57,9 @@ func New(w spec.Workflow, worker *adaptive.State) (State, error) {
 func (s State) Stage() (spec.Stage, bool) { return s.Workflow.StageByID(s.Current) }
 
 func (s *State) Advance(answer string, worker *adaptive.State) error {
+	if err := MigrateSaved(s); err != nil {
+		return err
+	}
 	stage, ok := s.Stage()
 	if !ok {
 		return fmt.Errorf("stageflow: unknown current stage %q", s.Current)

@@ -10,6 +10,7 @@ import (
 const (
 	Planning     = "planning"
 	Implementing = "implementing"
+	Verifying    = "verifying"
 	Assessing    = "assessing"
 	Specializing = "specializing"
 	Done         = "done"
@@ -17,20 +18,22 @@ const (
 )
 
 type Assignment struct {
-	InvocationID       string   `json:"invocationId"`
-	StageID            string   `json:"stageId,omitempty"`
-	Objective          string   `json:"objective,omitempty"`
-	Reason             string   `json:"reason,omitempty"`
-	AgentID            string   `json:"agentId"`
-	Binding            string   `json:"binding"`
-	Via                string   `json:"via,omitempty"`
-	Runtime            string   `json:"runtime,omitempty"`
-	Role               string   `json:"role"`
-	Revision           string   `json:"revision,omitempty"`
-	ReadOnly           bool     `json:"readOnly,omitempty"`
-	Isolated           bool     `json:"isolated,omitempty"`
-	ProjectWriteScopes []string `json:"projectWriteScopes,omitempty"`
-	AgentWriteScopes   []string `json:"agentWriteScopes,omitempty"`
+	InvocationID           string   `json:"invocationId"`
+	StageID                string   `json:"stageId,omitempty"`
+	Objective              string   `json:"objective,omitempty"`
+	Reason                 string   `json:"reason,omitempty"`
+	AgentID                string   `json:"agentId"`
+	Binding                string   `json:"binding"`
+	Via                    string   `json:"via,omitempty"`
+	Runtime                string   `json:"runtime,omitempty"`
+	Role                   string   `json:"role"`
+	Revision               string   `json:"revision,omitempty"`
+	ReadOnly               bool     `json:"readOnly,omitempty"`
+	Isolated               bool     `json:"isolated,omitempty"`
+	ProjectWriteScopes     []string `json:"projectWriteScopes,omitempty"`
+	AgentWriteScopes       []string `json:"agentWriteScopes,omitempty"`
+	ToolPolicyFingerprint  string   `json:"toolPolicyFingerprint,omitempty"`
+	RuntimeArgsFingerprint string   `json:"runtimeArgsFingerprint,omitempty"`
 }
 
 type Assessment struct {
@@ -60,12 +63,23 @@ type SpecialistDecision struct {
 	Reason     string  `json:"reason"`
 }
 
+// RepairFeedback preserves the decisive review across retries and restarts.
+// It is evidence for this candidate only, not an instruction or an approval.
+type RepairFeedback struct {
+	InvocationID string `json:"invocationId"`
+	Revision     string `json:"revision"`
+	Role         string `json:"role"`
+	Summary      string `json:"summary"`
+}
+
 type State struct {
 	TaskKind               string                `json:"taskKind"`
 	Profile                string                `json:"profile"`
 	Stage                  string                `json:"stage"`
 	Outcome                string                `json:"outcome,omitempty"`
 	PlanRevision           string                `json:"planRevision,omitempty"`
+	ChecksRevision         string                `json:"checksRevision,omitempty"`
+	SubtasksRevision       string                `json:"subtasksRevision,omitempty"`
 	DiffRevision           string                `json:"diffRevision,omitempty"`
 	Quorum                 int                   `json:"quorum"`
 	MaxConcurrent          int                   `json:"maxConcurrent"`
@@ -77,8 +91,10 @@ type State struct {
 	RevisionCount          int                   `json:"revisionCount"`
 	Assignments            map[string]Assignment `json:"assignments,omitempty"`
 	Assessments            []Assessment          `json:"assessments,omitempty"`
+	CheckReceipts          []CheckReceipt        `json:"checkReceipts,omitempty"`
 	Excluded               map[string]bool       `json:"excluded,omitempty"`
 	ExcludedBindings       map[string]bool       `json:"excludedBindings,omitempty"`
+	HandoffExcluded        map[string]bool       `json:"handoffExcluded,omitempty"`
 	ExcludedRuntimes       map[string]bool       `json:"excludedRuntimes,omitempty"`
 	HandoffCount           int                   `json:"handoffCount,omitempty"`
 	LastHandoffBinding     string                `json:"lastHandoffBinding,omitempty"`
@@ -92,6 +108,8 @@ type State struct {
 	PendingDecision        string                `json:"pendingDecision,omitempty"`
 	PendingPhase           string                `json:"pendingPhase,omitempty"`
 	LastImplementerBinding string                `json:"lastImplementerBinding,omitempty"`
+	RepairFeedback         *RepairFeedback       `json:"repairFeedback,omitempty"`
+	NoProgressCount        int                   `json:"noProgressCount,omitempty"`
 }
 
 // Result is a worker's structured outcome. A revision is a content digest of
@@ -124,11 +142,49 @@ func (s State) Role() string {
 	case Assessing:
 		return "assessor"
 	case Specializing:
-		if len(s.SpecialistQueue) > 0 {
-			return s.SpecialistQueue[0].Role
+		pending := map[string]bool{}
+		for _, a := range s.Assignments {
+			pending[a.Role] = true
+		}
+		for _, check := range s.SpecialistQueue {
+			if !pending[check.Role] {
+				return check.Role
+			}
 		}
 	}
 	return ""
+}
+
+// ParallelReviews reports whether the stage admits concurrent read-only
+// reviewer invocations (assessors and optional specialists).
+func (s State) ParallelReviews() bool {
+	return s.Stage == Assessing || s.Stage == Specializing
+}
+
+// ReviewSlotsNeeded is how many additional independent reviewers the stage
+// still requires before a quorum or specialist-queue decision can complete.
+func (s State) ReviewSlotsNeeded() int {
+	switch s.Stage {
+	case Assessing:
+		needed := s.Quorum - len(s.Assessments) - len(s.Assignments)
+		if needed < 0 {
+			return 0
+		}
+		return needed
+	case Specializing:
+		pending := map[string]bool{}
+		for _, a := range s.Assignments {
+			pending[a.Role] = true
+		}
+		n := 0
+		for _, check := range s.SpecialistQueue {
+			if !pending[check.Role] {
+				n++
+			}
+		}
+		return n
+	}
+	return 0
 }
 
 func (s State) Pending() []Assignment {
@@ -155,6 +211,9 @@ func (s *State) Assign(a Assignment) error {
 	if s.ExcludedBindings[a.Binding] {
 		return fmt.Errorf("adaptive: binding %q was removed from this run", a.Binding)
 	}
+	if s.HandoffExcluded[a.Binding] {
+		return fmt.Errorf("adaptive: binding %q was deferred after a handoff", a.Binding)
+	}
 	if a.Runtime != "" && s.ExcludedRuntimes[a.Runtime] {
 		return fmt.Errorf("adaptive: runtime %q was removed from this run", a.Runtime)
 	}
@@ -164,21 +223,44 @@ func (s *State) Assign(a Assignment) error {
 	if len(s.Assignments) >= s.MaxConcurrent {
 		return fmt.Errorf("adaptive: concurrency limit reached")
 	}
-	if s.Stage != Assessing && len(s.Assignments) > 0 {
+	if !s.ParallelReviews() && len(s.Assignments) > 0 {
 		return fmt.Errorf("adaptive: one %s invocation is already pending", s.Stage)
 	}
 	if s.Stage == Assessing || s.Stage == Specializing && a.Role != "research" {
 		if a.Revision != s.DiffRevision || a.Revision == "" {
 			return fmt.Errorf("adaptive: assessment must target exact diff revision")
 		}
+		if s.Stage == Assessing && s.LastImplementerBinding != "" && a.Binding == s.LastImplementerBinding {
+			return fmt.Errorf("adaptive: assessor must be independent of implementer")
+		}
 		for _, pending := range s.Assignments {
 			if pending.Binding == a.Binding || pending.AgentID == a.AgentID {
 				return fmt.Errorf("adaptive: assessor already assigned")
+			}
+			if s.Stage == Specializing && pending.Role == a.Role {
+				return fmt.Errorf("adaptive: specialist role %q already assigned", a.Role)
 			}
 		}
 		for _, done := range s.Assessments {
 			if done.Revision == a.Revision && (done.Binding == a.Binding || done.AgentID == a.AgentID) {
 				return fmt.Errorf("adaptive: assessor already counted for this revision")
+			}
+		}
+		if s.Stage == Specializing {
+			found := false
+			for _, check := range s.SpecialistQueue {
+				if check.Role == a.Role {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("adaptive: specialist role %q is not queued", a.Role)
+			}
+			for _, done := range s.SpecialistReviews {
+				if done.Revision == a.Revision && done.Role == a.Role {
+					return fmt.Errorf("adaptive: specialist role %q already counted for this revision", a.Role)
+				}
 			}
 		}
 	} else if s.Stage == Specializing && a.Role == "research" && a.Revision != s.PlanRevision {
@@ -213,11 +295,16 @@ func (s *State) Apply(r Result) error {
 	for k, v := range s.ExcludedBindings {
 		c.ExcludedBindings[k] = v
 	}
+	c.HandoffExcluded = make(map[string]bool, len(s.HandoffExcluded))
+	for k, v := range s.HandoffExcluded {
+		c.HandoffExcluded[k] = v
+	}
 	c.ExcludedRuntimes = make(map[string]bool, len(s.ExcludedRuntimes))
 	for k, v := range s.ExcludedRuntimes {
 		c.ExcludedRuntimes[k] = v
 	}
 	c.Assessments = append([]Assessment(nil), s.Assessments...)
+	c.CheckReceipts = append([]CheckReceipt(nil), s.CheckReceipts...)
 	c.SpecialistQueue = append([]SpecialistCheck(nil), s.SpecialistQueue...)
 	c.SpecialistReviews = append([]SpecialistCheck(nil), s.SpecialistReviews...)
 	if err := c.apply(r); err != nil {
@@ -246,21 +333,24 @@ func (s *State) apply(r Result) error {
 			return fmt.Errorf("adaptive: handoff requires focus and reason")
 		}
 		if s.HandoffCount >= 2 {
+			s.PendingPhase = s.Stage
 			s.Pause("handoff-budget-exhausted")
 			return nil
 		}
 		s.HandoffCount++
 		s.PendingFocus, s.PendingReason = r.Focus, r.Reason
 		s.LastHandoffBinding = a.Binding
-		if s.ExcludedBindings == nil {
-			s.ExcludedBindings = map[string]bool{}
+		if s.HandoffExcluded == nil {
+			s.HandoffExcluded = map[string]bool{}
 		}
-		s.ExcludedBindings[a.Binding] = true
+		s.HandoffExcluded[a.Binding] = true
 		return nil
 	}
 	s.PendingFocus, s.PendingReason = "", ""
 	s.LastHandoffBinding = ""
+	s.HandoffCount = 0
 	s.HandoffFallbackUsed = false
+	s.HandoffExcluded = nil
 	if r.Outcome == "timed-out" {
 		s.Pause("invocation-timeout")
 		return nil
@@ -295,7 +385,17 @@ func (s *State) apply(r Result) error {
 		if len(s.SpecialistQueue) == 0 || r.Revision != a.Revision {
 			return fmt.Errorf("adaptive: specialist result does not match exact revision")
 		}
-		check := s.SpecialistQueue[0]
+		idx := -1
+		for i, check := range s.SpecialistQueue {
+			if check.Role == a.Role {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return fmt.Errorf("adaptive: specialist role %q is not queued", a.Role)
+		}
+		check := s.SpecialistQueue[idx]
 		check.AgentID, check.Binding = a.AgentID, a.Binding
 		check.Overlap = a.Binding == s.LastImplementerBinding
 		if check.Role == "research" {
@@ -310,13 +410,15 @@ func (s *State) apply(r Result) error {
 			check.Approved = r.Outcome == "approved"
 		}
 		s.SpecialistReviews = append(s.SpecialistReviews, check)
-		s.SpecialistQueue = s.SpecialistQueue[1:]
+		s.SpecialistQueue = append(append([]SpecialistCheck{}, s.SpecialistQueue[:idx]...), s.SpecialistQueue[idx+1:]...)
 		if !check.Approved {
+			s.rememberRejection(a, r)
 			s.SpecialistQueue = nil
+			s.Assignments = map[string]Assignment{} // cancel excess pending specialists
 			s.Stage = Implementing
 			return nil
 		}
-		if len(s.SpecialistQueue) == 0 {
+		if len(s.SpecialistQueue) == 0 && len(s.Assignments) == 0 {
 			s.Stage = s.AfterSpecialists
 			s.AfterSpecialists = ""
 		}
@@ -337,24 +439,34 @@ func (s *State) apply(r Result) error {
 	case Implementing:
 		switch r.Outcome {
 		case "answer", "no-change":
+			if s.DiffRevision != "" {
+				s.implementationMadeNoProgress()
+				return nil
+			}
 			s.Stage, s.Outcome = Done, r.Outcome
 		case "changed":
-			if r.Revision == "" || r.Revision == s.DiffRevision {
+			if r.Revision == "" {
 				return fmt.Errorf("adaptive: new diff revision required")
+			}
+			if r.Revision == s.DiffRevision {
+				s.implementationMadeNoProgress()
+				return nil
 			}
 			s.RevisionCount++
 			if s.RevisionCount > s.MaxRevisions {
 				s.Stage, s.Outcome = Paused, "revision-budget-exhausted"
 				return nil
 			}
-			s.DiffRevision, s.Stage = r.Revision, Assessing
+			s.DiffRevision, s.Stage = r.Revision, Verifying
 			s.LastImplementerBinding = a.Binding
-			s.Assessments = nil
+			InvalidateOnCandidateChange(s)
 		case "failed":
 			s.Stage, s.Outcome = Paused, "implementer-failed"
 		default:
 			return fmt.Errorf("adaptive: invalid implementation outcome %q", r.Outcome)
 		}
+	case Verifying:
+		return fmt.Errorf("adaptive: verifying is supervisor-owned; use ApplyVerificationResult")
 	case Assessing:
 		if r.Revision != a.Revision {
 			return fmt.Errorf("adaptive: assessment revision does not match assignment")
@@ -367,12 +479,34 @@ func (s *State) apply(r Result) error {
 		default:
 			return fmt.Errorf("adaptive: invalid assessment outcome %q", r.Outcome)
 		}
+		// A single changes-required is decisive: cancel excess pending reviewers
+		// and return to implementation (or pause when the revision budget is spent).
+		if r.Outcome == "changes-required" {
+			s.rememberRejection(a, r)
+			if s.RevisionCount >= s.MaxRevisions {
+				s.Pause("revision-budget-exhausted")
+			} else {
+				s.Stage = Implementing
+			}
+			s.Assignments = map[string]Assignment{}
+			return nil
+		}
 		if len(s.Assessments) >= s.Quorum {
 			approved := true
 			for _, x := range s.Assessments {
-				approved = approved && x.Approved
+				approved = approved && x.Approved && x.Revision == s.DiffRevision
 			}
 			if approved {
+				if !ChecksAllowCompletion(s.CheckReceipts, s.DiffRevision) {
+					// Supervisor receipts are authoritative; agent prose / Jev
+					// cannot mark a failed or missing required check as passed.
+					s.Assignments = map[string]Assignment{}
+					s.Assessments = nil
+					s.Stage = Verifying
+					s.Outcome = ""
+					s.PendingReason = "assessor quorum cannot complete without passing supervisor checks for this candidate"
+					return nil
+				}
 				s.Stage, s.Outcome = Done, "approved"
 			} else if s.RevisionCount >= s.MaxRevisions {
 				s.Pause("revision-budget-exhausted")
@@ -385,6 +519,21 @@ func (s *State) apply(r Result) error {
 		return fmt.Errorf("adaptive: run is %s", s.Stage)
 	}
 	return nil
+}
+
+func (s *State) rememberRejection(a Assignment, r Result) {
+	s.RepairFeedback = &RepairFeedback{InvocationID: r.InvocationID, Revision: r.Revision,
+		Role: a.Role, Summary: BoundPendingDetail(r.Reason, 4096)}
+	s.PendingReason = "address the decisive review findings for revision " + r.Revision
+}
+
+func (s *State) implementationMadeNoProgress() {
+	s.NoProgressCount++
+	s.PendingReason = "the existing candidate still requires verification or review; inspect the saved findings and check logs, then make a concrete repair or hand off with the blocker and evidence"
+	if s.NoProgressCount >= 2 {
+		s.Pause("implementer-failed")
+		s.PendingReason = "two implementation attempts produced no new candidate; " + s.PendingReason
+	}
 }
 
 func (s *State) Pause(reason string) {

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/sdlc/graph"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/sdlc/graph"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 // NewRun starts a fresh run at g's entry node.

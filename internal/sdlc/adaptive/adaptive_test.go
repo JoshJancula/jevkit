@@ -32,8 +32,15 @@ func TestAdaptiveThreeIndependentAssessmentsOnExactRevision(t *testing.T) {
 	report(t, &s, "p", "planned", "plan-1")
 	assign(t, &s, "i", "implementer", "runtime:cursor:m", "plan-1")
 	report(t, &s, "i", "changed", "diff-1")
+	if s.Stage != Verifying {
+		t.Fatalf("changed should enter verifying: %+v", s)
+	}
+	passVerify(t, &s)
 	if err := s.Assign(Assignment{InvocationID: "stale", AgentID: "stale", Role: "assessor", Binding: "native:stale", Revision: "diff-0"}); err == nil {
 		t.Fatal("stale assessment allowed")
+	}
+	if err := s.Assign(Assignment{InvocationID: "self", AgentID: "self", Role: "assessor", Binding: "runtime:cursor:m", Revision: "diff-1"}); err == nil {
+		t.Fatal("implementer binding allowed as assessor")
 	}
 	assign(t, &s, "a1", "assessor", "runtime:cursor:one", "diff-1")
 	if err := s.Assign(Assignment{InvocationID: "alias", AgentID: "alias", Role: "assessor", Binding: "runtime:cursor:one", Revision: "diff-1"}); err == nil {
@@ -81,6 +88,7 @@ func TestAdaptiveDissentRequestsNewRevisionAndAuthFailureExcludesBinding(t *test
 	}
 	assign(t, &s, "good", "implementer", "runtime:codex:m", "plan")
 	report(t, &s, "good", "changed", "diff-1")
+	passVerify(t, &s)
 	assign(t, &s, "r1", "assessor", "runtime:a", "diff-1")
 	assign(t, &s, "r2", "assessor", "runtime:b", "diff-1")
 	report(t, &s, "r1", "approved", "diff-1")
@@ -90,7 +98,7 @@ func TestAdaptiveDissentRequestsNewRevisionAndAuthFailureExcludesBinding(t *test
 	}
 	assign(t, &s, "good2", "implementer", "runtime:codex:m", "plan")
 	report(t, &s, "good2", "changed", "diff-2")
-	if s.Stage != Assessing || len(s.Assessments) != 0 {
+	if s.Stage != Verifying || len(s.Assessments) != 0 {
 		t.Fatalf("old assessments counted for new revision: %+v", s)
 	}
 }
@@ -143,6 +151,7 @@ func TestAdaptiveRevisionLoopPausesAtConfiguredLimit(t *testing.T) {
 	report(t, &s, "p", "planned", "plan")
 	assign(t, &s, "i1", "implementer", "impl", "plan")
 	report(t, &s, "i1", "changed", "diff-1")
+	passVerify(t, &s)
 	assign(t, &s, "a1", "assessor", "reviewer", "diff-1")
 	report(t, &s, "a1", "changes-required", "diff-1")
 	if s.Stage != Paused || s.Outcome != "revision-budget-exhausted" {
@@ -161,5 +170,51 @@ func TestAdaptiveTimeoutPauses(t *testing.T) {
 		if s.Stage != Paused || s.Outcome != reason {
 			t.Fatalf("%s: %+v", outcome, s)
 		}
+	}
+}
+
+func TestAdaptiveDecisiveRejectionCancelsExcessAssessors(t *testing.T) {
+	s, _ := New("feature", "collaborative", 2, 2, 3)
+	assign(t, &s, "p", "planner", "p", "")
+	report(t, &s, "p", "planned", "plan")
+	assign(t, &s, "i", "implementer", "impl", "plan")
+	report(t, &s, "i", "changed", "diff-1")
+	passVerify(t, &s)
+	assign(t, &s, "a1", "assessor", "r1", "diff-1")
+	assign(t, &s, "a2", "assessor", "r2", "diff-1")
+	report(t, &s, "a1", "changes-required", "diff-1")
+	if s.Stage != Implementing || len(s.Assignments) != 0 {
+		t.Fatalf("decisive rejection did not cancel excess: %+v", s)
+	}
+	if s.ReviewSlotsNeeded() != 0 || s.ParallelReviews() {
+		t.Fatalf("review helpers after rejection: needed=%d parallel=%v", s.ReviewSlotsNeeded(), s.ParallelReviews())
+	}
+}
+
+func TestAdaptiveConcurrentSpecialistsMatchByRole(t *testing.T) {
+	s, _ := New("feature", "lean", 1, 2, 3)
+	s.Stage = Specializing
+	s.DiffRevision = "diff-1"
+	s.LastImplementerBinding = "writer"
+	s.SpecialistQueue = []SpecialistCheck{{Role: "qa", Revision: "diff-1"}, {Role: "security", Revision: "diff-1"}}
+	s.AfterSpecialists = Verifying
+	if s.Role() != "qa" {
+		t.Fatalf("first role: %q", s.Role())
+	}
+	assign(t, &s, "q", "qa", "qa-bind", "diff-1")
+	if s.Role() != "security" {
+		t.Fatalf("next role while qa pending: %q", s.Role())
+	}
+	assign(t, &s, "s", "security", "sec-bind", "diff-1")
+	if s.Role() != "" || s.ReviewSlotsNeeded() != 0 {
+		t.Fatalf("all specialists reserved: role=%q needed=%d", s.Role(), s.ReviewSlotsNeeded())
+	}
+	report(t, &s, "s", "approved", "diff-1")
+	if s.Stage != Specializing || len(s.Assignments) != 1 || len(s.SpecialistQueue) != 1 {
+		t.Fatalf("security first: %+v", s)
+	}
+	report(t, &s, "q", "approved", "diff-1")
+	if s.Stage != Verifying || len(s.SpecialistQueue) != 0 || len(s.Assignments) != 0 {
+		t.Fatalf("after both: %+v", s)
 	}
 }

@@ -8,16 +8,18 @@ import (
 	"strings"
 	"testing"
 
+	redactcmd "github.com/JoshJancula/jevkit/cmd/jevkit/redact"
 	"github.com/spf13/cobra"
 )
 
-// userDocPaths are the user-facing markdown files this TODO owns, plus the
-// redaction guide linked from the README.
+// userDocPaths covers the entry points and consolidated user guides.
 var userDocPaths = []string{
 	"../../README.md",
+	"../../docs/README.md",
 	"../../docs/AGENT-INTEGRATIONS.md",
 	"../../docs/KEYS.md",
 	"../../docs/REDACTION.md",
+	"../../docs/SDLC.md",
 	"../../CONTRIBUTING.md",
 }
 
@@ -175,7 +177,7 @@ func tokenizeCLI(rest string) []string {
 func commandTree(t *testing.T) map[string]*cobra.Command {
 	t.Helper()
 	a := newApp(t)
-	root := a.rootCmd()
+	root := a.RootCmd(commands(a)...)
 	out := map[string]*cobra.Command{"": root}
 	var walk func(prefix string, c *cobra.Command)
 	walk = func(prefix string, c *cobra.Command) {
@@ -201,7 +203,7 @@ func commandTree(t *testing.T) map[string]*cobra.Command {
 
 func redactSubcommands() map[string]bool {
 	subs := map[string]bool{"help": true}
-	for _, line := range strings.Split(redactUsage, "\n") {
+	for _, line := range strings.Split(redactcmd.RedactUsage, "\n") {
 		// usage lines look like "  init [--project] ..."
 		if !strings.HasPrefix(line, "  ") {
 			continue

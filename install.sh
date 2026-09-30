@@ -55,8 +55,12 @@ main() {
   curl -fL "$base/checksums.txt" -o "$tmp/checksums.txt"
   verify_checksum "$tmp/$archive" "$tmp/checksums.txt"
   if command -v cosign >/dev/null 2>&1; then
-    curl -fsSL "$base/checksums.txt.sig" -o "$tmp/checksums.txt.sig" || fail "cosign signature download failed"
-    cosign verify-blob --signature "$tmp/checksums.txt.sig" "$tmp/checksums.txt" >/dev/null || fail "cosign verification failed"
+    curl -fsSL "$base/checksums.txt.sigstore.json" -o "$tmp/checksums.txt.sigstore.json" || fail "cosign bundle download failed"
+    cosign verify-blob \
+      --bundle "$tmp/checksums.txt.sigstore.json" \
+      --certificate-identity "https://github.com/$REPO/.github/workflows/release.yml@refs/tags/v$version" \
+      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      "$tmp/checksums.txt" >/dev/null || fail "cosign verification failed"
   fi
   tar -xzf "$tmp/$archive" -C "$tmp"
   bin=$(find "$tmp" -type f -name jevkit -perm -u+x | head -n 1)

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 var _ jev.Breaker = (*Breaker)(nil)

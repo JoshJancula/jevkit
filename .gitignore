@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 bin/
+/cmd/jevkit/jevkit
 /jevkit
 dist/
 coverage.out
@@ -10,3 +11,5 @@ node_modules/
 .ralph-workspace
 .jevkit/compact-corpus/local/
 .jevkit-review-*.diff
+.claude/
+.codex/

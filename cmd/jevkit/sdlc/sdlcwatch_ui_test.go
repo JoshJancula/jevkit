@@ -1,0 +1,671 @@
+package sdlc
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
+	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
+)
+
+func TestTTYFrameUsesCarriageReturnsAndKeepsLinesInsideTerminal(t *testing.T) {
+	box := ttyBox("AGENT cursor-architect", []string{"Now  Reading a very long path that cannot fit in the pane"}, 42)
+	frame := ttyFrame(append([]string{"SDLC run", "Task: test"}, box...), 42, 8)
+	if strings.Contains(frame, "\n") && !strings.Contains(frame, "\r\n") {
+		t.Fatalf("raw-mode line endings lost carriage returns: %q", frame)
+	}
+	lines := strings.Split(frame, "\r\n")
+	if len(lines) > 7 {
+		t.Fatalf("frame exceeds terminal height: %d", len(lines))
+	}
+	for _, line := range lines {
+		if utf8.RuneCountInString(line) > 42 {
+			t.Fatalf("frame line exceeds terminal width: %q", line)
+		}
+	}
+	if !strings.Contains(frame, "┌") || !strings.Contains(frame, "│") {
+		t.Fatalf("agent pane missing: %q", frame)
+	}
+}
+
+func TestFrozenWatchShowsHowToResumeAndStop(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260928T183517Z-03827b88"}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{frozen: true, driving: true}, 80, 24)
+	if !strings.Contains(view, "DISPLAY FROZEN") || !strings.Contains(view, "p resume display") || !strings.Contains(view, "Ctrl-C stop") {
+		t.Fatalf("frozen watch has no recovery controls: %q", view)
+	}
+}
+
+func TestWatchShowsClaudeToolRequestBeforeFollowingText(t *testing.T) {
+	saved := worker.LogLine{Stream: "stdout", Text: `{"type":"assistant","message":{"content":[{"type":"text","text":"Checking the plan"},{"type":"tool_use","id":"tool-1","name":"Read","input":{"file_path":"plan.md"}}]}}`}
+	label, key, started, completed := watchActivity(saved)
+	if label != "Using Read plan.md" || key != "tool-1" || !started || completed {
+		t.Fatalf("Claude tool request hidden behind message text: %q %q %t %t", label, key, started, completed)
+	}
+	saved.Text = `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":[{"type":"text","text":"The plan calls for a lock."}]}]}}`
+	label, key, started, completed = watchActivity(saved)
+	title, detail := watchClaudeToolResult(saved.Text)
+	if label != "Tool result received" || key != "tool-1" || started || !completed || title != "Tool result" || len(detail) == 0 || !strings.Contains(strings.Join(detail, " "), "calls for a lock") {
+		t.Fatalf("Claude tool result missing: %q %q %t %t %q %#v", label, key, started, completed, title, detail)
+	}
+}
+
+func TestTTYWrappedCodeDiffAndControlStripping(t *testing.T) {
+	text := "    ┃ +" + strings.Repeat("added", 15) + "\x1b]8;;https://example.com\a\x1b[31m"
+	rows := ttyWrapPreserve(text, 32)
+	if len(rows) < 2 || !strings.HasPrefix(rows[0], "    ┃ +") || !strings.HasPrefix(rows[1], "    ┃ ") {
+		t.Fatalf("code wrapping: %#v", rows)
+	}
+	for _, row := range rows {
+		if utf8.RuneCountInString(row) > 32 || strings.Contains(row, "\x1b") {
+			t.Fatalf("unsafe row: %q", row)
+		}
+	}
+	// A markdown bullet is not a removal outside a diff.
+	if rows := watchDetailRows("Agent text", []string{"- item"}, 40, true); strings.Contains(rows[0].plain, hlDelBg) {
+		t.Fatalf("bullet styled as removal: %q", rows[0].plain)
+	}
+}
+
+func TestWatchDetailRowsHighlightDiffAndSource(t *testing.T) {
+	diff := []string{"diff --git a/main.go b/main.go", "--- a/main.go", "+++ b/main.go", "@@ -1,3 +1,3 @@", " package main", `-func old() string { return "x" }`, `+func main() { fmt.Println("hi") } // greet`}
+	rows := watchDetailRows("Files changed", diff, 60, true)
+	if len(rows) != len(diff) {
+		t.Fatalf("rows: %#v", rows)
+	}
+	want := []watchRowKind{rowDiffFile, rowDiffFile, rowDiffFile, rowDiffHunk, rowDiffContext, rowDiffDel, rowDiffAdd}
+	for i, row := range rows {
+		if row.kind != want[i] || !strings.HasPrefix(row.plain, ttyPrestyled) {
+			t.Fatalf("row %d: %+v", i, row)
+		}
+		if w := app.TextWidth(strings.TrimPrefix(row.plain, ttyPrestyled)); w > 60 {
+			t.Fatalf("row %d overflows: %d", i, w)
+		}
+	}
+	add := rows[6].plain
+	for _, code := range []string{hlAddBg, hlAddSign + "+", hlKeyword + "func", hlString + `"hi"`, hlComment + "// greet", hlFunc + "Println"} {
+		if !strings.Contains(add, code) {
+			t.Fatalf("added row missing %q: %q", code, add)
+		}
+	}
+	if !strings.Contains(rows[5].plain, hlDelBg) || !strings.Contains(rows[5].plain, hlKeyword+"return") {
+		t.Fatalf("removed row: %q", rows[5].plain)
+	}
+
+	grep := watchDetailRows("Tool result · rg -n usagef cmd", []string{"cmd/jevkit/usage.go:29:\t\treturn usagef(\"bad\")"}, 80, true)
+	if !strings.Contains(grep[0].plain, hlPath+"cmd/jevkit/usage.go") || !strings.Contains(grep[0].plain, hlLineNo+"29") || !strings.Contains(grep[0].plain, hlKeyword+"return") {
+		t.Fatalf("grep row: %q", grep[0].plain)
+	}
+	if plain := watchDetailRows("Files changed", diff, 60, false); strings.Contains(plain[6].plain, "\x1b") || plain[6].plain != diff[6] {
+		t.Fatalf("color disabled row styled: %q", plain[6].plain)
+	}
+}
+
+func TestTTYFitKeepsStylesZeroWidth(t *testing.T) {
+	s := hlKeyword + "func" + hlFgReset + " main() {}" + app.ANSIReset
+	if got := ttyFit(s, 20); got != s {
+		t.Fatalf("fitting styled text changed it: %q", got)
+	}
+	got := ttyFit(s, 6)
+	if app.TextWidth(got) != 6 || !strings.HasSuffix(got, "…"+app.ANSIReset) || !strings.HasPrefix(got, hlKeyword+"func") {
+		t.Fatalf("clipped styled text: %q", got)
+	}
+}
+
+func TestWatchEditPreviewShowsClaudeEditAsDiff(t *testing.T) {
+	work := t.TempDir()
+	raw, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"content": []map[string]any{{
+		"type": "tool_use", "name": "Edit",
+		"input": map[string]string{"file_path": filepath.Join(work, "a.go"), "old_string": "a\nold\nz", "new_string": "a\nnew\nz"},
+	}}}})
+	title, lines := watchEditPreview(string(raw), work)
+	want := []string{"--- a.go", "+++ a.go", "@@", " a", "-old", "+new", " z"}
+	if title != "Edit · a.go" || strings.Join(lines, "|") != strings.Join(want, "|") {
+		t.Fatalf("edit preview: %q %#v", title, lines)
+	}
+}
+
+func TestWatchFileChangesShowsGitDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	work := t.TempDir()
+	git := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = work
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(work, "main.go"), []byte("package main\n\nfunc old() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-qm", "init")
+	if err := os.WriteFile(filepath.Join(work, "main.go"), []byte("package main\n\nfunc renamed() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "new.md"), []byte("# New\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]any{"type": "file_change", "status": "completed", "changes": []map[string]string{
+		{"path": filepath.Join(work, "main.go"), "kind": "update"},
+		{"path": filepath.Join(work, "new.md"), "kind": "add"},
+	}}})
+	_, _, detail := watchFileChanges(string(raw), work)
+	joined := strings.Join(detail, "\n")
+	for _, want := range []string{"update  main.go", "-func old() {}", "+func renamed() {}", "+# New"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("diff missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestTTYStyleLineHighlightsExactDecisionOutcome(t *testing.T) {
+	for _, test := range []struct {
+		choice string
+		color  string
+	}{
+		{choice: "failed", color: app.ANSIRed},
+		{choice: "pass", color: app.ANSIGreen},
+	} {
+		line := "    invocation-outcome  " + test.choice + " · assessing — worker: non-implementer changed the workspace"
+		styled := ttyStyleLine(line)
+		if !strings.Contains(styled, test.color+test.choice+app.ANSIReset) {
+			t.Fatalf("%s outcome color missing: %q", test.choice, styled)
+		}
+	}
+
+	line := "    invocation-outcome  retry failed bindings · assessing"
+	if styled := ttyStyleLine(line); styled != "\x1b[2m"+line+app.ANSIReset {
+		t.Fatalf("non-exact outcome choice was highlighted: %q", styled)
+	}
+}
+
+func TestWatchActivityNamesCursorToolInsteadOfMetadata(t *testing.T) {
+	saved := worker.LogLine{Stream: "stdout", Text: `{"type":"tool_call","subtype":"started","call_id":"one","tool_call":{"readToolCall":{"args":{"path":"docs/SDLC.md"}},"startedAtMs":"123"}}`}
+	label, key, started, completed := watchActivity(saved)
+	if label != "Reading docs/SDLC.md" || key != "one" || !started || completed {
+		t.Fatalf("activity: %q %q %t %t", label, key, started, completed)
+	}
+	if label, _, _, _ := watchActivity(worker.LogLine{Stream: "stdout", Text: `{"type":"thinking","subtype":"delta","text":"internal text"}`}); label != "" {
+		t.Fatalf("thinking exposed as work status: %q", label)
+	}
+}
+
+func TestTTYViewShowsCurrentAgentActionWithinRunSummary(t *testing.T) {
+	a := newApp(t)
+	runID := "run-20260924T230044Z-ac3257e1"
+	invocation := "run-20260924T230044Z-ca5e7964"
+	dir := filepath.Join(a.SDLCRunsDir(), runID, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(worker.LogMeta{Invocation: invocation, Agent: "cursor-architect", Runtime: "cursor", StartedAt: "2026-09-24T23:00:44Z"})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	event, _ := json.Marshal(worker.LogLine{Stream: "stdout", Text: `{"type":"tool_call","subtype":"started","call_id":"one","tool_call":{"readToolCall":{"args":{"path":"docs/SDLC.md"}},"startedAtMs":"123"}}`})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".lines.jsonl"), append(event, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := adaptive.State{Stage: adaptive.Planning, MaxAssignments: 20, MaxRevisions: 3, Assignments: map[string]adaptive.Assignment{invocation: {InvocationID: invocation, Role: "planner", AgentID: "cursor-architect"}}}
+	run := ledger.Run{RunID: runID, Task: "Explain scoring", Adaptive: &st}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{selected: -1, driving: true}, 80, 24)
+	if !strings.Contains(view, "Task  Explain scoring") || !strings.Contains(view, "Now  Reading docs/SDLC.md") || strings.Contains(view, "startedAtMs") {
+		t.Fatalf("current work missing or noisy: %q", view)
+	}
+}
+
+func TestWatchToolResultPreservesCodeBlockAndBoundsExcerpt(t *testing.T) {
+	raw := `{"type":"tool_call","subtype":"completed","tool_call":{"readToolCall":{"args":{"path":"main.go"},"result":{"success":{"content":"# Example\n\n` + "```go" + `\nfunc main() {}\n` + "```" + `\n"}}}}}`
+	title, lines := watchToolPreview(raw)
+	if title != "Tool result · Reading main.go" || len(lines) != 4 || lines[1] != "┃ ```go" || lines[2] != "┃ func main() {}" {
+		t.Fatalf("tool preview: %q %#v", title, lines)
+	}
+	formatted := formatWatchExcerpt(strings.Repeat("line\n", 200), 4)
+	if len(formatted) != 5 || formatted[4] != "… more in sdlc logs" {
+		t.Fatalf("unbounded excerpt: %#v", formatted)
+	}
+}
+
+func TestWatchFinalPreviewNormalizesScopedOutcome(t *testing.T) {
+	raw := `{"type":"result","result":"{\"outcome\":\"planner: planned\",\"content\":\"## Goal\\nWrite docs\"}"}`
+	title, lines := watchFinalPreview(raw)
+	if title != "Agent result · planned" || len(lines) != 2 || lines[0] != "## Goal" {
+		t.Fatalf("final preview: %q %#v", title, lines)
+	}
+}
+
+func TestTTYViewSwitchesBetweenAgentAndToolResults(t *testing.T) {
+	a := newApp(t)
+	runID := "run-20260924T230044Z-ac3257e1"
+	invocation := "run-20260924T230044Z-ca5e7964"
+	dir := filepath.Join(a.SDLCRunsDir(), runID, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(worker.LogMeta{Invocation: invocation, Agent: "cursor-architect", Runtime: "cursor", StartedAt: "2026-09-24T23:00:44Z"})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tool := `{"type":"tool_call","subtype":"completed","tool_call":{"readToolCall":{"args":{"path":"main.go"},"result":{"success":{"content":"` + "```go" + `\nfunc main() {}\n` + "```" + `"}}}}}`
+	line, _ := json.Marshal(worker.LogLine{Stream: "stdout", Text: tool})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".lines.jsonl"), append(line, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := `{"type":"result","result":"{\"outcome\":\"planned\",\"content\":\"## Plan\\nWrite docs\"}"}`
+	if err := os.WriteFile(filepath.Join(dir, invocation+".stdout"), []byte(result+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := ledger.Run{RunID: runID, Task: "Write docs", Adaptive: &adaptive.State{Stage: adaptive.Paused}}
+	state := watchTTYState{selected: -1, logs: true}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, state, 100, 28)
+	if !strings.Contains(view, "Agent result · planned") || !strings.Contains(view, "## Plan") {
+		t.Fatalf("missing agent result: %q", view)
+	}
+	state.toolView = true
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, state, 100, 28)
+	if !strings.Contains(view, "Tool result · Reading main.go") || !strings.Contains(view, "┃ func main() {}") {
+		t.Fatalf("missing formatted tool result: %q", view)
+	}
+}
+
+func TestTTYViewKeepsPauseAndControlsVisibleAtNarrowSize(t *testing.T) {
+	a := newApp(t)
+	runID := "run-20260924T230044Z-ac3257e1"
+	invocation := "run-20260924T230044Z-ca5e7964"
+	dir := filepath.Join(a.SDLCRunsDir(), runID, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(worker.LogMeta{Invocation: invocation, Agent: "cursor-architect", Runtime: "cursor"})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := ledger.Run{RunID: runID, Task: strings.Repeat("Improve the contributor workflow ", 8), Adaptive: &adaptive.State{Stage: adaptive.Paused, Outcome: "planner-failed"}}
+	decisions := []ledger.Decision{{Kind: "invocation-outcome", Choice: "failed", Outcome: "paused"}, {Kind: "stage-transition", Choice: "paused", Outcome: "planner-failed"}}
+	view := a.sdlcTTYView([]ledger.Run{run}, decisions, watchTTYState{selected: -1, logs: true, help: true, paused: true, canRetry: true, cause: "invalid planning outcome"}, 80, 16)
+	if !strings.Contains(view, "AGENT 1/1") || !strings.Contains(view, "PAUSED  invalid planning outcome") || !strings.Contains(view, "r retry") || !strings.Contains(view, "q leave") {
+		t.Fatalf("lost core run information: %q", view)
+	}
+	lines := strings.Split(view, "\r\n")
+	if len(lines) > 15 {
+		t.Fatalf("frame overflows terminal: %d lines", len(lines))
+	}
+	for _, line := range lines {
+		if utf8.RuneCountInString(line) > 80 {
+			t.Fatalf("line overflows terminal: %q", line)
+		}
+	}
+}
+
+func TestTTYViewStylesAfterFitting(t *testing.T) {
+	a := newApp(t)
+	a.Stdout = &bytes.Buffer{}
+	a.Environ = append(a.Environ, "CLICOLOR_FORCE=1")
+	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Paused, Outcome: "planner-failed"}}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{paused: true, cause: "invalid planning outcome"}, 60, 16)
+	if !strings.Contains(view, app.ANSIYellow+"paused · planner-failed"+app.ANSIReset) || !strings.Contains(view, app.ANSIYellow+"PAUSED  "+app.ANSIReset) {
+		t.Fatalf("status colors missing: %q", view)
+	}
+	for _, line := range strings.Split(view, "\r\n") {
+		if app.TextWidth(line) > 60 {
+			t.Fatalf("styled line overflows terminal: %q", line)
+		}
+	}
+}
+
+func TestWatchNarrowControlsKeepDetachVisible(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Implementing}}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{}, 80, 16)
+	if !strings.Contains(view, "q detach") || !strings.Contains(view, "p copy") {
+		t.Fatalf("navigation clipped at 80 columns: %q", view)
+	}
+}
+
+func TestTTYViewFormatsTokenUsage(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Implementing}}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{
+		inputTokens:  86389,
+		outputTokens: 22254425,
+	}, 100, 24)
+	if !strings.Contains(view, "Usage  86,389 in · 22,254,425 out") {
+		t.Fatalf("token usage was not formatted in watch footer: %q", view)
+	}
+}
+
+func TestVerificationEnvironmentPauseKeepsRecoveryVisible(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260929T160856Z-e02a7dfb", Task: "verify", Adaptive: &adaptive.State{Stage: adaptive.Paused, Outcome: adaptive.OutcomeVerificationEnvironment}}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{paused: true, canRetry: true, cause: "Go 1.18 found first on PATH", retryAction: "re-run verification"}, 180, 8)
+	for _, want := range []string{"PAUSED  Go 1.18", "FIX  Correct the supervisor toolchain/PATH", "NEXT  r: re-run verification", "--retry-failed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q in %q", want, view)
+		}
+	}
+}
+
+func TestTTYHelpExplainsNavigationAndCanBeHidden(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Implementing}}
+	state := watchTTYState{help: true, logs: true, driving: true}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, state, 100, 26)
+	for _, want := range []string{"HELP  Press ? to hide", "PgUp/PgDn: jump five", "j/k (either case): scroll message text", "n: next agent", "p: pause redraw to copy", "l: show/hide logs"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("help missing %q: %s", want, view)
+		}
+	}
+	state.help = false
+	if view := a.sdlcTTYView([]ledger.Run{run}, nil, state, 100, 26); strings.Contains(view, "HELP  ") || !strings.Contains(view, "? help") {
+		t.Fatalf("help did not collapse to footer: %s", view)
+	}
+}
+
+func TestTTYHelpKeepsPauseAndRetryVisibleOnSmallTerminal(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Paused, Outcome: "assessor-failed"}}
+	state := watchTTYState{help: true, paused: true, canRetry: true, cause: "assessor reply invalid"}
+	for _, size := range []struct{ width, height int }{{80, 16}, {40, 16}, {32, 16}} {
+		view := a.sdlcTTYView([]ledger.Run{run}, []ledger.Decision{{Kind: "invocation-outcome", Choice: "failed"}}, state, size.width, size.height)
+		for _, want := range []string{"PAUSED  assessor reply invalid", "HELP  ?", "r retry", "q leave"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("%dx%d help lost %q: %s", size.width, size.height, want, view)
+			}
+		}
+		if size.width == 32 && !strings.Contains(view, "c:compact") {
+			t.Fatalf("compact retry explanation clipped at 32 columns: %s", view)
+		}
+		lines := strings.Split(view, "\r\n")
+		if len(lines) > size.height-1 {
+			t.Fatalf("%dx%d help overflows height: %s", size.width, size.height, view)
+		}
+		for _, line := range lines {
+			if utf8.RuneCountInString(line) > size.width {
+				t.Fatalf("%dx%d help overflows width: %q", size.width, size.height, line)
+			}
+		}
+	}
+}
+
+func TestTTYViewStartsAtLatestResultAndScrollsBack(t *testing.T) {
+	a := newApp(t)
+	runID := "run-20260924T230044Z-ac3257e1"
+	invocation := "run-20260924T230044Z-ca5e7964"
+	dir := filepath.Join(a.SDLCRunsDir(), runID, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(worker.LogMeta{Invocation: invocation, Agent: "cursor-architect", Runtime: "cursor"})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var content []string
+	for i := 0; i < 20; i++ {
+		content = append(content, fmt.Sprintf("step %02d", i))
+	}
+	reply, _ := json.Marshal(map[string]string{"outcome": "planned", "content": strings.Join(content, "\n")})
+	result, _ := json.Marshal(map[string]string{"type": "result", "result": string(reply)})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".stdout"), append(result, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := ledger.Run{RunID: runID, Task: "Write docs", Adaptive: &adaptive.State{Stage: adaptive.Paused}}
+	state := watchTTYState{selected: -1, logs: true}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, state, 80, 16)
+	if !strings.Contains(view, "step 19") || strings.Contains(view, "step 00") {
+		t.Fatalf("did not open at the latest result: %q", view)
+	}
+	state.detailScroll = 20
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, state, 80, 16)
+	if !strings.Contains(view, "step 00") || strings.Contains(view, "step 19") {
+		t.Fatalf("scroll did not move to older result: %q", view)
+	}
+}
+
+func TestTTYViewNavigatesEarlierCodexToolCalls(t *testing.T) {
+	a := newApp(t)
+	runID := "run-20260924T230044Z-ac3257e1"
+	invocation := "run-20260924T230044Z-ca5e7964"
+	dir := filepath.Join(a.SDLCRunsDir(), runID, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(worker.LogMeta{Invocation: invocation, Agent: "codex-builder-lite", Runtime: "codex"})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	events := []string{
+		`{"type":"item.started","item":{"id":"one","type":"command_execution","command":"cat CONTRIBUTING.md"}}`,
+		`{"type":"item.completed","item":{"id":"one","type":"command_execution","command":"cat CONTRIBUTING.md","aggregated_output":"old instructions\nsecond line","exit_code":0}}`,
+		`{"type":"item.started","item":{"id":"two","type":"command_execution","command":"git diff --check"}}`,
+		`{"type":"item.completed","item":{"id":"two","type":"command_execution","command":"git diff --check","aggregated_output":"new result","exit_code":0}}`,
+	}
+	var saved []byte
+	for _, event := range events {
+		line, _ := json.Marshal(worker.LogLine{Stream: "stdout", Text: event})
+		saved = append(saved, line...)
+		saved = append(saved, '\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, invocation+".lines.jsonl"), saved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := ledger.Run{RunID: runID, Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Implementing}}
+	state := watchTTYState{selected: -1, logs: true}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, state, 100, 24)
+	if !strings.Contains(view, "History  2/2") || !strings.Contains(view, "git diff --check") || !strings.Contains(view, "new result") {
+		t.Fatalf("latest Codex activity missing: %q", view)
+	}
+	state.scroll = 1
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, state, 100, 24)
+	if !strings.Contains(view, "History  1/2") || !strings.Contains(view, "old instructions") || strings.Contains(view, "new result") {
+		t.Fatalf("older Codex result unavailable: %q", view)
+	}
+}
+
+func TestWatchFileChangesShowsProjectRelativePaths(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "project")
+	raw, _ := json.Marshal(map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{"type": "file_change", "changes": []map[string]string{
+			{"path": filepath.Join(work, "README.md"), "kind": "update"},
+			{"path": filepath.Join(work, "docs", "AGENT-INTEGRATIONS.md"), "kind": "add"},
+		}},
+	})
+	label, title, detail := watchFileChanges(string(raw), work)
+	if label != "Editing README.md, docs/AGENT-INTEGRATIONS.md done" || title != "Files changed" || len(detail) != 2 || detail[0] != "update  README.md" || detail[1] != "add  docs/AGENT-INTEGRATIONS.md" {
+		t.Fatalf("file changes lost paths: %q %q %#v", label, title, detail)
+	}
+	if strings.Contains(label, work) || strings.Contains(strings.Join(detail, " "), work) {
+		t.Fatal("absolute project path displayed")
+	}
+}
+
+func TestTTYViewShowsEditedFileInHistory(t *testing.T) {
+	a := newApp(t)
+	runID := "run-20260924T230044Z-ac3257e1"
+	invocation := "run-20260924T230044Z-ca5e7964"
+	dir := filepath.Join(a.SDLCRunsDir(), runID, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(worker.LogMeta{Invocation: invocation, Agent: "codex-builder-lite", Runtime: "codex"})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]any{"id": "edit-1", "type": "file_change", "changes": []map[string]string{{"path": filepath.Join(a.WorkDir, "docs", "AGENT-INTEGRATIONS.md"), "kind": "update"}}}})
+	line, _ := json.Marshal(worker.LogLine{Stream: "stdout", Text: string(changed)})
+	if err := os.WriteFile(filepath.Join(dir, invocation+".lines.jsonl"), append(line, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Implementing}}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{selected: -1, logs: true}, 100, 24)
+	if !strings.Contains(view, "Editing docs/AGENT-INTEGRATIONS.md done") || !strings.Contains(view, "update  docs/AGENT-INTEGRATIONS.md") || strings.Contains(view, a.WorkDir) {
+		t.Fatalf("edited file missing from history: %q", view)
+	}
+}
+
+func TestWatchInputParserHandlesArrowsAndIgnoresMouseSequences(t *testing.T) {
+	var parser watchInputParser
+	feed := func(sequence string) []watchInputEvent {
+		var events []watchInputEvent
+		for i := 0; i < len(sequence); i++ {
+			if event, ok := parser.feed(sequence[i]); ok {
+				events = append(events, event)
+			}
+		}
+		return events
+	}
+	for _, tc := range []struct {
+		sequence string
+		key      byte
+	}{
+		{"\x1b[A", watchKeyHistoryOlder},
+		{"\x1b[B", watchKeyHistoryNewer},
+		{"\x1b[5~", watchKeyHistoryPageOlder},
+		{"\x1b[6~", watchKeyHistoryPageNewer},
+	} {
+		events := feed(tc.sequence)
+		if len(events) != 1 || events[0].key != tc.key {
+			t.Fatalf("%q: %#v", tc.sequence, events)
+		}
+	}
+	if events := feed("\x1b[<64;20;8M"); len(events) != 0 {
+		t.Fatalf("mouse sequence treated as navigation: %#v", events)
+	}
+	if !strings.Contains(watchTTYEnter(), "\x1b[?1049h") || !strings.Contains(watchTTYLeave(), "\x1b[?1049l") || !strings.Contains(watchTTYEnter(), "\x1b[?1000l\x1b[?1006l") || strings.Contains(watchTTYEnter(), "\x1b[?1000h") || strings.Contains(watchTTYEnter(), "\x1b[?1006h") {
+		t.Fatal("TTY session must preserve terminal mouse selection")
+	}
+}
+
+func TestWatchRetryKeysSelectSessionStrategy(t *testing.T) {
+	for _, tc := range []struct {
+		keys string
+		want string
+	}{
+		{"rR", "auto"}, {"fF", "fresh"}, {"sS", "resume"}, {"cC", "compact"}, {"?q", ""},
+	} {
+		for i := 0; i < len(tc.keys); i++ {
+			if got := watchRetryStrategy(tc.keys[i]); got != tc.want {
+				t.Fatalf("retry key %q: got %q, want %q", tc.keys[i], got, tc.want)
+			}
+		}
+	}
+}
+
+func TestWatchScrollKeysAcceptEitherCaseAndKeepHistorySeparate(t *testing.T) {
+	for _, key := range []byte{'j', 'J'} {
+		if history, detail := watchScrollOffsets(key, 3, 4); history != 3 || detail != 5 {
+			t.Fatalf("%q should scroll message text older: %d, %d", key, history, detail)
+		}
+	}
+	for _, key := range []byte{'k', 'K'} {
+		if history, detail := watchScrollOffsets(key, 3, 4); history != 3 || detail != 3 {
+			t.Fatalf("%q should scroll message text newer: %d, %d", key, history, detail)
+		}
+	}
+	if history, detail := watchScrollOffsets(watchKeyHistoryOlder, 3, 4); history != 4 || detail != 0 {
+		t.Fatalf("up arrow should browse older activity: %d, %d", history, detail)
+	}
+	if history, detail := watchScrollOffsets(watchKeyHistoryNewer, 3, 4); history != 2 || detail != 0 {
+		t.Fatalf("down arrow should browse newer activity: %d, %d", history, detail)
+	}
+}
+
+func TestWatchFollowsActiveInvocationThenReturnsToOverview(t *testing.T) {
+	a := newApp(t)
+	runID := "run-20260924T230044Z-ac3257e1"
+	activeID := "run-20260924T230044Z-ca5e7964"
+	oldID := "run-20260924T230044Z-da5e7964"
+	dir := filepath.Join(a.SDLCRunsDir(), runID, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, agent, started string }{
+		{activeID, "active-builder", "2026-09-24T23:00:44Z"},
+		{oldID, "finished-reviewer", "2026-09-24T23:01:44Z"},
+	} {
+		meta, _ := json.Marshal(worker.LogMeta{Invocation: item.id, Agent: item.agent, Runtime: "codex", StartedAt: item.started})
+		if err := os.WriteFile(filepath.Join(dir, item.id+".json"), meta, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := ledger.Run{RunID: runID, Task: "Write docs", Adaptive: &adaptive.State{
+		Stage: adaptive.Implementing, Assignments: map[string]adaptive.Assignment{
+			activeID: {InvocationID: activeID, AgentID: "active-builder", Role: "implementer"},
+		},
+	}}
+	invocation := watchActiveInvocation([]ledger.Run{run})
+	if invocation != activeID {
+		t.Fatalf("active invocation = %q", invocation)
+	}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{selected: -1, focusInvocation: invocation, logs: true}, 80, 24)
+	if !strings.Contains(view, "AGENT VIEW") || !strings.Contains(view, "active-builder") || strings.Contains(view, "finished-reviewer") || strings.Contains(view, "Task  Write docs") {
+		t.Fatalf("active invocation did not get focused view: %q", view)
+	}
+	run.Adaptive.Assignments = nil
+	if invocation := watchActiveInvocation([]ledger.Run{run}); invocation != "" {
+		t.Fatalf("completed invocation remains active: %q", invocation)
+	}
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{selected: -1, logs: true}, 80, 24)
+	if !strings.Contains(view, "SDLC  ") || !strings.Contains(view, "Task  Write docs") || strings.Contains(view, "AGENT VIEW") {
+		t.Fatalf("overview did not return after completion: %q", view)
+	}
+}
+
+func TestWatchCountsPartialRuntimeUsage(t *testing.T) {
+	a := newApp(t)
+	id := "run-20260924T230044Z-ac3257e1"
+	input := int64(120)
+	output := int64(30)
+	run := ledger.Run{RunID: id, Adaptive: &adaptive.State{Stage: adaptive.Done}, Usage: []ledger.InvocationUsage{
+		{Invocation: "one", InputTokens: &input},
+		{Invocation: "two", OutputTokens: &output},
+	}}
+	if err := ledger.Open(a.SDLCRunsDir(), id).WriteRun(run); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	a.Stdout = &out
+	if err := a.sdlcWatch(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Measured agent tokens: 120 (+1 unavailable) input, 30 (+1 unavailable) output") {
+		t.Fatalf("partial runtime usage was dropped: %s", out.String())
+	}
+}
+
+func TestTTYPauseExplainsRetryAndShowsGuidanceBox(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260924T230044Z-ac3257e1", Task: "Update docs", Adaptive: &adaptive.State{Stage: adaptive.Paused, Outcome: "implementer-failed"}}
+	state := watchTTYState{paused: true, canRetry: true, cause: "verification failed", retryAction: "send the implementer back with the verification failures"}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, state, 120, 24)
+	for _, want := range []string{"NEXT  r: send the implementer back", "g: tell the agent", "g guide+retry", "f new session"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("paused view lost %q: %s", want, view)
+		}
+	}
+	state.composing, state.draft = true, "only fix the new tests"
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, state, 120, 24)
+	if !strings.Contains(view, "GUIDANCE  only fix the new tests") || !strings.Contains(view, "Enter send guidance and retry") || strings.Contains(view, "NEXT  r:") {
+		t.Fatalf("guidance box not shown: %s", view)
+	}
+	state.composing, state.canRetry = false, false
+	view = a.sdlcTTYView([]ledger.Run{run}, nil, state, 120, 24)
+	if !strings.Contains(view, "NEXT  this pause needs a new run") {
+		t.Fatalf("non-retryable pause lacks next step: %s", view)
+	}
+}

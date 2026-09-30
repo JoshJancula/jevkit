@@ -30,6 +30,37 @@ type Client struct {
 	Breaker Breaker
 	// Sleep is the backoff wait; defaults to a context-aware time.Sleep.
 	Sleep func(ctx context.Context, d time.Duration)
+	// ObserveAttempt receives accounting metadata for every transport attempt.
+	// It never receives request or response content.
+	ObserveAttempt func(Attempt)
+}
+
+type Attempt struct {
+	Model         string
+	Status        int
+	Success       bool
+	Usage         Usage
+	UsageReported bool
+}
+
+func (c *Client) observeAttempt(model string, status int, raw []byte, success bool) {
+	if c.ObserveAttempt == nil {
+		return
+	}
+	a := Attempt{Model: model, Status: status, Success: success}
+	var envelope struct {
+		Model string `json:"model"`
+		Usage *Usage `json:"usage"`
+	}
+	if json.Unmarshal(raw, &envelope) == nil {
+		if envelope.Model != "" {
+			a.Model = envelope.Model
+		}
+		if envelope.Usage != nil {
+			a.Usage, a.UsageReported = *envelope.Usage, true
+		}
+	}
+	c.ObserveAttempt(a)
 }
 
 // New returns a Client with a MemoryBreaker and default HTTP client.
@@ -78,12 +109,16 @@ func (c *Client) Ask(ctx context.Context, req Request) (*Response, error) {
 			var terr error
 			status, raw, terr = c.post(ctx, key, body)
 			if terr != nil {
+				c.observeAttempt(req.Model, 0, nil, false)
 				if ctx.Err() == nil && attempt < c.Config.MaxRetries {
 					c.sleep(ctx, backoff(attempt))
 					continue
 				}
 				return nil, c.fail("connection-failure", scrub(terr, key))
 			}
+		}
+		if status < 200 || status > 299 {
+			c.observeAttempt(req.Model, status, raw, false)
 		}
 
 		switch {
@@ -104,6 +139,7 @@ func (c *Client) Ask(ctx context.Context, req Request) (*Response, error) {
 		}
 
 		resp, derr := DecodeResponse(raw)
+		c.observeAttempt(req.Model, status, raw, derr == nil)
 		if derr != nil {
 			return nil, c.fail("protocol", scrub(derr, key))
 		}

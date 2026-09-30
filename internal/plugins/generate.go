@@ -264,7 +264,7 @@ func FindRepoRoot(start string) (string, error) {
 	for {
 		gomod := filepath.Join(dir, "go.mod")
 		if b, err := os.ReadFile(gomod); err == nil {
-			if bytes.Contains(b, []byte("module github.com/OWNER/jevkit")) {
+			if bytes.Contains(b, []byte("module github.com/JoshJancula/jevkit")) {
 				return dir, nil
 			}
 		}

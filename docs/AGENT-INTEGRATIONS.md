@@ -1,47 +1,75 @@
-# Agents
+# Agent integrations
 
-How coding agents connect to jevkit: install, plugins, compaction mechanisms, MCP tools, and environment gates.
+Install hooks and MCP tools for Claude, Codex, Cursor, OpenCode, or Antigravity. For API key setup, see [API keys](KEYS.md).
 
-## Install (hooks + MCP)
+- [Install and remove](#install-and-remove)
+- [What the integration does](#what-the-integration-does)
+- [Compaction behavior](#compaction-behavior)
+- [MCP server](#mcp-server)
+- [Environment settings](#environment-settings)
+- [Plugin packages](#plugin-packages)
 
-From a project directory (default `--scope project`):
+## Install and remove
 
-```bash
-jevkit install claude
-jevkit install opencode
-jevkit install codex
-jevkit install cursor
-jevkit install antigravity
-jevkit install all
-```
-
-Useful flags:
+Run `jevkit install` from the project where you use your coding agent:
 
 ```bash
-jevkit install claude --dry-run
-jevkit install codex --scope user
-jevkit install claude --binary /usr/local/bin/jevkit
-jevkit uninstall claude
-jevkit doctor
+jevkit install codex       # or claude, opencode, cursor, antigravity, all
+jevkit doctor              # check the binary, hooks, and MCP setup
 ```
 
-Install is idempotent and marker-based. The first write keeps a `.jevkit-original` backup so uninstall can restore byte-exact config. `jevkit doctor` reports whether each agent binary is on `PATH` and whether hooks/MCP look installed.
+The default install adds hooks and an MCP server. It is project scoped; add `--scope user` to install for your user account. Jevkit keeps a backup of configuration it changes, and `jevkit uninstall codex` restores it. Preview changes with `jevkit install codex --dry-run`.
 
-## Plugin packages
+For SDLC runs, `jevkit sdlc integrations` shows the personal default for this
+project. Each new interactive run asks whether to auto-install hooks for its
+CLI agents and enable tool-output compaction, unless you select “keep this as
+my default.” Scripts can set the default with `jevkit sdlc integrations
+--hooks on --compaction on`; `--ask-every-run` clears it. Turning auto-install
+off does not remove hooks already
+installed in the project; use `jevkit uninstall AGENT --components hooks` for
+those files.
 
-Distributable packages live under `plugins/jevkit/<host>/` (Claude Code, OpenCode, Cursor, and Antigravity). Regenerate from templates with:
+When Codex project hooks are installed, `jevkit sdlc integrations` also checks
+for project hook trust records. SDLC Codex invocations with hooks enabled pass
+`--dangerously-bypass-hook-trust`, so those runs can use enabled hooks without
+persisted trust. This flag applies to every enabled hook in the project.
+Standalone Codex sessions still require review of new or changed hooks; run
+`codex`, then `/hooks` to review the exact definitions. Installing the file alone
+does not confirm that Codex executed it.
 
-```bash
-make plugins
-```
+Use `--components hooks` or `--components mcp` when you need only one integration. The agent's existing permissions still apply.
 
-Each package registers hooks/MCP that call the `jevkit` binary and ships `shared/jevkit-plugin-bootstrap.sh`, which probes `PATH` and prints (or can apply) a pinned `go install …` remediation when `jevkit` is missing.
+`jevkit install claude --injection-guard` adds broad pre-tool and post-tool hooks for [prompt-injection review](SECURITY-CHECK.md). The `*` pre-tool matcher runs Jevkit before every Claude tool call, so it adds hook startup latency to each call. Codex, Cursor, and Antigravity can also use `--injection-guard` to enable their installed hooks and shell wrappers. Review mode is off by default; try a shadow policy before enforcing it.
+
+Installed assets call a private, versioned dispatcher and fail open when Jevkit is unavailable. `hook` and `exec` are intentionally not public CLI commands.
+
+## What the integration does
+
+- **MCP tools** let an agent classify requests or failures, rank relevant lines, and ask typed questions. `jevkit mcp status` checks the server. Without a usable API key, tools report that Jev is unavailable so the agent can continue.
+- **Output compaction** can shorten supported tool results. It is off until you set `JEVKIT_COMPACT=1`. Jevkit saves the full original output locally and includes a retrieval path in a compacted result. `JEVKIT_COMPACT_SHADOW=1` measures what it would change without altering agent-visible output.
+- **Command checks** inspect supported shell calls before execution. They are a [path and command guard](SECURITY-CHECK.md), not an operating-system sandbox. OpenCode shell calls are not policy-checked in this version.
+- **SDLC capability matrix**: `jevkit sdlc agents capabilities` reports, per installed CLI runtime, what jevkit's SDLC worker actually does — whether read-only execution is enforced (and why not, when it isn't), the writable-invocation approval argument, any permission-bypass flag such as Antigravity's `--dangerously-skip-permissions`, whether the pre-tool hook covers shell calls, session resume, and a CLI version obtained by actually running the binary, not just a PATH lookup.
+
+Jevkit redacts known secrets and configured patterns locally before an API request. Pattern matching has limits; [test redaction](REDACTION.md) with the output your agents see.
 
 ## Compaction behavior
 
 Claude Code and OpenCode compact only result shapes their native post-tool contracts allow them to replace. Codex, Cursor, and Antigravity use a different, shared mechanism: their pre-tool hook replaces an eligible shell command with Jevkit's private wrapper command. The wrapper runs the original command, captures its streams and exit status, then prints the compacted result as the command output itself. This avoids relying on undocumented post-tool output mutation.
 
 The wrapper is fail-open for compaction and does not recursively wrap an already-wrapped command. It stores the complete original before attempting compaction, then includes the retrieval path in any compacted result. Stored output is private to Jevkit state. The classifier uses at most two requests: one for output triage and, when needed, one for salient line selection. `JEVKIT_COMPACT_GENERIC=1` enables deterministic compaction without a Jev client.
+
+`jevkit usage --source jev` reports global Jev transport attempts by origin,
+including hook calls. Its separate hook-dispatch table counts hook executions,
+which may make no Jev request. For example, the standard Claude compaction hook
+only considers Bash results above the 8 KiB threshold; `Read` results do not
+match that compaction hook.
+
+For Claude SDLC invocations, Jevkit asks Jev whether invocation-wide provider
+prompt caching is likely to pay for a cache write. It sends only prompt size,
+fingerprint, role, model, and prior cache counters. An unavailable or uncertain
+answer disables caching for that invocation. `jevkit usage --source runtime`
+shows enabled, disabled, and unmanaged decision counts. Other CLI runtimes have
+no Jevkit provider-cache control.
 
 Claude Code also installs a PreToolUse:Bash hook for the [security check](SECURITY-CHECK.md). Codex, Cursor, and Antigravity check eligible shell calls before rewriting them into the wrapper. OpenCode shell calls are not policy-checked in this version.
 
@@ -72,7 +100,7 @@ binary/source-data, redaction, confidence, or runtime-capability safeguards.
 version: 1
 rules:
   - id: preserve-generated-files
-    command: '^npm run generate'
+    command: '^go generate'
     action: never-compact
   - id: focused-tests
     command: '^go test'
@@ -91,10 +119,6 @@ Project policy lives at `.jevkit/compaction.yaml`; because it is repository
 content, it may add only `never-compact` rules. The separate `JEVKIT_SHADOW=1`
 MCP/registry gate forces decision tools to report fallback while logging what
 Jev answered, which is useful while question sets remain uncalibrated.
-
-## Runtime integration
-
-`jevkit install <agent>` installs the default **plugin bundle** (hooks plus MCP). Use `--components hooks` or `--components mcp` when you need only one integration surface. Installed assets call a private, versioned dispatcher and always fail open; `hook` and `exec` are intentionally not public CLI commands.
 
 ## MCP server
 
@@ -138,7 +162,7 @@ the request is sent.
 
 `jevkit install` registers the MCP entry for each agent; `jevkit mcp config --merge <file>` can merge the same entry into an existing client config.
 
-## Environment gates
+## Environment settings
 
 ### Jev model
 
@@ -181,6 +205,6 @@ export JEVKIT_COMPACT_SHADOW=1   # measure first
 unset JEVKIT_COMPACT_SHADOW      # then enable live compaction
 ```
 
-## Redaction reminder
+## Plugin packages
 
-Hooks and MCP never send unredacted text. Tune with `jevkit redact …` and read [REDACTION.md](REDACTION.md). Keys: [KEYS.md](KEYS.md).
+Generated plugin bundles live under `plugins/jevkit/<host>/`. Run `make plugins` after changing their templates. Each bundle calls the Jevkit binary and includes a bootstrap script that can suggest `go install` when the binary is missing.

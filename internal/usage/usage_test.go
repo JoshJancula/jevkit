@@ -325,3 +325,18 @@ func TestCost(t *testing.T) {
 		t.Fatal(b.String())
 	}
 }
+
+func TestAggregateKeepsOldRecordsReadableWithoutCacheFields(t *testing.T) {
+	// Jev usage.jsonl never recorded provider cache counters; old lines must
+	// still aggregate, and estimated cost must not be labeled a billing saving.
+	recs := []Record{
+		{Model: "jev-1.13.0", QuestionSetID: "qs", InputTokens: 100, OutputTokens: 10, UsageSource: SourceMeasured, Transport: TransportHTTPS},
+	}
+	s := Aggregate(recs, Filter{}, env(nil))
+	if s.Calls != 1 || s.InputTokens != 100 || s.OutputTokens != 10 {
+		t.Fatalf("%+v", s)
+	}
+	if s.Cost == nil || s.Cost.Note != "estimated" {
+		t.Fatalf("cost note must remain estimated, not a measured billing saving: %+v", s.Cost)
+	}
+}

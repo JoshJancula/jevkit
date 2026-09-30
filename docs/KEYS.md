@@ -1,80 +1,30 @@
 # API keys
 
-How jevkit finds and stores the Typesafe API key. The key is never printed by status commands, never written into agent hook or MCP config, and never accepted as a positional CLI argument.
+Jevkit needs a TypeSafe API key for live Jev requests. The normal setup is `jevkit key set`, which uses a hidden terminal prompt and stores the key in your OS keychain when available. Status commands never print the key.
 
-## Resolution order
+```bash
+jevkit key set       # store a key
+jevkit key status    # show which source wins, never the value
+jevkit key test      # make a live acceptance check
+jevkit key clear     # remove Jevkit-managed stored credentials
+```
 
-First usable source wins. A configured backend that **fails** does not fall through to a later one, except that an **unavailable** OS keychain is skipped silently.
+For a vault or secret helper, use `jevkit key set --command 'op read "op://Private/Typesafe/credential"'`. Do not pass the secret itself as a command argument.
 
-| # | Source | How it is set | Notes |
-| --- | --- | --- | --- |
-| 1 | Environment | `JEVKIT_API_KEY`, then `TYPESAFE_API_KEY` | Highest priority; good for CI |
-| 2 | Env file | `<workspace>/.env` | Parsed for the key line only; **never sourced** as a shell script |
-| 3 | Credential command | `jevkit key set --command '…'` | Command stdout is the key; no secret stored on disk |
-| 4 | OS keychain | `jevkit key set` (default) | Service `jevkit`, account `TYPESAFE_API_KEY` |
-| 5 | File | Fallback when no keychain | `0600` file under the config dir |
+## Where Jevkit looks
 
-Backend selection for command / keychain / file lives in `jev-credentials.json` (mode `0600`) in the config directory. Keys are never written under the workspace.
+The first usable source wins:
 
-## Config and state directories
-
-| Purpose | Resolution |
+| Priority | Source |
 | --- | --- |
-| Config dir (credentials, key file, user `redact.yaml`) | `$JEVKIT_CONFIG_DIR`, else `$JEVKIT_CONFIG_HOME`, else `<user config>/jevkit` (e.g. `~/.config/jevkit`) |
-| State dir (usage, audit, breaker, shadow logs) | `$JEVKIT_STATE_DIR`, else `$XDG_STATE_HOME/jevkit`, else `~/.local/state/jevkit` |
+| 1 | `JEVKIT_API_KEY`, then `TYPESAFE_API_KEY` |
+| 2 | `<workspace>/.env` (parsed as data, never run as a script) |
+| 3 | A configured credential command |
+| 4 | OS keychain |
+| 5 | A private file under the config directory |
 
-Credential command timeout defaults to 4s; override with `JEVKIT_KEY_TIMEOUT_MS`.
+A configured backend that fails stops resolution; only an unavailable OS keychain is skipped. Jevkit stores backend selection in a private `jev-credentials.json` file. It does not write a key under the workspace.
 
-## Commands
+The config directory is `$JEVKIT_CONFIG_DIR`, then `$JEVKIT_CONFIG_HOME`, then your user config directory's `jevkit` folder (typically `~/.config/jevkit`). State such as usage and audit logs goes to `$JEVKIT_STATE_DIR`, then `$XDG_STATE_HOME/jevkit`, then `~/.local/state/jevkit`. See [usage and local state](USAGE.md) for `jevkit usage`, cache token fields, and SDLC retention commands.
 
-```bash
-# Store (terminal: hidden prompt; non-TTY: read stdin)
-jevkit key set
-
-# Store a vault/helper command instead of the secret itself
-jevkit key set --command 'op read "op://Private/Typesafe/credential"'
-
-# Show which source would win (never the key value)
-jevkit key status
-
-# One live acceptance check (or fixture transport offline)
-jevkit key test
-
-# Remove keychain entry, key file, and credential command selection
-jevkit key clear
-```
-
-Refuse patterns that put the secret in argv (they are rejected):
-
-```bash
-# wrong — do not do this
-# jevkit key set sk-...
-```
-
-Pipe instead:
-
-```bash
-printf '%s' "$TYPESAFE_API_KEY" | jevkit key set
-```
-
-## Usage of the key
-
-Once resolved, the same store feeds:
-
-- `jevkit key test`
-- installed runtime integrations when `JEVKIT_COMPACT=1`
-- `jevkit mcp start` (lazy resolve; tools return `available: false` if missing)
-
-Check the local picture without sending the key anywhere:
-
-```bash
-jevkit doctor
-jevkit mcp status
-```
-
-## Security notes
-
-- Prefer keychain or a credential command over a plaintext file.
-- Prefer `JEVKIT_API_KEY` in ephemeral environments over committing `.env`.
-- Redaction still runs before any payload reaches the API; the key travels only as the HTTP credential, never inside the classified text. See [REDACTION.md](REDACTION.md).
-- `jevkit key clear` removes every stored backend jevkit manages; it does not unset your shell environment or edit `.env`.
+`jevkit key clear` does not unset shell variables or edit `.env`. Prefer the keychain or a credential command for long-lived keys; use an environment variable in short-lived CI jobs. Jevkit's [redaction rules](REDACTION.md) apply to question text, while the key travels as the HTTP credential.

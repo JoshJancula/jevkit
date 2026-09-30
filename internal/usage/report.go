@@ -29,7 +29,7 @@ func Render(w io.Writer, s Summary, format string, omitEmpty bool) error {
 }
 
 func renderText(w io.Writer, s Summary, omitEmpty bool) error {
-	if s.Calls == 0 {
+	if s.Attempts == 0 {
 		if omitEmpty {
 			return nil
 		}
@@ -38,10 +38,12 @@ func renderText(w io.Writer, s Summary, omitEmpty bool) error {
 	}
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format+"\n", a...) }
 	p("Jev (TypeSafe AI) usage")
-	p("  calls: %d (measured %d, usage unavailable %d)", s.Calls, s.CallsMeasured, s.CallsUnavailable)
-	p("  tokens: input %s, output %s", formatInt(s.InputTokens), formatInt(s.OutputTokens))
+	p("  successful calls: %d; transport attempts: %d (measured %d, usage unavailable %d, failed %d)", s.Calls, s.Attempts, s.AttemptsMeasured, s.AttemptsUnavailable, s.FailedAttempts)
+	p("  tokens: input %s, output %s", formatCount(s.InputTokens, s.AttemptsUnavailable), formatCount(s.OutputTokens, s.AttemptsUnavailable))
 	if s.Cost != nil {
-		p("  cost: ~$%.6f (%s)", s.Cost.EstimatedUSD, s.Cost.Note)
+		p("  cost: ~$%.6f (%s from measured usage)", s.Cost.EstimatedUSD, s.Cost.Note)
+	} else {
+		p("  cost: — (usage unavailable)")
 	}
 	group := func(title string, m map[string]*Tokens) {
 		if len(m) == 0 {
@@ -60,13 +62,24 @@ func renderText(w io.Writer, s Summary, omitEmpty bool) error {
 		p("  %s:", title)
 		for _, k := range names {
 			t := m[k]
-			p("    %-32s calls %-5d in %-8s out %s", k, t.Calls, formatInt(t.InputTokens), formatInt(t.OutputTokens))
+			p("    %-32s calls %-5d attempts %-5d in %-8s out %s", k, t.Calls, t.Attempts, formatCount(t.InputTokens, t.Unavailable), formatCount(t.OutputTokens, t.Unavailable))
 		}
 	}
 	group("by question set", s.ByQuestionSet)
 	group("by model", s.ByModel)
 	group("by agent", s.ByAgent)
+	group("by origin", s.ByOrigin)
 	return nil
+}
+
+func formatCount(known, unavailable int) string {
+	if unavailable > 0 {
+		if known == 0 {
+			return fmt.Sprintf("— (%d unavailable)", unavailable)
+		}
+		return fmt.Sprintf("%s (+%d unavailable)", formatInt(known), unavailable)
+	}
+	return formatInt(known)
 }
 
 func formatInt(n int) string {

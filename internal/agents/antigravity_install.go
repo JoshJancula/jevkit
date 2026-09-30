@@ -24,6 +24,9 @@ func (a *Antigravity) Install(opts InstallOptions) error {
 	if binary == "" {
 		binary = a.binary()
 	}
+	if opts.InjectionGuard {
+		binary = "JEVKIT_INJECTION_GUARD=1 " + binary
+	}
 
 	existing, err := readFileOptional(path)
 	if err != nil {

@@ -1,6 +1,6 @@
 package engine
 
-import "github.com/OWNER/jevkit/internal/sdlc/spec"
+import "github.com/JoshJancula/jevkit/internal/sdlc/spec"
 
 // Effect is something Apply wants its caller to resolve and feed back as an
 // Event. The engine never resolves an Effect itself; it only ever produces

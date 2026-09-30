@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/engine"
+	"github.com/JoshJancula/jevkit/internal/sdlc/engine"
 )
 
 func TestNewRunAndReadRun(t *testing.T) {
@@ -237,5 +238,155 @@ func TestArtifactPathTraversalRejected(t *testing.T) {
 		if err := store.WriteArtifact(bad, []byte("x")); err == nil {
 			t.Errorf("WriteArtifact(%q) should have failed", bad)
 		}
+	}
+}
+
+// TestOpenRejectsRunIDPathTraversal covers runID itself, which frequently
+// comes straight from a CLI positional argument (e.g. "jevkit sdlc resume
+// <run-id>") with no upstream validation. Every Store method must fail
+// closed rather than resolve outside root.
+func TestOpenRejectsRunIDPathTraversal(t *testing.T) {
+	root := t.TempDir()
+	for _, bad := range []string{"..", ".", "../escape", "../../etc/passwd", "a/../../b", "/etc/passwd", ""} {
+		store := Open(root, bad)
+		if _, err := store.ReadRun(); err == nil {
+			t.Errorf("ReadRun(%q): expected error", bad)
+		}
+		if err := store.WriteRun(Run{RunID: bad}); err == nil {
+			t.Errorf("WriteRun(%q): expected error", bad)
+		}
+		if err := store.WriteArtifact("spec.md", []byte("x")); err == nil {
+			t.Errorf("WriteArtifact(%q): expected error", bad)
+		}
+		if err := store.WithRunLock(func() error { return nil }); err == nil {
+			t.Errorf("WithRunLock(%q): expected error", bad)
+		}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("root should be untouched by rejected run ids, got %v", entries)
+	}
+}
+
+// TestOpenAllowsSiblingRunIDsAfterTraversalAttempt confirms the runID
+// validation doesn't collaterally break a legitimate run whose ID happens
+// to look similar (e.g. contains dots) but stays a single path component.
+func TestOpenAllowsSiblingRunIDsAfterTraversalAttempt(t *testing.T) {
+	root := t.TempDir()
+	Open(root, "..") // rejected; must not disturb anything under root
+	store := Open(root, "run-1.legit")
+	if _, err := NewRun(store, "run-1.legit", "wf", "sha", engine.State{Status: engine.StatusRunning}, time.Now()); err != nil {
+		t.Fatalf("NewRun: %v", err)
+	}
+	if _, err := store.ReadRun(); err != nil {
+		t.Fatalf("ReadRun: %v", err)
+	}
+}
+
+// TestSafeMkdirAllRejectsPreexistingSymlink guards against a symlink placed
+// at a run's directory path before the run is created: os.MkdirAll alone
+// treats an existing symlink-to-a-directory as success and would let every
+// subsequent write follow it outside root.
+func TestSafeMkdirAllRejectsPreexistingSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "run-1")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	store := Open(root, "run-1")
+	if err := store.WriteArtifact("spec.md", []byte("x")); err == nil {
+		t.Fatal("WriteArtifact through a symlinked run directory should fail")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "artifacts", "spec.md")); err == nil {
+		t.Fatal("artifact must not have been written through the symlink target")
+	}
+}
+
+// TestRunDirectoryPermissions confirms every directory Store creates is
+// private (0700), matching every other jevkit state package.
+func TestRunDirectoryPermissions(t *testing.T) {
+	root := t.TempDir()
+	store := Open(root, "run-1")
+	if _, err := NewRun(store, "run-1", "wf", "sha", engine.State{Status: engine.StatusRunning}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteArtifact("spec.md", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{store.Dir, filepath.Join(store.Dir, artifactsDir)} {
+		fi, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", dir, err)
+		}
+		if perm := fi.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o700 {
+			t.Errorf("%s perm = %o, want 0700", dir, perm)
+		}
+	}
+}
+
+func TestInvocationUsageKeepsOldLedgersReadableAndOmitsAbsentCache(t *testing.T) {
+	root := t.TempDir()
+	store := Open(root, "run-old")
+	old := `{
+  "runId": "run-old",
+  "workflow": "ship-feature",
+  "createdAt": "2026-01-02T03:04:05Z",
+  "updatedAt": "2026-01-02T03:04:05Z",
+  "state": {"current": "done", "status": "done"},
+  "usage": [{
+    "invocation": "inv-1",
+    "agent": "builder",
+    "runtime": "codex",
+    "role": "implementer",
+    "inputTokens": 40,
+    "outputTokens": 5
+  }]
+}`
+	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store.Dir, "run.json"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ReadRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Usage) != 1 {
+		t.Fatalf("usage entries: %d", len(got.Usage))
+	}
+	u := got.Usage[0]
+	if u.InputTokens == nil || *u.InputTokens != 40 || u.OutputTokens == nil || *u.OutputTokens != 5 {
+		t.Fatalf("tokens: %+v", u)
+	}
+	if u.CacheReadTokens != nil || u.CacheCreationTokens != nil || u.UsageProvenance != "" || u.CostUSD != nil {
+		t.Fatalf("absent cache/cost/provenance must stay nil/empty: %+v", u)
+	}
+
+	in, out, read, create := int64(10), int64(2), int64(100), int64(0)
+	cost := 0.01
+	got.Usage = []InvocationUsage{{
+		Invocation: "inv-2", Agent: "claude", Runtime: "claude", Role: "planner",
+		InputTokens: &in, OutputTokens: &out, CacheReadTokens: &read, CacheCreationTokens: &create,
+		CostUSD: &cost, UsageProvenance: "claude.result",
+	}}
+	if err := store.WriteRun(got); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(store.Dir, "run.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded map[string]any
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	usage := encoded["usage"].([]any)[0].(map[string]any)
+	if usage["cacheReadTokens"] != float64(100) || usage["cacheCreationTokens"] != float64(0) || usage["usageProvenance"] != "claude.result" {
+		t.Fatalf("encoded cache fields: %#v", usage)
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/redact/config"
 )
 
 // ErrDeclined means the user answered no to the confirm prompt; nothing was

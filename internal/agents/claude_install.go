@@ -35,7 +35,7 @@ func (c *Claude) Install(opts InstallOptions) error {
 	if err != nil {
 		return err
 	}
-	out, err := mergeClaudeSettings(existing, command)
+	out, err := mergeClaudeSettingsGuard(existing, command, opts.InjectionGuard)
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,10 @@ func claudeHookCommand(binary string) string {
 	return binary + " " + ClaudeHookMarker
 }
 
-func mergeClaudeSettings(existing []byte, command string) ([]byte, error) {
+func mergeClaudeSettingsGuard(existing []byte, command string, guard bool) ([]byte, error) {
+	if guard {
+		command = "JEVKIT_INJECTION_GUARD=1 " + command
+	}
 	doc := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {
 		dec := json.NewDecoder(bytes.NewReader(existing))
@@ -124,13 +127,25 @@ func mergeClaudeSettings(existing []byte, command string) ([]byte, error) {
 	groups := asSlice(hooksObj["PostToolUse"])
 	groups = stripManagedClaudeHooks(groups)
 	groups = appendClaudeBashHook(groups, command)
+	if guard {
+		groups = appendClaudeMatcherHook(groups, "WebFetch|WebSearch|Read|Grep|mcp__.*", command)
+	}
 	hooksObj["PostToolUse"] = groups
 	preGroups := stripManagedClaudeHooks(asSlice(hooksObj["PreToolUse"]))
 	preCommand := strings.Replace(command, ClaudeHookMarker, ClaudePreHookMarker, 1)
-	hooksObj["PreToolUse"] = appendClaudeBashHook(preGroups, preCommand)
+	if guard {
+		preGroups = appendClaudeMatcherHook(preGroups, "*", preCommand)
+	} else {
+		preGroups = appendClaudeBashHook(preGroups, preCommand)
+	}
+	hooksObj["PreToolUse"] = preGroups
 	doc["hooks"] = hooksObj
 
 	return marshalSettings(doc)
+}
+
+func appendClaudeMatcherHook(groups []any, matcher, command string) []any {
+	return append(groups, map[string]any{"matcher": matcher, "hooks": []any{map[string]any{"type": "command", "command": command}}})
 }
 
 func stripManagedClaudeHooks(groups []any) []any {

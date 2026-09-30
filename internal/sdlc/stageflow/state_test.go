@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 const boundedFlow = `version: 1
@@ -52,6 +52,22 @@ func TestQuestionLoopStopsAtMaxSteps(t *testing.T) {
 		t.Fatalf("flow=%+v worker=%+v", flow, worker)
 	}
 }
+
+func TestMigrateSavedKeepsVersionOneReadable(t *testing.T) {
+	s := State{Workflow: spec.Workflow{Version: 0, Name: "old"}}
+	if err := MigrateSaved(&s); err != nil || s.Workflow.Version != CurrentStageFormatVersion {
+		t.Fatalf("migrate v0: %+v err=%v", s, err)
+	}
+	s.Workflow.Version = CurrentStageFormatVersion
+	if err := MigrateSaved(&s); err != nil {
+		t.Fatal(err)
+	}
+	s.Workflow.Version = 2
+	if err := MigrateSaved(&s); err == nil {
+		t.Fatal("expected unsupported version error")
+	}
+}
+
 
 func TestStageValidationRejectsUnknownTargetAndFallbackChoice(t *testing.T) {
 	for _, tc := range []struct{ from, to, want string }{

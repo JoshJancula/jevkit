@@ -1,53 +1,60 @@
-# Security check
+# Command security checks
 
-Jevkit checks supported shell calls before execution. Claude Code, Codex, Cursor, and Antigravity hooks can deny a command. Codex, Cursor, and Antigravity also recheck local rules in the shell wrapper. SDLC worker invocations check their working directory and task text before starting an agent.
+Jevkit checks supported shell calls before execution in Claude Code, Codex, Cursor, and Antigravity. It also checks SDLC worker working directories and task text. OpenCode shell calls are not policy-checked in this version.
 
-This is a path-reference guard, not an operating-system sandbox. It inspects the working directory and visible path text; shell expansion, programs that open paths internally, and paths constructed at runtime are outside its reach. OpenCode shell calls are not policy-checked in this version.
+This is a **path and visible-command guard**, not an operating-system sandbox. It cannot see paths built at runtime, hidden inside a program, or introduced by shell expansion.
 
 ## Policy
 
-The embedded builtin policy blocks destructive root deletion. Named user policies live at <config_dir>/security/<name>.yaml; <config_dir>/security/default selects one. A project may add killswitch patterns in .jevkit/security.yaml. Project files cannot change mode, scoring, or sandbox allowances.
+The built-in policy blocks destructive root deletion and agent calls to `jevkit security review*`. A user policy lives at `<config-dir>/security/<name>.yaml`; a project can add killswitch patterns and tighten injection settings in `.jevkit/security.yaml`. Project files cannot relax command mode, scoring, or path allowances.
 
-    version: 1
-    killswitch:
-      - "rm -rf build/*"
-    jev_scoring: false
-    mode: enforce
-    sandbox:
-      allow_read:
-        - /path/to/reference-material
-    tests:
-      - command: "rm -rf build/output"
-        deny: true
+```yaml
+version: 1
+killswitch:
+  - "rm -rf build/*"
+jev_scoring: false
+mode: enforce
+```
 
-Patterns use * for any run of characters and ? for one character. They match whole commands and shell segments. Killswitch entries from the embedded, user, and project layers accumulate. The builtin read allowances include ~/.claude, ~/.codex, ~/.cursor, ~/.opencode, and Jevkit's config and state directories. SDLC runs add the exact input paths supplied through --task-file and --file to that run's read allowance.
+Patterns match whole commands or shell segments; `*` matches any run of characters and `?` one character. Killswitch rules accumulate across built-in, user, and project layers. `mode: shadow` records possible denials without blocking. A policy load error or Jev failure does not make Jev deny a command; local built-in checks still apply.
 
-Mode shadow records would-have denials in <state_dir>/jevkit/security-shadow.jsonl without blocking. Invalid local policy files cause hooks to use the embedded policy and record a load error in hook telemetry; jevkit security commands report the error and exit nonzero. A Jev error or timeout never denies a command. Killswitch and path checks still run.
+`jev_scoring: true` lets Jev score a redacted command before execution. It is off by default and the question set is not calibrated yet. Try it in shadow mode first. In enforce mode, only a severe or critical result with enough confidence can deny; a timeout or missing answer cannot.
 
-## Jev scoring
+## SDLC runtime boundaries
 
-`jev_scoring` enables the optional `security.command-risk` question set for named user policies. It sends a redacted command to Jev and asks for a score from low (0) through moderate (1), high (2), severe (3), and critical (4). It is off in builtin defaults because the Jev request adds latency. Enable it with `jev_scoring: true` in a user policy, or set `JEVKIT_SECURITY_SCORING=1` after policy loading; `JEVKIT_SECURITY_SCORING=0|1` overrides the loaded policy.
+SDLC assignments request read-only or writable execution per role. Jevkit only runs a restriction when the CLI adapter can enforce it; otherwise it **fails closed** instead of pretending. Inspect the tested matrix with:
 
-Scoring has a two-second deadline. In enforce mode it can deny only when the score is severe or critical (3 or higher), the registry confidence decision is `Act`, and the decision is not shadowed. Jev errors, timeouts, missing answers, and other scoring failures fail open and do not deny; the killswitch and path guard still apply. `JEVKIT_SHADOW=1` or `mode: shadow` prevents a registry `Act` from blocking and records the would-have decision. The question set is a placeholder and uncalibrated, so use shadow mode while evaluating it.
+```bash
+jevkit sdlc agents capabilities
+```
 
-Project `.jevkit/security.yaml` files are killswitch-only and cannot set `jev_scoring` (or mode, sandbox, or tests). `--yolo` and `JEVKIT_YOLO=1` lift only the path guard; they do not disable the killswitch or Jev scoring.
+Codex can enforce a real sandbox mode; Claude and Cursor use prompting modes (`plan` / `ask`); OpenCode has no read-only flag and is refused for read-only roles; Antigravity's writable path passes `--dangerously-skip-permissions` (named explicitly in the matrix). Planner argv checks also require `jevkit sdlc resume RUN_ID --authorize-checks` before the supervisor runs them. See [SDLC project policy](SDLC.md#project-policy) and [agent integration behavior](AGENT-INTEGRATIONS.md#what-the-integration-does).
 
-## Commands
+## Try it locally
 
-    jevkit security init
-    jevkit security init --project
-    jevkit security list
-    jevkit security use local
-    jevkit security show [name]
-    jevkit security add --killswitch "rm -rf build/*" --policy local
-    jevkit security remove --killswitch "rm -rf build/*" --policy local
-    jevkit security check "rm -rf /"
-    jevkit security test
+```bash
+jevkit security init
+jevkit security show
+jevkit security check "rm -rf /"
+jevkit security test
+```
 
-Security init creates local.yaml and keeps builtin as the default. --security-policy <name> or JEVKIT_SECURITY_POLICY selects a named policy for one invocation.
+Use `jevkit security init --project` to create a project killswitch file. `--security-policy NAME` selects a user policy for one invocation. `--yolo` or `JEVKIT_YOLO=1` lifts the workspace path guard only; killswitch rules and Jev scoring still apply.
 
---yolo or JEVKIT_YOLO=1 lifts the workspace path guard for that invocation. It does not disable the killswitch or Jev scoring. The shell wrapper receives the flag as JEVKIT_YOLO=1 because it runs in another process.
+## Prompt-injection review
 
-## Verify
+Opt in with `jevkit install claude --injection-guard`, `JEVKIT_INJECTION_GUARD=1`, or an `injection` policy block. The question set is **uncalibrated**. Try `mode: shadow` first and inspect `<state>/jevkit/security-shadow.jsonl` before enabling enforce mode. In enforce mode, Jev scores redacted, bounded suspicious tool output. A score of at least 3 with an Act or Escalate confidence decision creates a review. `halt_on: act` requires Act. `heuristic_halt: true` also halts on Unicode tag characters and chat-template tokens. Jev errors and timeouts do not create a Jev-based halt.
 
-Run go build ./... and go test ./..., then use security check with a blocked command and a routine command. Set JEVKIT_TRANSPORT=fixture and JEVKIT_SECURITY_SCORING=1 to exercise the offline scoring path with the security.command-risk fixture.
+```yaml
+version: 1
+injection:
+  mode: shadow              # off, shadow, enforce
+  scan: suspicious          # or all
+  max_bytes: 16384
+  halt_on: escalate         # or act
+  heuristic_halt: false
+```
+
+On a halt, Jevkit saves the original tool result locally, withholds it from the model where the runtime supports replacement, stops the turn where supported, and denies later tool calls in that session. `JEVKIT_YOLO` cannot release the latch. Run `jevkit security reviews`, then `jevkit security review ID` in a terminal. The review command shows metadata and a redacted excerpt; `--show-raw` pages through the local original without sending it to Jev. Choose **allow** to release the latch and allowlist the exact content hash, or **deny** to release the latch while keeping that output withheld. The review command requires an interactive TTY; `--yes` only skips its second confirmation on a TTY.
+
+Claude uses `continue:false` and Bash/MCP output replacement where available; its other tools use the stop response and pre-tool latch. Codex and Cursor shell calls use the wrapper to withhold output and retain the exit status. Codex also emits `continue:false` after a pending review. Cursor MCP results are replaced and its pre-tool hook denies later calls. Antigravity applies the latch at its next shell call. OpenCode has no injection guard. Host behavior can change across runtime versions; validate the stop and replacement combination in a scratch session before relying on it.

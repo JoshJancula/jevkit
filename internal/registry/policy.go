@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/filelock"
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/filelock"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 // Decisions.
@@ -51,6 +51,7 @@ type Decision struct {
 	CommandFamily      string                 `json:"commandFamily,omitempty"`
 	PolicyRuleID       string                 `json:"policyRuleId,omitempty"`
 	Runtime            string                 `json:"runtime,omitempty"`
+	ReviewID           string                 `json:"reviewId,omitempty"`
 	BytesBefore        int                    `json:"bytesBefore,omitempty"`
 	BytesAfter         int                    `json:"bytesAfter,omitempty"`
 	LinesBefore        int                    `json:"linesBefore,omitempty"`
