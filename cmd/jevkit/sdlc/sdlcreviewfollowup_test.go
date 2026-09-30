@@ -40,7 +40,7 @@ func TestCompletedReviewCanStartBugfixWithSavedFindingsAndPlanApproval(t *testin
 	a.sdlcSessionChoice = "resume"
 	id := "review-source"
 	savedReviewAnswer(t, a, id, "Must fix: a run state race.\nCheck the lock before writing.")
-	answers := []bool{true, true, false, false} // suggestions, start, hooks, keep default
+	answers := []bool{true, true, false, false, false} // suggestions, start, hooks, MCP, keep default
 	var prompts []string
 	a.Confirm = func(prompt string) (bool, error) {
 		prompts = append(prompts, prompt)
@@ -54,7 +54,7 @@ func TestCompletedReviewCanStartBugfixWithSavedFindingsAndPlanApproval(t *testin
 	if err := a.sdlcReviewFollowup(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
-	if len(prompts) != 4 || !strings.Contains(prompts[0], "suggest changes") || !strings.Contains(prompts[1], "Start a bugfix SDLC") || !strings.Contains(prompts[2], "Install Jevkit hooks") {
+	if len(prompts) != 5 || !strings.Contains(prompts[0], "suggest changes") || !strings.Contains(prompts[1], "Start a bugfix SDLC") || !strings.Contains(prompts[2], "Install Jevkit hooks") || !strings.Contains(prompts[3], "Install Jevkit MCP") {
 		t.Fatalf("follow-up prompts: %#v", prompts)
 	}
 	entries, err := os.ReadDir(a.SDLCRunsDir())

@@ -8,26 +8,27 @@ import (
 // toolCallCounter counts complete structured-output lines as they arrive. This
 // avoids losing calls when the retained stdout tail rolls over.
 type toolCallCounter struct {
-	runtime string
-	known   bool
-	count   int64
-	pending []byte
-	seen    map[string]bool
+	runtime    string
+	structured bool
+	known      bool
+	count      int64
+	pending    []byte
+	seen       map[string]bool
 }
 
 func newToolCallCounter(runtime string, structured bool) *toolCallCounter {
-	return &toolCallCounter{runtime: runtime, known: structured && runtime != "antigravity", seen: map[string]bool{}}
+	return &toolCallCounter{runtime: runtime, structured: structured, seen: map[string]bool{}}
 }
 
 func (c *toolCallCounter) Write(p []byte) (int, error) {
 	n := len(p)
-	if !c.known && c.runtime != "antigravity" {
-		return n, nil
-	}
 	for len(p) > 0 {
 		end := bytes.IndexByte(p, '\n')
 		if end < 0 {
 			c.pending = append(c.pending, p...)
+			if len(c.pending) > 1<<20 {
+				c.pending = nil
+			}
 			break
 		}
 		line := append(c.pending, p[:end]...)
@@ -39,12 +40,35 @@ func (c *toolCallCounter) Write(p []byte) (int, error) {
 }
 
 func (c *toolCallCounter) consume(line []byte) {
-	if c.runtime == "antigravity" {
-		var event struct {
-			Type  string `json:"type"`
-			Event string `json:"event"`
+	var event struct {
+		Type  string `json:"type"`
+		Event string `json:"event"`
+	}
+	if json.Unmarshal(line, &event) != nil {
+		return
+	}
+	if event.Type == "" {
+		event.Type = event.Event
+	}
+	switch c.runtime {
+	case "claude":
+		if event.Type == "assistant" || (c.structured && event.Type == "result") {
+			c.known = true
 		}
-		if json.Unmarshal(line, &event) == nil && (event.Type == "assistant" || event.Event == "assistant") {
+	case "antigravity":
+		if event.Type == "assistant" {
+			c.known = true
+		}
+	case "codex":
+		if event.Type == "item.started" || event.Type == "item.completed" || event.Type == "turn.completed" {
+			c.known = true
+		}
+	case "cursor":
+		if event.Type == "tool_call" || (c.structured && event.Type == "result") {
+			c.known = true
+		}
+	case "opencode":
+		if event.Type == "tool_use" || event.Type == "step_finish" {
 			c.known = true
 		}
 	}

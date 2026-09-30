@@ -372,10 +372,10 @@ func TestUsage(t *testing.T) {
 	seedUsage(t, a)
 
 	code, out, errs := run(a, "", "usage")
-	if code != app.ExitOK || !strings.Contains(out, "calls: 1 ") || !strings.Contains(out, "Jev (TypeSafe AI) usage") {
+	if code != app.ExitOK || !strings.Contains(out, "transport attempts: 1 ") || !strings.Contains(out, "Jev (TypeSafe AI) usage") {
 		t.Errorf("text: %d %q %q", code, out, errs)
 	}
-	if _, out, _ := run(a, "", "usage", "--include-fixture"); !strings.Contains(out, "calls: 2 ") {
+	if _, out, _ := run(a, "", "usage", "--include-fixture"); !strings.Contains(out, "transport attempts: 2 ") {
 		t.Errorf("--include-fixture: %q", out)
 	}
 

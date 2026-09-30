@@ -162,7 +162,7 @@ func (a *App) keyTestCmd() *cobra.Command {
 			if err != nil {
 				return app.Failf("%v", err)
 			}
-			client := a.JevClient(cfg, func() (string, error) { return key, nil })
+			client := app.UsageOrigin(a.JevClient(cfg, func() (string, error) { return key, nil }), "cli", "")
 			_, err = client.Ask(cmd.Context(), jev.Request{
 				State: "jevkit key test",
 				Questions: map[string]jev.Question{

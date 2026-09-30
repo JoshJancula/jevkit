@@ -138,7 +138,7 @@ func (a *App) askStageQuestion(ctx context.Context, run ledger.Run, stage spec.S
 	if direct, ok := client.(*jev.Client); ok {
 		direct.Breaker = br
 	}
-	response, err := client.Ask(ctx, req)
+	response, err := app.UsageOrigin(client, "sdlc", "").Ask(ctx, req)
 	if err != nil {
 		return "fallback", "Jev unavailable"
 	}

@@ -92,6 +92,7 @@ type State struct {
 	CheckReceipts          []CheckReceipt        `json:"checkReceipts,omitempty"`
 	Excluded               map[string]bool       `json:"excluded,omitempty"`
 	ExcludedBindings       map[string]bool       `json:"excludedBindings,omitempty"`
+	HandoffExcluded        map[string]bool       `json:"handoffExcluded,omitempty"`
 	ExcludedRuntimes       map[string]bool       `json:"excludedRuntimes,omitempty"`
 	HandoffCount           int                   `json:"handoffCount,omitempty"`
 	LastHandoffBinding     string                `json:"lastHandoffBinding,omitempty"`
@@ -208,6 +209,9 @@ func (s *State) Assign(a Assignment) error {
 	if s.ExcludedBindings[a.Binding] {
 		return fmt.Errorf("adaptive: binding %q was removed from this run", a.Binding)
 	}
+	if s.HandoffExcluded[a.Binding] {
+		return fmt.Errorf("adaptive: binding %q was deferred after a handoff", a.Binding)
+	}
 	if a.Runtime != "" && s.ExcludedRuntimes[a.Runtime] {
 		return fmt.Errorf("adaptive: runtime %q was removed from this run", a.Runtime)
 	}
@@ -289,6 +293,10 @@ func (s *State) Apply(r Result) error {
 	for k, v := range s.ExcludedBindings {
 		c.ExcludedBindings[k] = v
 	}
+	c.HandoffExcluded = make(map[string]bool, len(s.HandoffExcluded))
+	for k, v := range s.HandoffExcluded {
+		c.HandoffExcluded[k] = v
+	}
 	c.ExcludedRuntimes = make(map[string]bool, len(s.ExcludedRuntimes))
 	for k, v := range s.ExcludedRuntimes {
 		c.ExcludedRuntimes[k] = v
@@ -323,21 +331,24 @@ func (s *State) apply(r Result) error {
 			return fmt.Errorf("adaptive: handoff requires focus and reason")
 		}
 		if s.HandoffCount >= 2 {
+			s.PendingPhase = s.Stage
 			s.Pause("handoff-budget-exhausted")
 			return nil
 		}
 		s.HandoffCount++
 		s.PendingFocus, s.PendingReason = r.Focus, r.Reason
 		s.LastHandoffBinding = a.Binding
-		if s.ExcludedBindings == nil {
-			s.ExcludedBindings = map[string]bool{}
+		if s.HandoffExcluded == nil {
+			s.HandoffExcluded = map[string]bool{}
 		}
-		s.ExcludedBindings[a.Binding] = true
+		s.HandoffExcluded[a.Binding] = true
 		return nil
 	}
 	s.PendingFocus, s.PendingReason = "", ""
 	s.LastHandoffBinding = ""
+	s.HandoffCount = 0
 	s.HandoffFallbackUsed = false
+	s.HandoffExcluded = nil
 	if r.Outcome == "timed-out" {
 		s.Pause("invocation-timeout")
 		return nil

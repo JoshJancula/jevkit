@@ -97,6 +97,7 @@ func (a *App) mcpServer() (*jevmcp.Server, error) {
 		c.Breaker = br
 		client = a.RecordJev(c, cfg)
 	}
+	client = app.UsageOrigin(client, "mcp", "")
 
 	loadRedactor := func() (*redact.Redactor, error) {
 		rc, err := config.Load(a.LoadOptions())

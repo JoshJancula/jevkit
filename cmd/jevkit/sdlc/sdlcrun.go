@@ -85,7 +85,7 @@ want to author project-specific questions and routes.`,
 	c.Flags().BoolVar(&step, "step", false, "execute one question or agent action, then stop")
 	c.Flags().BoolVar(&auto, "auto", false, "continue through implementation without human plan approval")
 	c.Flags().BoolVar(&silent, "silent", false, "show only run ID and final status")
-	c.Flags().BoolVar(&delegate, "delegate-builtins", false, "enable or disable policy-permitted automatic built-in delegation")
+	c.Flags().BoolVar(&delegate, "delegate-builtins", false, "enable or disable automatic built-in delegation for this run")
 	return c
 }
 

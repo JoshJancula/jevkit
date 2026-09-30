@@ -44,6 +44,32 @@ func TestStablePrefixFingerprintIgnoresVariableBody(t *testing.T) {
 	}
 }
 
+func TestPromptSectionsFollowRoleAndRevision(t *testing.T) {
+	for _, tc := range []struct {
+		role string
+		want string
+		omit string
+	}{
+		{"planner", "Task-specific planner contract", "Change report:"},
+		{"implementer", "Plan revision: revision", "Change report revision:"},
+		{"assessor", "Change report revision: revision", "Plan revision:"},
+		{"research", "Plan revision: revision", "Change report:"},
+	} {
+		req := Request{Agent: enrollment.Agent{ID: "agent"}, Assignment: adaptive.Assignment{Role: tc.role, Revision: "revision"}, Task: "task", Plan: "plan", Diff: "diff"}
+		prompt := makePrompt(req)
+		if !strings.Contains(prompt, tc.want) || strings.Contains(prompt, tc.omit) {
+			t.Errorf("%s prompt sections: %q", tc.role, prompt)
+		}
+	}
+	planner := makePrompt(Request{Agent: enrollment.Agent{ID: "agent"}, Assignment: adaptive.Assignment{Role: "planner"}, Task: "task\n\nOperator guidance: keep this", OriginalTask: "task"})
+	if strings.Contains(planner, "Plan:") || strings.Contains(planner, "Change report:") || strings.Contains(planner, "task only: task\n\nOperator") || !strings.Contains(planner, "Operator guidance: keep this") {
+		t.Fatalf("planner task boundaries: %q", planner)
+	}
+	if strings.Contains(stablePromptPrefix("planner"), "Review the change report") || strings.Contains(stablePromptPrefix("implementer"), "Review the change report") || !strings.Contains(stablePromptPrefix("assessor"), "Review the change report") {
+		t.Fatal("review contract leaked across roles")
+	}
+}
+
 func TestBoundVerificationSummaryKeepsLocalPath(t *testing.T) {
 	long := strings.Repeat("assessment detail ", 400)
 	got := BoundVerificationSummary(long, "/runs/r1/artifacts/last-assessment.md", 256)

@@ -1,7 +1,11 @@
 package usage
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -70,4 +74,34 @@ func AppendHook(stateDir string, rec HookInvocation) error {
 		return err
 	}
 	return f.Close()
+}
+
+// ReadHooks returns valid global hook-dispatch records. They are activity,
+// not Jev API calls, and are never added to token totals.
+func ReadHooks(path string) ([]HookInvocation, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var out []HookInvocation
+	r := bufio.NewReader(f)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 {
+			var rec HookInvocation
+			if json.Unmarshal(line, &rec) == nil && rec.Event != "" {
+				out = append(out, rec)
+			}
+		}
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return out, err
+		}
+	}
 }

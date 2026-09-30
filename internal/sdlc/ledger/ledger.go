@@ -57,6 +57,7 @@ const (
 type RuntimeIntegration struct {
 	Hooks      bool `json:"hooks"`
 	Compaction bool `json:"compaction"`
+	MCP        bool `json:"mcp,omitempty"`
 }
 
 type Run struct {

@@ -48,7 +48,7 @@ func TestUsageReportSeparatesJevAndRuntimeAndLinksRun(t *testing.T) {
 		t.Fatalf("report: %+v", report)
 	}
 	code, output, errors = run(a, "", "usage", "--source", "jev")
-	if code != app.ExitOK || !strings.Contains(output, "calls: 1") || strings.Contains(output, "Agent runtime usage") || !strings.Contains(output, "┌") || !strings.Contains(output, "NAME") || strings.Contains(output, "\x1b[") {
+	if code != app.ExitOK || !strings.Contains(output, "transport attempts: 1") || strings.Contains(output, "Agent runtime usage") || !strings.Contains(output, "┌") || !strings.Contains(output, "NAME") || strings.Contains(output, "\x1b[") {
 		t.Fatalf("source jev: %d %q %s", code, output, errors)
 	}
 	code, output, errors = run(a, "", "usage")
@@ -57,12 +57,29 @@ func TestUsageReportSeparatesJevAndRuntimeAndLinksRun(t *testing.T) {
 	}
 	a.Environ = append(a.Environ, "CLICOLOR_FORCE=1")
 	code, output, errors = run(a, "", "usage", "--source", "runtime")
-	if code != app.ExitOK || !strings.Contains(output, app.ANSICyan+"Agent runtime usage"+app.ANSIReset) || !strings.Contains(output, app.ANSICyan+"INPUT UNKNOWN"+app.ANSIReset) {
+	if code != app.ExitOK || !strings.Contains(output, app.ANSICyan+"Agent runtime usage"+app.ANSIReset) || strings.Contains(output, "INPUT UNKNOWN") {
 		t.Fatalf("colored runtime tables: %d %q %s", code, output, errors)
 	}
 	code, output, errors = run(a, "", "sdlc", "usage", id)
-	if code != app.ExitOK || !strings.Contains(output, "Measured total") || !strings.Contains(output, "tool calls 2 (0 unknown)") || !strings.Contains(output, "calls: 1") {
+	if code != app.ExitOK || !strings.Contains(output, "Measured total") || !strings.Contains(output, "tool calls 2") || !strings.Contains(output, "transport attempts: 1") {
 		t.Fatalf("run usage: %d %q %s", code, output, errors)
+	}
+}
+
+func TestGlobalUsageSeparatesHookCallsFromDispatches(t *testing.T) {
+	a := newApp(t)
+	if err := usage.Append(a.StateHome(), usage.Record{Origin: "hook", Agent: "claude", QuestionSetID: "compaction.line-relevance", UsageSource: usage.SourceMeasured, InputTokens: 7, Transport: usage.TransportHTTPS}); err != nil {
+		t.Fatal(err)
+	}
+	if err := usage.AppendHook(a.StateHome(), usage.HookInvocation{Agent: "claude", Event: "pre-tool", Outcome: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := usage.AppendHook(a.StateHome(), usage.HookInvocation{Agent: "claude", Event: "post-tool", Outcome: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	code, output, errors := run(a, "", "usage", "--source", "jev")
+	if code != app.ExitOK || !strings.Contains(output, "By origin") || !strings.Contains(output, "hook") || !strings.Contains(output, "Hook dispatches (separate from Jev calls)") || !strings.Contains(output, "transport attempts: 1") {
+		t.Fatalf("usage: %d %q %s", code, output, errors)
 	}
 }
 

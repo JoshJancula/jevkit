@@ -91,8 +91,9 @@ func (a *App) runtimeAgent(ctx context.Context, name string) (agents.Agent, stri
 		loadError = securityErr.Error()
 	}
 	client, policy := a.CompactionClient(ctx)
+	client = app.UsageOrigin(client, "hook", name)
 	if securityCfg != nil && (securityCfg.JevScoring || securityCfg.Injection.Mode != "off") {
-		securityCfg.Asker = a.SecurityAsker(ctx)
+		securityCfg.Asker = app.UsageOrigin(a.SecurityAsker(ctx), "hook", name)
 	}
 	reg, _ := registry.Load()
 	decider := &registry.Decider{Registry: reg, StateDir: a.StateHome(), Getenv: a.Getenv}

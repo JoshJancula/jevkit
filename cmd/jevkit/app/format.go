@@ -70,7 +70,10 @@ func OrUnknown(s string) string {
 
 func UsageCount(known int64, unknown int) string {
 	if unknown > 0 {
-		return fmt.Sprintf("%s (%d unknown)", FormatInt(known), unknown)
+		if known == 0 {
+			return fmt.Sprintf("— (%d unavailable)", unknown)
+		}
+		return fmt.Sprintf("%s (+%d unavailable)", FormatInt(known), unknown)
 	}
 	return FormatInt(known)
 }

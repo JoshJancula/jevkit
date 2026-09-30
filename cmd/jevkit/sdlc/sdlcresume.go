@@ -34,7 +34,8 @@ integration can also leave an active run. A pending specialist decision from
 an older run or required specialist policy can be retried after changing the
 policy or enrolling the missing expert. An older pending delegation decision
 can also be retried.
-Runs paused by hard limits cannot continue.`,
+Runs paused by hard run limits cannot continue. A handoff-budget pause can be
+retried with --retry-failed.`,
 		Example: "  jevkit sdlc resume RUN_ID --approve-plan\n  jevkit sdlc resume RUN_ID --authorize-checks\n  jevkit sdlc resume RUN_ID --guidance \"the vet failure is pre-existing; only fix the new tests\"\n  jevkit sdlc resume RUN_ID --step",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -113,7 +114,7 @@ Runs paused by hard limits cannot continue.`,
 	}
 	c.Flags().BoolVar(&step, "step", false, "execute one question or agent action, then stop")
 	c.Flags().BoolVar(&silent, "silent", false, "show only final status")
-	c.Flags().BoolVar(&retryFailed, "retry-failed", false, "retry failed agent bindings after fixing their invocation error")
+	c.Flags().BoolVar(&retryFailed, "retry-failed", false, "retry failed agent bindings or a handoff-budget pause")
 	c.Flags().BoolVar(&approvePlan, "approve-plan", false, "approve the saved plan.md, checks.json, and subtasks.json digests and continue the run")
 	c.Flags().BoolVar(&authorizeChecks, "authorize-checks", false, "authorize the current checks.json digest for this run; --auto alone is not permission")
 	c.Flags().StringVar(&authorizeChecksDigest, "authorize-checks-digest", "", "exact checks.json digest allowance for this run")
@@ -204,17 +205,30 @@ func (a *App) sdlcResume(ctx context.Context, runID string, step, retryFailed, a
 		} else if retryFailed {
 			pauseOutcome := run.Adaptive.Outcome
 			role := failedPauseRole(run.Adaptive.Outcome)
+			if pauseOutcome == "handoff-budget-exhausted" && run.Adaptive.PendingPhase == "" {
+				return app.Failf("run %s cannot retry handoff: missing prior stage", runID)
+			}
 			if run.Adaptive.Outcome == "review-workspace-drift" || run.Adaptive.Outcome == "review-recovery-invalid" {
 				role = "assessor"
 			}
-			if role == "" {
+			if role == "" && pauseOutcome != "handoff-budget-exhausted" {
 				return app.Usagef("--retry-failed requires a run paused after an agent failure")
 			}
 			store := ledger.Open(a.SDLCRunsDir(), runID)
-			run.Adaptive.Stage = map[string]string{"planner": adaptive.Planning, "implementer": adaptive.Implementing, "assessor": adaptive.Assessing}[role]
+			if pauseOutcome == "handoff-budget-exhausted" {
+				run.Adaptive.Stage = run.Adaptive.PendingPhase
+				run.Adaptive.PendingPhase = ""
+			} else {
+				run.Adaptive.Stage = map[string]string{"planner": adaptive.Planning, "implementer": adaptive.Implementing, "assessor": adaptive.Assessing}[role]
+			}
 			run.Adaptive.Outcome, run.Adaptive.PendingReason = "", ""
 			run.Adaptive.Excluded = map[string]bool{}
 			run.Adaptive.ExcludedBindings = map[string]bool{}
+			run.Adaptive.HandoffExcluded = nil
+			run.Adaptive.HandoffCount = 0
+			run.Adaptive.HandoffFallbackUsed = false
+			run.Adaptive.LastHandoffBinding = ""
+			run.Adaptive.PendingFocus = ""
 			run.Adaptive.ExcludedRuntimes = map[string]bool{}
 			run.Adaptive.NoProgressCount = 0
 			if pauseOutcome == "review-recovery-invalid" {
@@ -346,7 +360,7 @@ func (a *App) sdlcDashboardRetry(ctx context.Context, runID, strategy string) er
 // paused with this outcome.
 func pauseRetryable(outcome string) bool {
 	switch outcome {
-	case "review-workspace-drift", "review-recovery-invalid", adaptive.OutcomeVerificationEnvironment:
+	case "review-workspace-drift", "review-recovery-invalid", "handoff-budget-exhausted", adaptive.OutcomeVerificationEnvironment:
 		return true
 	}
 	return failedPauseRole(outcome) != ""

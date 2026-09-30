@@ -471,6 +471,7 @@ func (a *App) runFanoutSubtask(ctx context.Context, runID string, store *ledger.
 	if plan, err := store.ReadArtifact(adaptive.ArtifactPlan); err == nil {
 		req.Plan = string(plan)
 	}
+	a.sdlcPromptCacheDecision(ctx, store, run, &req)
 	executor := a.SdlcExecutor
 	if executor == nil {
 		executor = worker.CLIExecutor{}

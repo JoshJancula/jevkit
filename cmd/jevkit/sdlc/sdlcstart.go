@@ -62,6 +62,7 @@ func (a *App) sdlcRouter() (*route.Router, error) {
 		c.Breaker = br
 		client = a.RecordJev(c, cfg)
 	}
+	client = app.UsageOrigin(client, "sdlc", "")
 	loadRedactor := func() (*redact.Redactor, error) {
 		rc, err := config.Load(a.LoadOptions())
 		if err != nil {
@@ -263,7 +264,7 @@ enrolled agents. Host integrations use next and report to execute agents.`,
 	c.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	c.Flags().StringVar(&profile, "policy", "", "adaptive policy profile: lean, collaborative or assured (default lean)")
 	c.Flags().StringVar(&sessionStrategy, "session-strategy", "", "session policy: auto, fresh, resume or compact")
-	c.Flags().BoolVar(&delegate, "delegate-builtins", false, "enable or disable policy-permitted automatic built-in delegation")
+	c.Flags().BoolVar(&delegate, "delegate-builtins", false, "enable or disable automatic built-in delegation for this run")
 	c.Flags().BoolVar(&auto, "auto", false, "continue through implementation without human plan approval")
 	return c
 }

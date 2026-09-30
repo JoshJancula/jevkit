@@ -116,8 +116,12 @@ Informational quotas pause further invocations; they never auto-delete:
 | One run tree (root + children) | 256 MiB | `JEVKIT_SDLC_RUN_TREE_QUOTA_BYTES` |
 | Per-stream log tail | 1 MiB | `JEVKIT_SDLC_LOG_TAIL_BYTES` |
 
-Read-only inventory: `sdlc runs` (sizes vs total quota) and `sdlc show RUN_ID`
-(status, path, artifacts, log availability including pruned/truncated). Preview
+Read-only inventory: `sdlc runs` lists each task, status, and size against the
+total quota. Start with `sdlc show RUN_ID` to see a short timeline of completed
+actions across the run and its children, commands for the related invocation
+logs, full artifact paths, log availability (including pruned/truncated), and
+the next action. The timeline shows the latest 12 events; use
+`sdlc logs RUN_ID --stream decisions` for the full decision history. Preview
 then apply: `sdlc delete RUN_ID [--apply]` removes a finished tree and
 attributable usage rows; `sdlc prune --older-than … [--status done|paused]
 [--apply]` deletes inactive trees; `sdlc prune --logs-only … --apply` strips
@@ -257,9 +261,14 @@ roles:
 
 Each role can set `via`, `runtimes`, `write`, `readOnly`, `isolated`, and `writeScopes`. Set `write: false` to require enforced read-only execution. A scoped or restricted assignment is eligible only when its host or runtime adapter reports that it can enforce the restriction. Codex enforces an OS sandbox mode; Claude and Cursor use prompting modes; OpenCode has no read-only flag and fails closed for read-only roles; Antigravity writable invocations pass `--dangerously-skip-permissions` (surfaced by `jevkit sdlc agents capabilities`). None claims isolation or scoped-write enforcement beyond worktree isolation for fan-out. The project may set `quorums` by profile. `lean` defaults to one assessor, `collaborative` to two, and `assured` to three. Agents with different IDs but the same binding count once toward quorum.
 
-`adaptiveBuiltinDelegation` is `off` by default. Set it to `opt-in` to allow
-`run` or `start --delegate-builtins=true`, or `on` to enable automatic
-built-in delegation by default. `--delegate-builtins=false` always disables it.
+`adaptiveBuiltinDelegation` is `off` by default. `--delegate-builtins` enables
+built-in delegation for a single `run` or `start`, including when the project
+policy sets it to `off`. Set `adaptiveBuiltinDelegation: on` to enable it by
+default. `opt-in` remains valid for existing policy files and, like `off`,
+leaves delegation disabled unless the flag is passed. `--delegate-builtins=false`
+disables it for a single run. The
+`--policy` flag independently selects the review profile, so `collaborative`
+and built-in delegation can be used together.
 The choice is stored in the run ledger for resume. Authored `spawn` stages
 retain their explicit targets.
 
@@ -313,24 +322,30 @@ through the installed Claude CLI's stream JSON mode, as Ralph does. A
 failed native compaction pauses the run with the error. Other runtimes resolve
 `compact` to explicit resume and record that fallback.
 
-Each new interactive run asks whether to install project-scoped Jevkit hooks
-for its SDLC CLI agents and whether to enable Jevkit tool-output compaction.
+Each new interactive run asks whether to install project-scoped Jevkit hooks,
+enable tool-output compaction, and install the Jevkit MCP server for its SDLC
+CLI agents. MCP lets agents call `jev_ask` when a Jev judgment would help.
+It can be enabled without hooks. The MCP server resolves the Jev API key at
+runtime; its project config does not contain the key.
 The choice is saved with that run, so resume and child runs use the same
 settings. Select “keep this as my default” to save the choice privately for
-future runs in this project; otherwise the next run asks again. Hooks are
-installed as each enrolled CLI agent starts, including agents running in a
-worktree. Tool-output compaction is separate from the
+future runs in this project; otherwise the next run asks again. Hooks and
+MCP config are installed as each enrolled CLI agent starts, including
+agents running in a worktree. Tool-output compaction is separate from the
 `--session-strategy compact` option above. It is passed only to SDLC agent
 processes and requires hooks and a configured Jevkit API key; when Jevkit is
 unavailable, the hooks keep the original tool output. Noninteractive runs do
-not prompt and use both features off unless a default has been saved.
-Configure them with `jevkit sdlc integrations --hooks on
---compaction on`, or inspect the current choice with `jevkit sdlc integrations`.
+not prompt and use these features off unless a default has been saved.
+Configure them with `jevkit sdlc integrations --hooks on --compaction on --mcp on`,
+or inspect the current choice with `jevkit sdlc integrations`. For MCP alone,
+use `jevkit sdlc integrations --mcp on`.
 Use `jevkit sdlc integrations --ask-every-run` to clear a saved default, or
-`--hooks off` to make disabled integration the default.
+`--hooks off` or `--mcp off` to change an individual auto-install default.
 If hooks are declined for a run, previously installed Jevkit hooks pass
 through during that run. Project hook files remain installed; remove them with
 `jevkit uninstall AGENT --components hooks`.
+An existing project MCP registration remains available when MCP auto-install
+is off. Remove it with `jevkit uninstall AGENT --components mcp` if needed.
 
 Antigravity runs through the installed `agy` CLI. Jevkit passes the enrolled
 model string unchanged, captures its conversation ID and reported usage from
@@ -583,15 +598,15 @@ fake CLI binaries for the worker path.
 
 ## Recovery design priorities
 
-These are proposed improvements, not current behavior.
+The first recovery improvement is implemented. The remaining items are proposed.
 
-1. **Separate handoff avoidance from failed-agent exclusions.** Currently a
-   handoff marks a binding excluded for the run, and the handoff count spans
-   phases. A capability gap during planning can therefore make a useful
-   implementer unavailable later. Track capability deferrals by role and
-   candidate, retain runtime/authentication failures separately, and release
-   deferrals after relevant progress. Verify with planner-to-implementer and
-   repeated-handoff journeys before changing fallback behavior.
+1. **Separate handoff avoidance from failed-agent exclusions (implemented).**
+   A handoff temporarily defers its binding for the current phase. A
+   non-handoff result releases those deferrals and resets the handoff count;
+   authentication and invocation failures remain excluded separately. A run
+   paused after repeated handoffs can use `resume --retry-failed` to restore
+   its prior phase and clear the handoff deferrals. A single-binding fallback
+   can still retry that binding when no alternate is eligible.
 2. **Give Jev a structured recovery decision.** Supply the current objective,
    failed check IDs or review findings, approaches already attempted, eligible
    capabilities, and remaining budgets. Offer only feasible actions such as
@@ -611,6 +626,9 @@ These are proposed improvements, not current behavior.
    A restarted driver should reattach to live work, recover a completed
    artifact, or retry a confirmed dead invocation. Silence alone must not
    launch a second writer into the same workspace.
+5. **Avoid repeatedly selecting failed assessors.** Record assessor failures
+   for the current candidate and prefer a distinct eligible binding on the
+   next attempt; release the avoidance when the candidate changes.
 
 ### Validation targets
 

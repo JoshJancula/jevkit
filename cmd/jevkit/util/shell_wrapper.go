@@ -85,7 +85,7 @@ func (a *App) runShellWrapperSession(workspace, runtime, command, session string
 		}
 		pointer, storeErr := a.storeShellResult(runtime, raw)
 		if storeErr == nil {
-			cfg.Asker = a.SecurityAsker(context.Background())
+			cfg.Asker = app.UsageOrigin(a.SecurityAsker(context.Background()), "shell-wrapper", runtime)
 			reg, _ := registry.Load()
 			decider := &registry.Decider{Registry: reg, StateDir: a.StateHome(), Getenv: a.Getenv}
 			v := security.CheckInjection(context.Background(), cfg, security.InjectionRequest{Body: raw, Runtime: runtime, Tool: "shell", ToolInput: command, Workspace: workspace, SessionKey: session, RawPointer: pointer, SDLCRunID: a.Getenv("JEVKIT_SDLC_RUN_ID")}, decider)
@@ -110,6 +110,7 @@ func (a *App) runShellWrapperSession(workspace, runtime, command, session string
 		if storeErr == nil {
 			if app.Truthy(a.Getenv("JEVKIT_COMPACT")) {
 				asker, policy := a.CompactionClient(context.Background())
+				asker = app.UsageOrigin(asker, "shell-wrapper", runtime)
 				if asker != nil {
 					jr, result := compact.JevCompact(command, raw, "", exitStatus, asker, compact.JevOptions{
 						Enabled: true, Shadow: app.Truthy(a.Getenv("JEVKIT_COMPACT_SHADOW")),

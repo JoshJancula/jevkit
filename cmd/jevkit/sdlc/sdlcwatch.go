@@ -142,7 +142,7 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 				}
 			}
 		}
-		fmt.Fprintf(&b, "Measured agent tokens: %s input (%d unknown), %s output (%d unknown)\n", app.FormatInt(int64(usage.InputTokens)), usage.UnknownInput, app.FormatInt(int64(usage.OutputTokens)), usage.UnknownOutput)
+		fmt.Fprintf(&b, "Measured agent tokens: %s input, %s output\n", app.UsageCount(usage.InputTokens, usage.UnknownInput), app.UsageCount(usage.OutputTokens, usage.UnknownOutput))
 		if usage.SuppliedCostUSD != nil {
 			fmt.Fprintf(&b, "Supplied cost: $%.4f\n", *usage.SuppliedCostUSD)
 		}
@@ -247,7 +247,7 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 				cost: usage.SuppliedCostUSD,
 			}, width, height)
 			if view != last && (!frozen || last == "") {
-				a.Outf("\x1b[H%s\x1b[J", view)
+				a.Outf("\x1b[H\x1b[J%s", view)
 				last = view
 			}
 		} else if view != last {

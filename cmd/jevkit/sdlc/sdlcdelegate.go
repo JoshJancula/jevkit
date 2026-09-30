@@ -16,13 +16,7 @@ import (
 
 func (a *App) sdlcDelegationAllowed(p enrollment.Policy) (bool, error) {
 	if a.sdlcDelegateChoice != nil {
-		if !*a.sdlcDelegateChoice {
-			return false, nil
-		}
-		if p.AdaptiveBuiltinDelegation == "off" {
-			return false, app.Usagef("project policy does not permit built-in delegation")
-		}
-		return true, nil
+		return *a.sdlcDelegateChoice, nil
 	}
 	return p.AdaptiveBuiltinDelegation == "on", nil
 }

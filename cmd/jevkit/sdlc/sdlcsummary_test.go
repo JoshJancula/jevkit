@@ -45,8 +45,8 @@ func TestFinalSummaryReportsPausedRunAndUsage(t *testing.T) {
 		"Run summary", "State:    PAUSED (assessor-failed)", "Cause:    assessor reply invalid",
 		"planner cursor-planner: planned", "assessor claude-reviewer: failed",
 		"Token usage by runtime and model:", "cursor", "auto", "claude", "sonnet",
-		"INVOCATIONS", "TOOL CALLS", "120", "45", "0 (1 unknown)", "$0.002500", "jev", "jev-test", "25", "6", "~$",
-		"Total: 2 invocations, 3 tool calls (1 unknown)",
+		"INVOCATIONS", "TOOL CALLS", "120", "45", "— (1 unavailable)", "$0.002500", "jev", "jev-test", "25", "6", "~$",
+		"Total: 2 invocations, 3 (+1 unavailable) tool calls",
 		"jevkit sdlc resume " + id + " --retry-failed", "jevkit sdlc logs " + id,
 	} {
 		if !strings.Contains(got, want) {
@@ -176,7 +176,7 @@ func TestFinalUsageSeparatesModelsWithinRuntime(t *testing.T) {
 	var b bytes.Buffer
 	a.sdlcUsageTable(&b, runs, nil)
 	lines := strings.Split(b.String(), "\n")
-	for _, want := range []string{"│codex│large│1│0(1unknown)│20│20", "│codex│small│1│4│10│10"} {
+	for _, want := range []string{"│codex│large│1│—(1unavailable)│20│20", "│codex│small│1│4│10│10"} {
 		found := false
 		for _, line := range lines {
 			if strings.Contains(strings.ReplaceAll(line, " ", ""), want) {
@@ -187,7 +187,7 @@ func TestFinalUsageSeparatesModelsWithinRuntime(t *testing.T) {
 			t.Fatalf("missing model row %q:\n%s", want, b.String())
 		}
 	}
-	if !strings.Contains(b.String(), "Total: 2 invocations, 4 tool calls (1 unknown)") {
+	if !strings.Contains(b.String(), "Total: 2 invocations, 4 (+1 unavailable) tool calls") {
 		t.Fatalf("missing runtime totals: %s", b.String())
 	}
 }

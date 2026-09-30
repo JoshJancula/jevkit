@@ -133,6 +133,42 @@ func TestResumeRetryFailedPlannerAfterMalformedReply(t *testing.T) {
 	}
 }
 
+func TestResumeRetryHandoffBudgetRestoresPhase(t *testing.T) {
+	a := newApp(t)
+	stageTestRoster(t, a)
+	code, out, errs := run(a, "", "sdlc", "start", "bugfix", "--task", "fix a comment", "--auto")
+	if code != app.ExitOK {
+		t.Fatalf("start: %d %s %s", code, out, errs)
+	}
+	id := strings.Fields(out)[1]
+	store := ledger.Open(a.SDLCRunsDir(), id)
+	stored, err := store.ReadRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Adaptive.PendingPhase = adaptive.Planning
+	stored.Adaptive.PendingFocus = "schema"
+	stored.Adaptive.HandoffCount = 2
+	stored.Adaptive.HandoffExcluded = map[string]bool{"old": true}
+	stored.Adaptive.HandoffFallbackUsed = true
+	stored.Adaptive.Pause("handoff-budget-exhausted")
+	if err := store.WriteRun(stored); err != nil {
+		t.Fatal(err)
+	}
+	if !pauseRetryable(stored.Adaptive.Outcome) {
+		t.Fatal("handoff budget pause should be retryable")
+	}
+	a.SdlcExecutor = &fakeSDLCExecutor{replies: []worker.Reply{{Outcome: "planned", Content: "Remove the comment."}}}
+	code, _, errs = run(a, "", "sdlc", "resume", id, "--retry-failed", "--step")
+	if code != app.ExitOK {
+		t.Fatalf("retry: %d %s", code, errs)
+	}
+	stored, err = store.ReadRun()
+	if err != nil || stored.Adaptive.Stage != adaptive.Implementing || stored.Adaptive.HandoffCount != 0 || len(stored.Adaptive.HandoffExcluded) != 0 || stored.Adaptive.PendingPhase != "" {
+		t.Fatalf("retry state: %+v %v", stored.Adaptive, err)
+	}
+}
+
 func TestLegacyBinaryReviewArtifactIsRejected(t *testing.T) {
 	for _, artifact := range [][]byte{
 		[]byte("diff --git a/tool b/tool\nGIT binary patch\nliteral 1\n"),

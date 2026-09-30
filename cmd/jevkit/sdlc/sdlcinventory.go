@@ -253,7 +253,13 @@ func (a *App) sdlcRunsCmd() *cobra.Command {
 			for id := range infos {
 				ids = append(ids, id)
 			}
-			sort.Slice(ids, func(i, j int) bool { return infos[ids[i]].Run.CreatedAt < infos[ids[j]].Run.CreatedAt })
+			sort.Slice(ids, func(i, j int) bool {
+				left, right := infos[ids[i]].Run.CreatedAt, infos[ids[j]].Run.CreatedAt
+				if left == right {
+					return ids[i] > ids[j]
+				}
+				return left > right
+			})
 			var total int64
 			for _, id := range ids {
 				total += infos[id].Bytes
@@ -276,13 +282,21 @@ func (a *App) sdlcRunsCmd() *cobra.Command {
 				rows := make([][]string, 0, len(ids))
 				for _, id := range ids {
 					info := infos[id]
+					task := summaryText(a, info.Run.Task)
+					if runes := []rune(task); len(runes) > 72 {
+						task = string(runes[:71]) + "…"
+					}
+					if task == "" {
+						task = "—"
+					}
 					rows = append(rows, []string{
-						info.Run.RunID, sdlcStatusText(info.Run), info.Run.WorkDir,
+						info.Run.RunID, sdlcStatusText(info.Run), task, info.Run.WorkDir,
 						info.Run.CreatedAt, info.Run.UpdatedAt, formatBytes(info.Bytes),
 						strconv.Itoa(len(info.Children)),
 					})
 				}
-				a.Table([]string{"RUN ID", "STATUS", "WORKDIR", "CREATED", "UPDATED", "SIZE", "CHILDREN"}, rows)
+				a.Table([]string{"RUN ID", "STATUS", "TASK", "WORKDIR", "CREATED", "UPDATED", "SIZE", "CHILDREN"}, rows)
+				a.Outf("\nInspect a run: jevkit sdlc show RUN_ID\n")
 			}
 			if len(refused) > 0 {
 				a.Outf("\nRefused entries (invalid ID or symlinked run directory): %s\n", strings.Join(refused, ", "))
@@ -408,15 +422,17 @@ func (a *App) sdlcShowCmd() *cobra.Command {
 				a.Outf("  Children: %s\n", strings.Join(info.Children, ", "))
 			}
 			if task != "" {
-				a.Outf("  Task:     %s\n", task)
+				a.Outf("  Task:     %s\n", ttyClean(task))
 			}
+			a.Outf("\n")
+			a.sdlcShowTimeline(infos, runID)
 			a.Outf("\n")
 			a.Heading("ARTIFACTS")
 			if len(info.Artifacts) == 0 {
 				a.Outf("  none\n")
 			} else {
 				for _, name := range info.Artifacts {
-					a.Outf("  %s\n", name)
+					a.Outf("  %s\n", filepath.Join(info.Path, "artifacts", filepath.FromSlash(name)))
 				}
 			}
 			a.Outf("\n")
@@ -433,6 +449,10 @@ func (a *App) sdlcShowCmd() *cobra.Command {
 			if !raw {
 				a.Outf("\nTask text is redacted; use --raw to show it unredacted. Pattern redaction is best-effort and does not guarantee a secret-free log.\n")
 			}
+			a.Outf("\nNext: %s\n", summaryText(a, sdlcSummaryNext(r, runID)))
+			a.Outf("Logs: jevkit sdlc logs %s\n", runID)
+			a.Outf("Decisions: jevkit sdlc logs %s --stream decisions\n", runID)
+			a.Outf("Live view: jevkit sdlc watch %s\n", runID)
 			return nil
 		},
 	}

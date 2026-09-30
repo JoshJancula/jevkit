@@ -15,6 +15,7 @@ import (
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
 	"github.com/JoshJancula/jevkit/internal/redact/config"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
@@ -139,7 +140,7 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 		}
 	}
 	decisionRows := len(bottom)
-	usage := fmt.Sprintf("Usage  %s in (%d unknown) · %s out (%d unknown)", app.FormatInt(state.inputTokens), state.unknownInput, app.FormatInt(state.outputTokens), state.unknownOutput)
+	usage := fmt.Sprintf("Usage  %s in · %s out", app.UsageCount(state.inputTokens, state.unknownInput), app.UsageCount(state.outputTokens, state.unknownOutput))
 	if state.cost != nil {
 		usage += fmt.Sprintf(" · $%.4f supplied", *state.cost)
 	}
@@ -148,13 +149,18 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 	}
 	if state.paused {
 		bottom = append(bottom, "PAUSED  "+a.sdlcRedactedDisplay(state.cause))
-		switch {
-		case state.composing:
-			bottom = append(bottom, "GUIDANCE  "+watchDraftTail(state.draft, width-12)+"▏")
-		case state.canRetry && state.retryAction != "":
-			bottom = append(bottom, "NEXT  r: "+state.retryAction+" · g: tell the agent how to proceed first")
-		case !state.canRetry:
-			bottom = append(bottom, "NEXT  this pause needs a new run or a policy change; q leaves it paused")
+		if outcome == adaptive.OutcomeVerificationEnvironment {
+			bottom = append(bottom, "FIX  Correct the supervisor toolchain/PATH named above; verify the tool version in this terminal")
+			bottom = append(bottom, "NEXT  r: re-run verification (no revision spent) · CLI: jevkit sdlc resume "+root.RunID+" --retry-failed")
+		} else {
+			switch {
+			case state.composing:
+				bottom = append(bottom, "GUIDANCE  "+watchDraftTail(state.draft, width-12)+"▏")
+			case state.canRetry && state.retryAction != "":
+				bottom = append(bottom, "NEXT  r: "+state.retryAction+" · g: tell the agent how to proceed first")
+			case !state.canRetry:
+				bottom = append(bottom, "NEXT  this pause needs a new run or a policy change; q leaves it paused")
+			}
 		}
 	}
 	if state.frozen {
@@ -284,6 +290,17 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 	}
 	lines = append(lines, "")
 	lines = append(lines, bottom...)
+	if state.paused && len(lines) > height-1 {
+		// Keep recovery instructions visible even in a short terminal.
+		essential := []string{lines[0]}
+		for _, line := range bottom {
+			if strings.HasPrefix(line, "PAUSED  ") || strings.HasPrefix(line, "FIX  ") || strings.HasPrefix(line, "NEXT  ") || strings.HasPrefix(line, "GUIDANCE  ") {
+				essential = append(essential, line)
+			}
+		}
+		essential = append(essential, bottom[len(bottom)-1])
+		lines = essential
+	}
 	frame := ttyFrame(lines, width, height)
 	if a.ColorEnabled(a.Stdout) {
 		var styled []string

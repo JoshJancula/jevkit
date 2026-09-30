@@ -28,6 +28,12 @@ type PromptLayout struct {
 	StablePrefixFingerprint string
 }
 
+// StablePrefixMetadata exposes content-free reuse evidence for cache decisions.
+func StablePrefixMetadata(role string) (int, string) {
+	stable := stablePromptPrefix(role)
+	return len(stable), stablePrefixFingerprint(stable)
+}
+
 // buildPrompt places stable role/safety/output contracts first and variable
 // task, plan, revision, and diff details afterward (Ralph's stable-prefix
 // pattern). makePrompt returns only the combined string for CLI argv/stdin.
@@ -65,12 +71,15 @@ func stablePromptPrefix(role string) string {
 	}
 	base := strings.TrimSpace(fmt.Sprintf(`You are enrolled for the %s role in a Jevkit SDLC run.
 
-Return exactly one JSON object with outcome and content fields. For this role, outcome MUST be exactly one of: %s. Use a bare outcome value, for example {"outcome":"%s","content":"..."}. Never include the role name in the outcome value. Complete the assigned role with available tools when possible. Return handoff with required focus and reason only when you cannot proceed; another agent may not be available. A handoff must leave the workspace unchanged. Keep handoff focus and reason concise; put detailed notes in workspace files or saved artifacts, not in the handoff fields. For planned, content is the complete plan. For changed, content is a concise description; Jevkit computes the change report from the workspace. For other outcomes, content is a concise explanation. Do not include Markdown fences. Reviewers must review the change report and changed files for this revision and must not edit files.`, role, outcomes, example))
+Return exactly one JSON object with outcome and content fields. For this role, outcome MUST be exactly one of: %s. Use a bare outcome value, for example {"outcome":"%s","content":"..."}. Never include the role name in the outcome value. Complete the assigned role with available tools when possible. Return handoff with required focus and reason only when you cannot proceed; another agent may not be available. A handoff must leave the workspace unchanged. Keep handoff focus and reason concise; put detailed notes in workspace files or saved artifacts, not in the handoff fields. For other outcomes, content is a concise explanation. Do not include Markdown fences.`, role, outcomes, example))
 	if role == "planner" {
-		base += "\n\n" + plannerStableContract()
+		base += "\n\nFor planned, content is the complete plan.\n\n" + plannerStableContract()
 	}
 	if role == "implementer" {
-		base += "\n\nOn a repair attempt, inspect the decisive review findings and supervisor check logs before editing. Identify the cause, make a targeted repair, and explain what changed and which evidence supports it. If an approach fails, use the observed failure to choose a different next action. Answer or no-change cannot close an existing candidate that still needs verification or review. If blocked, report the specific blocker, evidence, and needed capability in a handoff; respect the unchanged-workspace handoff contract."
+		base += "\n\nFor changed, content is a concise description; Jevkit computes the change report from the workspace. On a repair attempt, inspect the decisive review findings and supervisor check logs before editing. Identify the cause, make a targeted repair, and explain what changed and which evidence supports it. If an approach fails, use the observed failure to choose a different next action. Answer or no-change cannot close an existing candidate that still needs verification or review. If blocked, report the specific blocker, evidence, and needed capability in a handoff; respect the unchanged-workspace handoff contract."
+	}
+	if role == "assessor" || role == "qa" || role == "security" || role == "code-review" {
+		base += "\n\nReview the change report and changed files for this revision; do not edit files."
 	}
 	return base
 }
@@ -80,19 +89,36 @@ func plannerStableContract() string {
 }
 
 func variablePromptBody(req Request) string {
-	diff := boundDiff(req.Diff, req.DiffPath)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Agent: %s\n", req.Agent.ID)
+	if req.JevkitMCP {
+		b.WriteString("Jevkit MCP is available. Use its jev_ask tool when a Jev judgment would help with this assignment; do not call it routinely when the answer is already clear.\n")
+	}
 	fmt.Fprintf(&b, "Task: %s\n", req.Task)
 	fmt.Fprintf(&b, "Focus: %s\n", BoundText(req.Assignment.Objective, MaxHandoffFieldBytes))
 	fmt.Fprintf(&b, "Routing context: %s\n", BoundText(req.Assignment.Reason, MaxHandoffFieldBytes))
-	fmt.Fprintf(&b, "Plan revision: %s\n", req.Assignment.Revision)
-	fmt.Fprintf(&b, "Plan:\n%s\n", req.Plan)
-	fmt.Fprintf(&b, "Change report revision: %s\n", req.Assignment.Revision)
-	fmt.Fprintf(&b, "Change report:\n%s", diff)
+	role := req.Assignment.Role
+	if role == "implementer" || role == "research" {
+		if req.Assignment.Revision != "" {
+			fmt.Fprintf(&b, "Plan revision: %s\n", req.Assignment.Revision)
+		}
+	}
+	if req.Plan != "" {
+		fmt.Fprintf(&b, "Plan:\n%s\n", req.Plan)
+	}
+	if role == "assessor" || role == "qa" || role == "security" || role == "code-review" {
+		if req.Assignment.Revision != "" {
+			fmt.Fprintf(&b, "Change report revision: %s\n", req.Assignment.Revision)
+		}
+		fmt.Fprintf(&b, "Change report:\n%s", boundDiff(req.Diff, req.DiffPath))
+	}
 	if req.Assignment.Role == "planner" {
 		b.WriteString("\n\n")
-		b.WriteString(plannerTaskContract(req.Task))
+		task := req.OriginalTask
+		if task == "" {
+			task = req.Task
+		}
+		b.WriteString(plannerTaskContract(task))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

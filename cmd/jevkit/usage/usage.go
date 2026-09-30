@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
+	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 	"github.com/JoshJancula/jevkit/internal/usage"
 )
 
@@ -27,11 +28,28 @@ func (a *App) usageCmd() *cobra.Command {
 				return app.Failf("read usage log: %v", err)
 			}
 			sum := usage.Aggregate(recs, usage.Filter{IncludeFixture: includeFixture}, a.Getenv)
+			hookRecords, err := usage.ReadHooks(usage.HookPath(a.StateHome()))
+			if err != nil {
+				return app.Failf("read hook activity: %v", err)
+			}
 			runs, err := a.AllUsageRuns()
 			if err != nil {
 				return app.Failf("read runtime usage: %v", err)
 			}
-			if err := renderUsageReport(a, format, source, sum, AggregateRuntime(runs)); err != nil {
+			runtime := AggregateRuntime(runs)
+			runtime.CacheDecisions = map[string]int{}
+			for _, run := range runs {
+				decisions, err := ledger.Open(a.SDLCRunsDir(), run.RunID).ReadDecisions()
+				if err != nil {
+					return app.Failf("read cache decisions: %v", err)
+				}
+				for _, d := range decisions {
+					if d.Kind == "prompt-cache" {
+						runtime.CacheDecisions[d.Choice]++
+					}
+				}
+			}
+			if err := renderUsageReport(a, format, source, sum, runtime, AggregateHooks(hookRecords)); err != nil {
 				return app.Failf("%v", err)
 			}
 			return nil

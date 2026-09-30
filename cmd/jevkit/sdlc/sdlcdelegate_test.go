@@ -27,7 +27,6 @@ func (d *delegateChoices) Ask(_ context.Context, req jev.Request) (*jev.Response
 func TestAutomaticBuiltInChildRefreshesParentDiff(t *testing.T) {
 	a := newApp(t)
 	stageTestRoster(t, a)
-	testkit.WriteFile(t, a.sdlcPolicyPath(), "version: 1\nadaptiveBuiltinDelegation: opt-in\n")
 	a.Environ = append(a.Environ, "JEVKIT_TRANSPORT=fixture")
 	choices := &delegateChoices{}
 	a.NewJev = func(jev.Config, func() (string, error)) app.Asker { return choices }

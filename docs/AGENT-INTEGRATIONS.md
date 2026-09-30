@@ -29,6 +29,14 @@ off does not remove hooks already
 installed in the project; use `jevkit uninstall AGENT --components hooks` for
 those files.
 
+When Codex project hooks are installed, `jevkit sdlc integrations` also checks
+for project hook trust records. SDLC Codex invocations with hooks enabled pass
+`--dangerously-bypass-hook-trust`, so those runs can use enabled hooks without
+persisted trust. This flag applies to every enabled hook in the project.
+Standalone Codex sessions still require review of new or changed hooks; run
+`codex`, then `/hooks` to review the exact definitions. Installing the file alone
+does not confirm that Codex executed it.
+
 Use `--components hooks` or `--components mcp` when you need only one integration. The agent's existing permissions still apply.
 
 `jevkit install claude --injection-guard` adds broad pre-tool and post-tool hooks for [prompt-injection review](SECURITY-CHECK.md). The `*` pre-tool matcher runs Jevkit before every Claude tool call, so it adds hook startup latency to each call. Codex, Cursor, and Antigravity can also use `--injection-guard` to enable their installed hooks and shell wrappers. Review mode is off by default; try a shadow policy before enforcing it.
@@ -49,6 +57,19 @@ Jevkit redacts known secrets and configured patterns locally before an API reque
 Claude Code and OpenCode compact only result shapes their native post-tool contracts allow them to replace. Codex, Cursor, and Antigravity use a different, shared mechanism: their pre-tool hook replaces an eligible shell command with Jevkit's private wrapper command. The wrapper runs the original command, captures its streams and exit status, then prints the compacted result as the command output itself. This avoids relying on undocumented post-tool output mutation.
 
 The wrapper is fail-open for compaction and does not recursively wrap an already-wrapped command. It stores the complete original before attempting compaction, then includes the retrieval path in any compacted result. Stored output is private to Jevkit state. The classifier uses at most two requests: one for output triage and, when needed, one for salient line selection. `JEVKIT_COMPACT_GENERIC=1` enables deterministic compaction without a Jev client.
+
+`jevkit usage --source jev` reports global Jev transport attempts by origin,
+including hook calls. Its separate hook-dispatch table counts hook executions,
+which may make no Jev request. For example, the standard Claude compaction hook
+only considers Bash results above the 8 KiB threshold; `Read` results do not
+match that compaction hook.
+
+For Claude SDLC invocations, Jevkit asks Jev whether invocation-wide provider
+prompt caching is likely to pay for a cache write. It sends only prompt size,
+fingerprint, role, model, and prior cache counters. An unavailable or uncertain
+answer disables caching for that invocation. `jevkit usage --source runtime`
+shows enabled, disabled, and unmanaged decision counts. Other CLI runtimes have
+no Jevkit provider-cache control.
 
 Claude Code also installs a PreToolUse:Bash hook for the [security check](SECURITY-CHECK.md). Codex, Cursor, and Antigravity check eligible shell calls before rewriting them into the wrapper. OpenCode shell calls are not policy-checked in this version.
 

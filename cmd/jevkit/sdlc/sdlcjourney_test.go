@@ -32,7 +32,7 @@ func TestDecisionJourneyLogsAndUsage(t *testing.T) {
 		t.Fatalf("logs: %d %q %q", code, out, errs)
 	}
 	code, out, errs = run(a, "", "sdlc", "usage", id)
-	if code != app.ExitOK || errs != "" || !strings.Contains(out, "input unknown, output unknown") {
+	if code != app.ExitOK || errs != "" || !strings.Contains(out, "input unavailable, output unavailable") {
 		t.Fatalf("usage: %d %q %q", code, out, errs)
 	}
 }

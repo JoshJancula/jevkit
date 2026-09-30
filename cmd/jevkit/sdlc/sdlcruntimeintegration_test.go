@@ -17,7 +17,7 @@ import (
 
 func TestSDLCIntegrationAsksEachRunUntilDefaultIsSelected(t *testing.T) {
 	a := newApp(t)
-	answers := []bool{true, true, false, true, true, false}
+	answers := []bool{true, true, true, false, true, true, true, false}
 	prompts := 0
 	a.Confirm = func(string) (bool, error) {
 		prompts++
@@ -27,7 +27,7 @@ func TestSDLCIntegrationAsksEachRunUntilDefaultIsSelected(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		choice, err := a.chooseSDLCRuntimeIntegration(context.Background(), true)
-		if err != nil || choice == nil || !choice.Hooks || !choice.Compaction {
+		if err != nil || choice == nil || !choice.Hooks || !choice.Compaction || !choice.MCP {
 			t.Fatalf("run %d choice: %+v, %v", i, choice, err)
 		}
 		store := ledger.Open(a.SDLCRunsDir(), "run-20260928T120000Z-abcd1234")
@@ -40,22 +40,22 @@ func TestSDLCIntegrationAsksEachRunUntilDefaultIsSelected(t *testing.T) {
 		}
 		var req worker.Request
 		a.applySDLCRuntimeIntegration(&req, saved)
-		if !req.JevkitHooks || req.JevkitCompaction == nil || !*req.JevkitCompaction || req.JevkitBinary != "jevkit" {
+		if !req.JevkitHooks || !req.JevkitMCP || req.JevkitCompaction == nil || !*req.JevkitCompaction || req.JevkitBinary != "jevkit" {
 			t.Fatalf("integration did not reach worker: %+v", req)
 		}
 	}
-	if prompts != 6 {
-		t.Fatalf("expected three questions per run, got %d", prompts)
+	if prompts != 8 {
+		t.Fatalf("expected four questions per run, got %d", prompts)
 	}
 	if _, configured, err := a.loadSDLCRuntimeIntegration(); err != nil || configured {
 		t.Fatalf("temporary choices became a default: configured=%v, err=%v", configured, err)
 	}
-	answers = []bool{true, false, true}
+	answers = []bool{true, false, true, true}
 	choice, err := a.chooseSDLCRuntimeIntegration(context.Background(), true)
 	if err != nil || choice == nil || !choice.Hooks || choice.Compaction {
 		t.Fatalf("default choice: %+v, %v", choice, err)
 	}
-	if _, err := a.chooseSDLCRuntimeIntegration(context.Background(), true); err != nil || prompts != 9 {
+	if _, err := a.chooseSDLCRuntimeIntegration(context.Background(), true); err != nil || prompts != 12 {
 		t.Fatalf("saved default should skip prompting: prompts=%d, err=%v", prompts, err)
 	}
 	path, err := a.sdlcRuntimeIntegrationPath()
@@ -92,7 +92,7 @@ func TestSDLCRunCanDisablePreviouslyInstalledHooks(t *testing.T) {
 func TestSDLCStartSavesPerRunChoiceWithoutCreatingDefault(t *testing.T) {
 	a := newApp(t)
 	stageTestRoster(t, a)
-	answers := []bool{true, false, false, false, false}
+	answers := []bool{true, false, false, false, false, false, false}
 	prompts := 0
 	a.Confirm = func(string) (bool, error) {
 		prompts++
@@ -114,7 +114,7 @@ func TestSDLCStartSavesPerRunChoiceWithoutCreatingDefault(t *testing.T) {
 			t.Fatalf("run %d integration: %+v, %v", i, saved.RuntimeIntegration, err)
 		}
 	}
-	if prompts != 5 {
+	if prompts != 7 {
 		t.Fatalf("expected a prompt on each new run, got %d questions", prompts)
 	}
 	if _, configured, err := a.loadSDLCRuntimeIntegration(); err != nil || configured {
@@ -125,19 +125,23 @@ func TestSDLCStartSavesPerRunChoiceWithoutCreatingDefault(t *testing.T) {
 func TestSDLCIntegrationCommandConfiguresNoninteractiveRuns(t *testing.T) {
 	a := newApp(t)
 	initial, err := a.chooseSDLCRuntimeIntegration(context.Background(), false)
-	if err != nil || initial == nil || initial.Hooks || initial.Compaction {
+	if err != nil || initial == nil || initial.Hooks || initial.Compaction || initial.MCP {
 		t.Fatalf("noninteractive run should use disabled integrations until configured: %+v, %v", initial, err)
 	}
 	code, out, errs := run(a, "", "sdlc", "integrations", "--hooks", "on", "--compaction", "on")
 	if code != app.ExitOK || errs != "" || !strings.Contains(out, "compaction: true") {
 		t.Fatalf("configure: %d %q %q", code, out, errs)
 	}
+	code, out, errs = run(a, "", "sdlc", "integrations", "--mcp", "on")
+	if code != app.ExitOK || errs != "" || !strings.Contains(out, "MCP auto-install: true") {
+		t.Fatalf("enable MCP: %d %q %q", code, out, errs)
+	}
 	code, _, errs = run(a, "", "sdlc", "integrations", "--hooks", "off")
 	if code != app.ExitOK || errs != "" {
 		t.Fatalf("disable: %d %q", code, errs)
 	}
 	choice, configured, err := a.loadSDLCRuntimeIntegration()
-	if err != nil || !configured || choice.Hooks || choice.Compaction {
+	if err != nil || !configured || choice.Hooks || choice.Compaction || !choice.MCP {
 		t.Fatalf("disabled choice: %+v, %v, %v", choice, configured, err)
 	}
 	code, _, errs = run(a, "", "sdlc", "integrations", "--compaction", "on")

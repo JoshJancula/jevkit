@@ -58,7 +58,7 @@ func (a *App) adaptiveCandidates(st adaptive.State, reach enrollment.Reach) ([]e
 	candidates := enrollment.Eligible(p, r, reach, enrollment.Requirement{Role: st.Role(), Write: st.Stage == adaptive.Implementing, Excluded: excluded})
 	withoutFailedBindings := candidates[:0]
 	for _, c := range candidates {
-		if !st.ExcludedBindings[c.Binding] && !st.ExcludedRuntimes[c.Agent.Runtime] {
+		if !st.ExcludedBindings[c.Binding] && !st.HandoffExcluded[c.Binding] && !st.ExcludedRuntimes[c.Agent.Runtime] {
 			withoutFailedBindings = append(withoutFailedBindings, c)
 		}
 	}
@@ -286,7 +286,7 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 		return nil, app.Failf("%v", err)
 	}
 	if len(candidates) == 0 && st.PendingFocus != "" && st.LastHandoffBinding != "" && !st.HandoffFallbackUsed {
-		delete(st.ExcludedBindings, st.LastHandoffBinding)
+		delete(st.HandoffExcluded, st.LastHandoffBinding)
 		st.HandoffFallbackUsed = true
 		candidates, err = a.adaptiveCandidates(st, a.cliReach())
 		if err != nil {
@@ -333,8 +333,11 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 		}
 		rubrics := enrollment.Rubrics(candidates, st.Role())
 		if run.StageFlow != nil {
-			if stage, ok := run.StageFlow.Stage(); ok && stage.Work != nil && stage.Work.Focus != "" {
-				state += "\nfocus: " + stage.Work.Focus
+			if stage, ok := run.StageFlow.Stage(); ok && stage.Work != nil {
+				state += "\nstage objective: " + stage.Work.Objective
+				if stage.Work.Focus != "" {
+					state += "\nstage focus: " + stage.Work.Focus
+				}
 			}
 		}
 		result, err := router.Decide(ctx, "sdlc.agent-selection", state, route.CriteriaFromRubrics(rubrics))
@@ -364,7 +367,7 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 	}
 	if st.PendingFocus != "" {
 		focus := worker.BoundText(st.PendingFocus, worker.MaxHandoffFieldBytes)
-		assignment.Reason = "handoff focus: " + focus + "; " + assignment.Reason
+		assignment.Objective = "handoff focus: " + focus
 		if st.HandoffFallbackUsed {
 			assignment.Reason = "no alternate agent is available; continue within your role if possible; " + assignment.Reason
 		}
@@ -374,7 +377,14 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 		if !ok || stage.Work == nil {
 			return nil, app.Failf("run %s has invalid current work stage", runID)
 		}
-		assignment.StageID, assignment.Objective = stage.ID, stage.Work.Objective
+		assignment.StageID = stage.ID
+		if stage.Work.Objective != "" {
+			if assignment.Objective != "" {
+				assignment.Objective = stage.Work.Objective + "; " + assignment.Objective
+			} else {
+				assignment.Objective = stage.Work.Objective
+			}
+		}
 	}
 	if st.Stage == adaptive.Assessing || st.Stage == adaptive.Specializing && st.Role() != "research" {
 		assignment.Revision = st.DiffRevision

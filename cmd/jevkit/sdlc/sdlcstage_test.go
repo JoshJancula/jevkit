@@ -57,7 +57,7 @@ func TestCustomStageWorkflowAsksAndDrivesEnrolledWorkers(t *testing.T) {
 	if r.Adaptive.Stage != adaptive.Done || r.Adaptive.Outcome != "succeeded" || r.StageFlow.Current != "done" || len(r.StageFlow.Transitions) != 4 {
 		t.Fatalf("completed run: %+v", r)
 	}
-	if fj.Calls != 1 || !strings.Contains(fj.Req.State, "add a line") || len(f.requests) != 3 || f.requests[0].Assignment.StageID != "plan" || !strings.Contains(f.requests[0].Task, "Stage objective:") {
+	if fj.Calls != 1 || !strings.Contains(fj.Req.State, "add a line") || len(f.requests) != 3 || f.requests[0].Assignment.StageID != "plan" || f.requests[0].Assignment.Objective == "" || strings.Contains(f.requests[0].Task, "Stage objective:") {
 		t.Fatalf("jev calls=%d, request=%+v, worker requests=%+v", fj.Calls, fj.Req, f.requests)
 	}
 }

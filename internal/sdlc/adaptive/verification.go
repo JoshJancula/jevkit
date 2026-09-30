@@ -182,12 +182,12 @@ func ApplyVerificationResult(st *State, rec VerificationRecord, now time.Time) e
 		}
 		if st.BudgetExhausted() {
 			st.Pause("assignment-budget-exhausted")
-			st.PendingReason = recoveryMessage(reason, "assignment/cost budget exhausted; raise budgets or start a new run after inspecting the failure summary")
+			st.PendingReason = recoveryMessage(reason, "assignment/cost budget exhausted; saved run limits are fixed. Start a new run with a tighter plan or a higher policy limit after inspecting the failure summary")
 			return nil
 		}
 		if st.MaxRevisions > 0 && st.RevisionCount >= st.MaxRevisions {
 			st.Pause("revision-budget-exhausted")
-			st.PendingReason = recoveryMessage(reason, "revision budget exhausted; inspect the failure summary and start a new run or raise maxRevisions")
+			st.PendingReason = recoveryMessage(reason, "revision budget exhausted; saved run limits are fixed. Inspect the failure summary, then start a new run with a tighter plan or a higher policy limit")
 			return nil
 		}
 		st.Stage = Implementing

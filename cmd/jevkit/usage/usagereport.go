@@ -28,15 +28,48 @@ type RuntimeTotals struct {
 }
 
 type runtimeSummary struct {
-	Totals    RuntimeTotals             `json:"totals"`
-	ByRuntime map[string]*RuntimeTotals `json:"by_runtime"`
-	ByModel   map[string]*RuntimeTotals `json:"by_model"`
-	ByRole    map[string]*RuntimeTotals `json:"by_role"`
+	Totals         RuntimeTotals             `json:"totals"`
+	ByRuntime      map[string]*RuntimeTotals `json:"by_runtime"`
+	ByModel        map[string]*RuntimeTotals `json:"by_model"`
+	ByRole         map[string]*RuntimeTotals `json:"by_role"`
+	CacheDecisions map[string]int            `json:"cache_decisions,omitempty"`
 }
 
 type usageSources struct {
-	Jev     *usage.Summary  `json:"jev,omitempty"`
-	Runtime *runtimeSummary `json:"runtime,omitempty"`
+	Jev          *usage.Summary        `json:"jev,omitempty"`
+	Runtime      *runtimeSummary       `json:"runtime,omitempty"`
+	HookActivity map[string]HookCounts `json:"hook_activity,omitempty"`
+}
+
+type HookCounts struct {
+	PreTool  int `json:"pre_tool"`
+	PostTool int `json:"post_tool"`
+	Other    int `json:"other"`
+	NonOK    int `json:"non_ok"`
+}
+
+func AggregateHooks(recs []usage.HookInvocation) map[string]HookCounts {
+	counts := map[string]HookCounts{}
+	for _, rec := range recs {
+		key := rec.Agent
+		if key == "" {
+			key = "(unknown)"
+		}
+		c := counts[key]
+		switch rec.Event {
+		case "pre-tool":
+			c.PreTool++
+		case "post-tool":
+			c.PostTool++
+		default:
+			c.Other++
+		}
+		if rec.Outcome != "ok" {
+			c.NonOK++
+		}
+		counts[key] = c
+	}
+	return counts
 }
 
 // Top-level call totals are retained for readers of the v1 JSON shape;
@@ -138,23 +171,29 @@ func AggregateRuntime(runs []ledger.Run) runtimeSummary {
 }
 
 func (a *App) renderJevUsage(s usage.Summary) {
-	if s.Calls == 0 {
+	if s.Attempts == 0 {
 		_, _ = fmt.Fprintf(a.Stdout, "%s: no recorded calls\n", a.Styled(a.Stdout, app.ANSICyan, "Jev (TypeSafe AI) usage"))
 		return
 	}
 
 	a.Heading("Jev (TypeSafe AI) usage")
-	_, _ = fmt.Fprintf(a.Stdout, "  calls: %d (measured %d, usage unavailable %d)\n", s.Calls, s.CallsMeasured, s.CallsUnavailable)
-	_, _ = fmt.Fprintf(a.Stdout, "  tokens: input %s, output %s\n", app.FormatInt(int64(s.InputTokens)), app.FormatInt(int64(s.OutputTokens)))
+	_, _ = fmt.Fprintf(a.Stdout, "  successful calls: %d; transport attempts: %d (measured %d, usage unavailable %d, failed %d)\n", s.Calls, s.Attempts, s.AttemptsMeasured, s.AttemptsUnavailable, s.FailedAttempts)
+	_, _ = fmt.Fprintf(a.Stdout, "  tokens: input %s, output %s\n", app.UsageCount(int64(s.InputTokens), s.AttemptsUnavailable), app.UsageCount(int64(s.OutputTokens), s.AttemptsUnavailable))
 	if s.Cost != nil {
-		_, _ = fmt.Fprintf(a.Stdout, "  cost: ~$%.6f (%s)\n", s.Cost.EstimatedUSD, s.Cost.Note)
+		_, _ = fmt.Fprintf(a.Stdout, "  cost: ~$%.6f (%s from measured usage", s.Cost.EstimatedUSD, s.Cost.Note)
+		if s.AttemptsUnavailable > 0 {
+			_, _ = fmt.Fprintf(a.Stdout, "; %d attempts have unavailable usage", s.AttemptsUnavailable)
+		}
+		_, _ = fmt.Fprintln(a.Stdout, ")")
+	} else {
+		_, _ = fmt.Fprintln(a.Stdout, "  cost: — (usage unavailable)")
 	}
 
 	for _, group := range []struct {
 		title string
 		items map[string]*usage.Tokens
 	}{
-		{"By question set", s.ByQuestionSet}, {"By model", s.ByModel}, {"By agent", s.ByAgent},
+		{"By question set", s.ByQuestionSet}, {"By model", s.ByModel}, {"By agent", s.ByAgent}, {"By origin", s.ByOrigin},
 	} {
 		keys := make([]string, 0, len(group.items))
 		for key := range group.items {
@@ -175,22 +214,33 @@ func (a *App) renderJevUsage(s usage.Summary) {
 		rows := make([][]string, 0, len(keys))
 		for _, key := range keys {
 			t := group.items[key]
-			rows = append(rows, []string{key, fmt.Sprint(t.Calls), app.FormatInt(int64(t.InputTokens)), app.FormatInt(int64(t.OutputTokens))})
+			rows = append(rows, []string{key, fmt.Sprint(t.Calls), fmt.Sprint(t.Attempts), app.UsageCount(int64(t.InputTokens), t.Unavailable), app.UsageCount(int64(t.OutputTokens), t.Unavailable)})
 		}
-		a.Table([]string{"NAME", "CALLS", "INPUT", "OUTPUT"}, rows)
+		a.Table([]string{"NAME", "CALLS", "ATTEMPTS", "INPUT", "OUTPUT"}, rows)
 	}
 }
 
 func (a *App) renderRuntime(s runtimeSummary) {
 	a.Heading("Agent runtime usage")
 	_, _ = fmt.Fprintf(a.Stdout, "  invocations: %d\n", s.Totals.Invocations)
-	_, _ = fmt.Fprintf(a.Stdout, "  tool calls: %s (%d unknown)\n", app.FormatInt(s.Totals.ToolCalls), s.Totals.UnknownToolCalls)
-	_, _ = fmt.Fprintf(a.Stdout, "  tokens: input %s (%d unknown), output %s (%d unknown)\n", app.FormatInt(s.Totals.InputTokens), s.Totals.UnknownInput, app.FormatInt(s.Totals.OutputTokens), s.Totals.UnknownOutput)
-	_, _ = fmt.Fprintf(a.Stdout, "  cache: read %s (%d unknown), creation %s (%d unknown)\n", app.FormatInt(s.Totals.CacheReadTokens), s.Totals.UnknownCacheRead, app.FormatInt(s.Totals.CacheCreationTokens), s.Totals.UnknownCacheCreation)
+	_, _ = fmt.Fprintf(a.Stdout, "  tool calls: %s\n", app.UsageCount(s.Totals.ToolCalls, s.Totals.UnknownToolCalls))
+	_, _ = fmt.Fprintf(a.Stdout, "  tokens: input %s, output %s\n", app.UsageCount(s.Totals.InputTokens, s.Totals.UnknownInput), app.UsageCount(s.Totals.OutputTokens, s.Totals.UnknownOutput))
+	_, _ = fmt.Fprintf(a.Stdout, "  cache: read %s, creation %s\n", app.UsageCount(s.Totals.CacheReadTokens, s.Totals.UnknownCacheRead), app.UsageCount(s.Totals.CacheCreationTokens, s.Totals.UnknownCacheCreation))
 	if s.Totals.SuppliedCostUSD != nil {
-		_, _ = fmt.Fprintf(a.Stdout, "  supplied cost: $%.6f (%d unknown)\n", *s.Totals.SuppliedCostUSD, s.Totals.UnknownCost)
+		_, _ = fmt.Fprintf(a.Stdout, "  supplied cost: $%.6f", *s.Totals.SuppliedCostUSD)
+		if s.Totals.UnknownCost > 0 {
+			_, _ = fmt.Fprintf(a.Stdout, " (+%d unavailable)", s.Totals.UnknownCost)
+		}
+		_, _ = fmt.Fprintln(a.Stdout)
 	} else {
-		_, _ = fmt.Fprintf(a.Stdout, "  supplied cost: unknown (%d unknown)\n", s.Totals.UnknownCost)
+		if s.Totals.UnknownCost > 0 {
+			_, _ = fmt.Fprintf(a.Stdout, "  supplied cost: — (%d unavailable)\n", s.Totals.UnknownCost)
+		} else {
+			_, _ = fmt.Fprintln(a.Stdout, "  supplied cost: —")
+		}
+	}
+	if len(s.CacheDecisions) > 0 {
+		_, _ = fmt.Fprintf(a.Stdout, "  prompt cache decisions: enabled %d, disabled %d, unmanaged %d\n", s.CacheDecisions["enabled"], s.CacheDecisions["disabled"], s.CacheDecisions["unmanaged"])
 	}
 
 	for _, group := range []struct {
@@ -214,22 +264,21 @@ func (a *App) renderRuntime(s runtimeSummary) {
 			t := group.items[key]
 			rows = append(rows, []string{
 				key, fmt.Sprint(t.Invocations), app.UsageCount(t.ToolCalls, t.UnknownToolCalls),
-				app.FormatInt(t.InputTokens), app.FormatInt(t.OutputTokens),
-				app.FormatInt(t.CacheReadTokens), app.FormatInt(t.CacheCreationTokens),
-				fmt.Sprint(t.UnknownInput), fmt.Sprint(t.UnknownOutput),
-				fmt.Sprint(t.UnknownCacheRead), fmt.Sprint(t.UnknownCacheCreation),
+				app.UsageCount(t.InputTokens, t.UnknownInput), app.UsageCount(t.OutputTokens, t.UnknownOutput),
+				app.UsageCount(t.CacheReadTokens, t.UnknownCacheRead), app.UsageCount(t.CacheCreationTokens, t.UnknownCacheCreation),
 			})
 		}
-		a.Table([]string{"NAME", "INVOCATIONS", "TOOL CALLS", "INPUT", "OUTPUT", "CACHE READ", "CACHE CREATE", "INPUT UNKNOWN", "OUTPUT UNKNOWN", "CACHE READ UNKNOWN", "CACHE CREATE UNKNOWN"}, rows)
+		a.Table([]string{"NAME", "INVOCATIONS", "TOOL CALLS", "INPUT", "OUTPUT", "CACHE READ", "CACHE CREATE"}, rows)
 	}
 }
 
-func renderUsageReport(a *App, format, source string, jev usage.Summary, runtime runtimeSummary) error {
+func renderUsageReport(a *App, format, source string, jev usage.Summary, runtime runtimeSummary, hooks map[string]HookCounts) error {
 	w := a.Stdout
 	if format == usage.FormatJSON {
 		report := UsageReport{Kind: "usage", SchemaVersion: 2}
 		if source == "all" || source == "jev" {
 			report.Sources.Jev = &jev
+			report.Sources.HookActivity = hooks
 			report.Calls, report.InputTokens, report.OutputTokens = jev.Calls, jev.InputTokens, jev.OutputTokens
 		}
 		if source == "all" || source == "runtime" {
@@ -241,6 +290,20 @@ func renderUsageReport(a *App, format, source string, jev usage.Summary, runtime
 	}
 	if source == "all" || source == "jev" {
 		a.renderJevUsage(jev)
+		if len(hooks) > 0 {
+			a.Heading("Hook dispatches (separate from Jev calls)")
+			keys := make([]string, 0, len(hooks))
+			for key := range hooks {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			rows := make([][]string, 0, len(keys))
+			for _, key := range keys {
+				c := hooks[key]
+				rows = append(rows, []string{key, fmt.Sprint(c.PreTool), fmt.Sprint(c.PostTool), fmt.Sprint(c.Other), fmt.Sprint(c.NonOK)})
+			}
+			a.Table([]string{"AGENT", "PRE TOOL", "POST TOOL", "OTHER", "NON OK"}, rows)
+		}
 	}
 	if source == "all" {
 		_, _ = fmt.Fprintln(w)

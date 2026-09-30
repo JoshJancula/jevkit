@@ -358,7 +358,7 @@ func (a *App) ask(ctx context.Context, kind, state, instructions string, criteri
 	if err != nil {
 		return app.Failf("%v", err)
 	}
-	client := a.JevClient(clientCfg, func() (string, error) { return key, nil })
+	client := app.UsageOrigin(a.JevClient(clientCfg, func() (string, error) { return key, nil }), "cli", "")
 	resp, err := client.Ask(ctx, req)
 	if err != nil || resp == nil {
 		return app.Failf("ask failed: %s", failReason(err))
@@ -460,7 +460,7 @@ func (a *App) askRequest(ctx context.Context, path, modelOverride, format string
 	if err != nil {
 		return app.Failf("%v", err)
 	}
-	client := a.JevClient(clientCfg, func() (string, error) { return key, nil })
+	client := app.UsageOrigin(a.JevClient(clientCfg, func() (string, error) { return key, nil }), "cli", "")
 	resp, err := client.Ask(ctx, req)
 	if err != nil || resp == nil {
 		return app.Failf("ask failed: %s", failReason(err))

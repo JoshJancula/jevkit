@@ -212,11 +212,25 @@ func TestSDLCLogsRawFiltersAndWatchDetached(t *testing.T) {
 	}
 }
 
-func TestSDLCDelegationFlagRequiresPolicy(t *testing.T) {
-	a := newApp(t)
-	stageTestRoster(t, a)
-	code, _, errs := run(a, "", "sdlc", "run", "feature", "--task", "add a line", "--delegate-builtins=true", "--step", "--auto")
-	if code == app.ExitOK || !strings.Contains(errs, "does not permit built-in delegation") {
-		t.Fatalf("flag: %d %q", code, errs)
+func TestSDLCDelegationFlagOverridesPolicyWithCollaborativeProfile(t *testing.T) {
+	for _, command := range []string{"run", "start"} {
+		t.Run(command, func(t *testing.T) {
+			a := newApp(t)
+			collaborativeReviewRoster(t, a)
+			a.SdlcExecutor = &fakeSDLCExecutor{replies: []worker.Reply{{Outcome: "planned", Content: "Plan"}}}
+			args := []string{"sdlc", command, "bugfix", "--policy", "collaborative", "--task", "add a line", "--delegate-builtins", "--auto"}
+			if command == "run" {
+				args = append(args, "--step")
+			}
+			code, out, errs := run(a, "", args...)
+			if code != app.ExitOK {
+				t.Fatalf("flag: %d %q %q", code, out, errs)
+			}
+			id := strings.Fields(out)[1]
+			saved, err := ledger.Open(a.SDLCRunsDir(), id).ReadRun()
+			if err != nil || !saved.DelegateBuiltins || saved.Adaptive.Profile != "collaborative" {
+				t.Fatalf("run: %+v, %v", saved, err)
+			}
+		})
 	}
 }

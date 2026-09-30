@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,31 @@ func TestCommandUsesEnrolledRuntimeAndReadOnlyMode(t *testing.T) {
 	req.Assignment.ReadOnly = true
 	if _, _, err := command(req); err == nil {
 		t.Fatal("OpenCode read-only assignment was accepted")
+	}
+}
+
+func TestCodexCommandBypassesHookTrustWhenHooksEnabled(t *testing.T) {
+	req := Request{Agent: enrollment.Agent{Via: enrollment.Runtime, Runtime: "codex", Model: "m"}, Assignment: adaptive.Assignment{Role: "implementer"}, JevkitHooks: true}
+	for _, session := range []string{"", "session-1"} {
+		req.SessionID = session
+		_, args, err := command(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(args) < 2 || args[0] != "exec" || args[1] != "--dangerously-bypass-hook-trust" {
+			t.Fatalf("Codex hook trust flag missing for session %q: %v", session, args)
+		}
+		if session != "" && (len(args) < 3 || args[2] != "resume") {
+			t.Fatalf("Codex resume command malformed: %v", args)
+		}
+	}
+	req.JevkitHooks = false
+	_, args, err := command(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(args, "--dangerously-bypass-hook-trust") {
+		t.Fatalf("Codex hook trust flag present with hooks disabled: %v", args)
 	}
 }
 
@@ -119,7 +145,7 @@ func TestCLIExecutorInstallsOptedInHooksAndSetsCompactionOnlyForAgent(t *testing
 	dir := gitFixture(t)
 	envFile := filepath.Join(t.TempDir(), "compact-env")
 	bin := filepath.Join(dir, "fake-claude")
-	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s,%%s' \"$JEVKIT_COMPACT\" \"$JEVKIT_SDLC_HOOKS\" > %q\necho '%s'\n", envFile, plannedReplyJSON("Plan"))
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s,%%s,%%s' \"$JEVKIT_COMPACT\" \"$JEVKIT_SDLC_HOOKS\" \"$DISABLE_PROMPT_CACHING\" > %q\necho '%s'\n", envFile, plannedReplyJSON("Plan"))
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -127,13 +153,13 @@ func TestCLIExecutorInstallsOptedInHooksAndSetsCompactionOnlyForAgent(t *testing
 	req := Request{
 		Agent:      enrollment.Agent{ID: "planner", Via: enrollment.Runtime, Runtime: "claude", Model: "model", Binary: bin},
 		Assignment: adaptive.Assignment{InvocationID: "inv", AgentID: "planner", Runtime: "claude", Role: "planner"},
-		WorkDir:    dir, JevkitHooks: true, JevkitBinary: "/opt/jevkit", JevkitCompaction: &enabled,
+		WorkDir:    dir, JevkitHooks: true, JevkitBinary: "/opt/jevkit", JevkitCompaction: &enabled, PromptCache: &enabled,
 	}
 	if _, err := (CLIExecutor{}).Execute(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(envFile)
-	if err != nil || string(got) != "1,1" {
+	if err != nil || string(got) != "1,1,0" {
 		t.Fatalf("agent compaction environment = %q, %v", got, err)
 	}
 	hooks, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
@@ -146,7 +172,7 @@ func TestCLIExecutorInstallsOptedInHooksAndSetsCompactionOnlyForAgent(t *testing
 		t.Fatal(err)
 	}
 	got, err = os.ReadFile(envFile)
-	if err != nil || string(got) != "0,1" {
+	if err != nil || string(got) != "0,1,1" {
 		t.Fatalf("disabled compaction environment = %q, %v", got, err)
 	}
 	req.JevkitHooks = false
@@ -154,8 +180,35 @@ func TestCLIExecutorInstallsOptedInHooksAndSetsCompactionOnlyForAgent(t *testing
 		t.Fatal(err)
 	}
 	got, err = os.ReadFile(envFile)
-	if err != nil || string(got) != "0,0" {
+	if err != nil || string(got) != "0,0,1" {
 		t.Fatalf("disabled hook environment = %q, %v", got, err)
+	}
+}
+
+func TestCLIExecutorInstallsMCPWithoutHooks(t *testing.T) {
+	requireUnixShellFixture(t)
+	dir := gitFixture(t)
+	bin := filepath.Join(dir, "fake-claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '"+plannedReplyJSON("Plan")+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req := Request{
+		Agent:      enrollment.Agent{ID: "planner", Via: enrollment.Runtime, Runtime: "claude", Model: "model", Binary: bin},
+		Assignment: adaptive.Assignment{InvocationID: "inv", AgentID: "planner", Runtime: "claude", Role: "planner"},
+		WorkDir:    dir, JevkitMCP: true, JevkitBinary: "/opt/jevkit",
+	}
+	if _, err := (CLIExecutor{}).Execute(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	mcp, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil || !strings.Contains(string(mcp), "/opt/jevkit") || !strings.Contains(string(mcp), "mcp") {
+		t.Fatalf("project MCP was not installed: %q, %v", mcp, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected hook install: %v", err)
+	}
+	if !strings.Contains(makePrompt(req), "jev_ask") {
+		t.Fatal("MCP-enabled agent prompt does not explain jev_ask")
 	}
 }
 

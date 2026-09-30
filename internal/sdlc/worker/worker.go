@@ -23,6 +23,7 @@ type Request struct {
 	Agent          enrollment.Agent
 	Assignment     adaptive.Assignment
 	Task           string
+	OriginalTask   string
 	Plan           string
 	Diff           string
 	DiffPath       string
@@ -41,8 +42,12 @@ type Request struct {
 	CaptureSession   bool
 	Compact          bool
 	JevkitHooks      bool
+	JevkitMCP        bool
 	JevkitBinary     string
 	JevkitCompaction *bool
+	// PromptCache controls Claude Code's invocation-wide provider prompt cache.
+	// Nil leaves runtimes without a supported control unmanaged.
+	PromptCache *bool
 }
 
 type Reply struct {
@@ -140,16 +145,16 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 	if err != nil {
 		return Reply{}, &InvocationFailure{Err: err}
 	}
-	if req.JevkitHooks {
+	if req.JevkitHooks || req.JevkitMCP {
 		adapter := agents.Lookup(req.Agent.Runtime)
 		if adapter == nil {
-			return Reply{}, fmt.Errorf("worker: no Jevkit hook adapter for %s", req.Agent.Runtime)
+			return Reply{}, fmt.Errorf("worker: no Jevkit integration adapter for %s", req.Agent.Runtime)
 		}
 		hookInstallMu.Lock()
-		_, err := agents.InstallAgentComponents(adapter, agents.InstallOptions{WorkDir: req.WorkDir, Scope: "project", Binary: req.JevkitBinary}, agents.Components{Hooks: true})
+		_, err := agents.InstallAgentComponents(adapter, agents.InstallOptions{WorkDir: req.WorkDir, Scope: "project", Binary: req.JevkitBinary}, agents.Components{Hooks: req.JevkitHooks, MCP: req.JevkitMCP})
 		hookInstallMu.Unlock()
 		if err != nil {
-			return Reply{}, fmt.Errorf("worker: install Jevkit hooks: %w", err)
+			return Reply{}, fmt.Errorf("worker: install Jevkit integration: %w", err)
 		}
 	}
 	snapshot, err := newWorkspaceSnapshot(ctx, req.WorkDir)
@@ -177,7 +182,7 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	prepareRuntimeCommand(cmd)
 	cmd.Dir = req.WorkDir
-	if req.Yolo || req.SecurityPolicy != "" || req.SDLCRunID != "" || req.JevkitCompaction != nil {
+	if req.Yolo || req.SecurityPolicy != "" || req.SDLCRunID != "" || req.JevkitCompaction != nil || req.PromptCache != nil {
 		cmd.Env = os.Environ()
 		if req.Yolo {
 			cmd.Env = append(cmd.Env, "JEVKIT_YOLO=1")
@@ -199,6 +204,13 @@ func (CLIExecutor) Execute(ctx context.Context, req Request) (Reply, error) {
 				hooks = "1"
 			}
 			cmd.Env = append(cmd.Env, "JEVKIT_SDLC_HOOKS="+hooks)
+		}
+		if req.Agent.Runtime == "claude" && req.PromptCache != nil {
+			disable := "1"
+			if *req.PromptCache {
+				disable = "0"
+			}
+			cmd.Env = append(cmd.Env, "DISABLE_PROMPT_CACHING="+disable)
 		}
 	}
 	if req.Compact {
@@ -733,6 +745,9 @@ func command(req Request) (string, []string, error) {
 			sandbox = "read-only"
 		}
 		args := []string{"exec"}
+		if req.JevkitHooks {
+			args = append(args, "--dangerously-bypass-hook-trust")
+		}
 		if req.SessionID != "" {
 			args = append(args, "resume", req.SessionID, "-c", "sandbox_mode="+sandbox)
 			args = append(args, "--model", a.Model)

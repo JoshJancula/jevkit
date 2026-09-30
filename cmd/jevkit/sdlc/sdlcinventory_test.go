@@ -43,10 +43,13 @@ func TestSdlcRunsInventoryListsStatusSizeAndChildren(t *testing.T) {
 	if code != 0 || errb != "" {
 		t.Fatalf("code=%d err=%q out=%s", code, errb, out)
 	}
-	for _, want := range []string{"run-a", "run-b", "done (merged)", "1", "Storage:"} {
+	for _, want := range []string{"run-a", "run-b", "done (merged)", "1", "Storage:", "TASK", "fix the login bug", "jevkit sdlc show RUN_ID"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "user@example.com") {
+		t.Errorf("run list should redact task text:\n%s", out)
 	}
 
 	code, out, errb = run(a, "", "sdlc", "runs", "--format", "json")
@@ -55,6 +58,30 @@ func TestSdlcRunsInventoryListsStatusSizeAndChildren(t *testing.T) {
 	}
 	if !strings.Contains(out, `"runId": "run-a"`) || !strings.Contains(out, `"childRuns"`) {
 		t.Errorf("json output missing expected fields:\n%s", out)
+	}
+}
+
+func TestSdlcShowExplainsRunAndLinksEvidence(t *testing.T) {
+	a := newApp(t)
+	t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	seedRun(t, a, "run-a", "", t0)
+	seedRun(t, a, "run-b", "run-a", t0.Add(time.Minute))
+	for _, d := range []ledger.Decision{
+		{At: t0.Add(time.Second).Format(time.RFC3339), RunID: "run-a", Kind: "invocation-outcome", Stage: "planning", Trigger: "planner", Choice: "planned", Outcome: "implementing", Invocation: "inv-plan"},
+		{At: t0.Add(2 * time.Minute).Format(time.RFC3339), RunID: "run-b", Kind: "invocation-outcome", Stage: "assessing", Trigger: "reviewer", Choice: "approved", Outcome: "done", Invocation: "inv-review"},
+	} {
+		if err := ledger.Open(a.SDLCRunsDir(), d.RunID).AppendDecision(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out, errb := run(a, "", "sdlc", "show", "run-a")
+	if code != 0 || errb != "" {
+		t.Fatalf("code=%d err=%q out=%s", code, errb, out)
+	}
+	for _, want := range []string{"WHAT HAPPENED", "planner: planned", "reviewer: approved", "jevkit sdlc logs run-a --invocation inv-plan", "jevkit sdlc logs run-b --invocation inv-review", filepath.Join(a.SDLCRunsDir(), "run-a", "artifacts", "plan.md"), "jevkit sdlc watch run-a"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
 	}
 }
 

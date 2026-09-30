@@ -344,8 +344,19 @@ func TestTTYViewFormatsTokenUsage(t *testing.T) {
 		inputTokens:  86389,
 		outputTokens: 22254425,
 	}, 100, 24)
-	if !strings.Contains(view, "Usage  86,389 in (0 unknown) · 22,254,425 out (0 unknown)") {
+	if !strings.Contains(view, "Usage  86,389 in · 22,254,425 out") {
 		t.Fatalf("token usage was not formatted in watch footer: %q", view)
+	}
+}
+
+func TestVerificationEnvironmentPauseKeepsRecoveryVisible(t *testing.T) {
+	a := newApp(t)
+	run := ledger.Run{RunID: "run-20260929T160856Z-e02a7dfb", Task: "verify", Adaptive: &adaptive.State{Stage: adaptive.Paused, Outcome: adaptive.OutcomeVerificationEnvironment}}
+	view := a.sdlcTTYView([]ledger.Run{run}, nil, watchTTYState{paused: true, canRetry: true, cause: "Go 1.18 found first on PATH", retryAction: "re-run verification"}, 180, 8)
+	for _, want := range []string{"PAUSED  Go 1.18", "FIX  Correct the supervisor toolchain/PATH", "NEXT  r: re-run verification", "--retry-failed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q in %q", want, view)
+		}
 	}
 }
 
@@ -632,7 +643,7 @@ func TestWatchCountsPartialRuntimeUsage(t *testing.T) {
 	if err := a.sdlcWatch(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Measured agent tokens: 120 input (1 unknown), 30 output (1 unknown)") {
+	if !strings.Contains(out.String(), "Measured agent tokens: 120 (+1 unavailable) input, 30 (+1 unavailable) output") {
 		t.Fatalf("partial runtime usage was dropped: %s", out.String())
 	}
 }

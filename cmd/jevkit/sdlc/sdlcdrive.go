@@ -218,7 +218,7 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 	if agent.Via != enrollment.Runtime && a.SdlcExecutor == nil {
 		return a.sdlcFailAssignment(runID, *assignment, fmt.Errorf("native and host-self assignments need a host executor"))
 	}
-	req := worker.Request{Agent: *agent, Assignment: *assignment, Task: run.Task, WorkDir: a.WorkDir, Workspace: a.WorkDir, AllowRead: run.AllowRead, Yolo: a.Yolo || app.Truthy(a.Getenv("JEVKIT_YOLO")), SecurityPolicy: a.SecurityPolicy, SDLCRunID: runID, LogDir: store.Dir + "/logs", LogTailBytes: a.sdlcLogTailBytes()}
+	req := worker.Request{Agent: *agent, Assignment: *assignment, Task: run.Task, OriginalTask: run.Task, WorkDir: a.WorkDir, Workspace: a.WorkDir, AllowRead: run.AllowRead, Yolo: a.Yolo || app.Truthy(a.Getenv("JEVKIT_YOLO")), SecurityPolicy: a.SecurityPolicy, SDLCRunID: runID, LogDir: store.Dir + "/logs", LogTailBytes: a.sdlcLogTailBytes()}
 	a.applySDLCRuntimeIntegration(&req, run)
 	if a.sdlcProgress != nil {
 		live, err := a.sdlcLiveOutput(agent.ID)
@@ -241,9 +241,6 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 		}
 		req.SessionID, req.CaptureSession = sessionID, true
 		req.Compact = strategy == "compact" && agent.Runtime == "claude"
-	}
-	if assignment.Objective != "" {
-		req.Task += "\n\nStage objective: " + assignment.Objective
 	}
 	if assignment.Role == "planner" && run.PlanFeedback != "" {
 		previous, err := store.ReadArtifact("plan.md")
@@ -331,6 +328,7 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 		req.Diff = string(diff)
 		req.DiffPath = store.Dir + "/artifacts/patch.diff"
 	}
+	a.sdlcPromptCacheDecision(ctx, store, run, &req)
 	executor := a.SdlcExecutor
 	if executor == nil {
 		executor = worker.CLIExecutor{}

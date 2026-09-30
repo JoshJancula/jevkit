@@ -56,7 +56,7 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 				if u.CostUSD != nil {
 					_, _ = fmt.Fprintf(a.Stdout, ", cost $%.4f", *u.CostUSD)
 				} else {
-					_, _ = fmt.Fprintf(a.Stdout, ", cost unknown")
+					_, _ = fmt.Fprintf(a.Stdout, ", cost unavailable")
 					unknownCost++
 				}
 				if u.UsageProvenance != "" {
@@ -90,8 +90,12 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 				}
 			}
 		}
-		_, _ = fmt.Fprintf(a.Stdout, "Measured total: input %s (%d unknown), output %s (%d unknown), cache-read %s (%d unknown), cache-creation %s (%d unknown), tool calls %s (%d unknown), cost (%d unknown)\n",
-			app.FormatInt(input), unknownInput, app.FormatInt(output), unknownOutput, app.FormatInt(cacheRead), unknownCacheRead, app.FormatInt(cacheCreate), unknownCacheCreate, app.FormatInt(toolCalls), unknownToolCalls, unknownCost)
+		_, _ = fmt.Fprintf(a.Stdout, "Measured total: input %s, output %s, cache-read %s, cache-creation %s, tool calls %s",
+			app.UsageCount(input, unknownInput), app.UsageCount(output, unknownOutput), app.UsageCount(cacheRead, unknownCacheRead), app.UsageCount(cacheCreate, unknownCacheCreate), app.UsageCount(toolCalls, unknownToolCalls))
+		if unknownCost > 0 {
+			_, _ = fmt.Fprintf(a.Stdout, ", cost unavailable for %d invocations", unknownCost)
+		}
+		_, _ = fmt.Fprintln(a.Stdout)
 		records, err := usage.ReadRecords(usage.Path(a.StateHome()))
 		if err != nil {
 			return err
@@ -113,7 +117,7 @@ func (a *App) sdlcUsageCmd() *cobra.Command {
 
 func tokenCount(v *int64) string {
 	if v == nil {
-		return "unknown"
+		return "unavailable"
 	}
 	return app.FormatInt(*v)
 }

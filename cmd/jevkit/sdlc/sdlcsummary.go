@@ -242,7 +242,9 @@ func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Re
 			groups[key] = &usagecmd.RuntimeTotals{}
 		}
 		g := groups[key]
-		g.Invocations++
+		if rec.Status == "" || rec.Status == "ok" || strings.HasPrefix(rec.Status, "http-2") {
+			g.Invocations++
+		}
 		if rec.UsageSource == usage.SourceMeasured {
 			g.InputTokens += int64(rec.InputTokens)
 			g.OutputTokens += int64(rec.OutputTokens)
@@ -281,10 +283,16 @@ func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Re
 			model = "(unknown)"
 		}
 		cost := "—"
-		if key.runtime == "jev" && jev.Cost != nil && g.UnknownInput == 0 {
+		if key.runtime == "jev" && jev.Cost != nil {
 			cost = fmt.Sprintf("~$%.6f", float64(g.InputTokens)*jev.Cost.InputUSDPerMTok/1e6+float64(g.OutputTokens)*jev.Cost.OutputUSDPerMTok/1e6)
+			if g.UnknownInput > 0 {
+				cost += fmt.Sprintf(" (+%d unavailable)", g.UnknownInput)
+			}
 		} else if g.SuppliedCostUSD != nil {
 			cost = fmt.Sprintf("$%.6f", *g.SuppliedCostUSD)
+			if g.UnknownCost > 0 {
+				cost += fmt.Sprintf(" (+%d unavailable)", g.UnknownCost)
+			}
 		}
 		toolCount := "—"
 		if key.runtime != "jev" {
@@ -293,7 +301,7 @@ func (a *App) sdlcUsageTable(out io.Writer, runs []ledger.Run, linked []usage.Re
 		rows = append(rows, []string{summaryText(a, key.runtime), summaryText(a, model), fmt.Sprint(g.Invocations), toolCount, app.UsageCount(g.InputTokens, g.UnknownInput), app.UsageCount(g.OutputTokens, g.UnknownOutput), cost})
 	}
 	app.WriteTable(out, []string{a.Styled(out, app.ANSICyan, "RUNTIME"), a.Styled(out, app.ANSICyan, "MODEL"), a.Styled(out, app.ANSICyan, "INVOCATIONS"), a.Styled(out, app.ANSICyan, "TOOL CALLS"), a.Styled(out, app.ANSICyan, "INPUT"), a.Styled(out, app.ANSICyan, "OUTPUT"), a.Styled(out, app.ANSICyan, "COST")}, rows)
-	_, _ = fmt.Fprintf(out, "    Total: %d invocations, %s tool calls (%d unknown)\n", totalInvocations, app.FormatInt(totalToolCalls), unknownToolCalls)
+	_, _ = fmt.Fprintf(out, "    Total: %d invocations, %s tool calls\n", totalInvocations, app.UsageCount(totalToolCalls, unknownToolCalls))
 	_, _ = fmt.Fprintln(out, "    Cost: — unavailable; ~ estimated Jev cost. Runtime cost includes only invocations that reported it.")
 }
 
