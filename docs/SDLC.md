@@ -182,6 +182,12 @@ calls made before recording was enabled cannot be reconstructed. See the short
 
 The personal `sdlc/roster.yaml` authorizes agents. `sdlc agents discover` only lists suggestions and installed CLI apps; it never enrolls them. Native subagents and `host-self` also require enrollment and a host driver. The default `lean` policy needs a planner, implementer, and assessor; one enrolled CLI binding may fill all three roles.
 
+The first personal roster includes disabled examples with tool settings filled
+in: `shell`, `web`, and `delegate` for Claude/Codex, and `tools: auto` for
+OpenCode. The mapping values start at `true`, which preserves runtime settings
+and approval requirements; change a value to `false` to disable that family.
+Cursor, Antigravity, and native agent entries use `tools: auto`.
+
 ### Writing project agent suggestions
 
 You only need this optional file to share suggestions with other people on

@@ -85,6 +85,18 @@ func TestSdlcAgentsEmpty(t *testing.T) {
 		if !ag.Disabled || ag.Ready() {
 			t.Fatalf("starter agent must be inactive: %+v", ag)
 		}
+		if ag.Tools == nil {
+			t.Fatalf("starter agent must expose tool settings: %s", ag.ID)
+		}
+		if enrollment.ToolPolicySupported(ag.Runtime) {
+			for name, enabled := range map[string]*bool{"shell": ag.Tools.Shell, "web": ag.Tools.Web, "delegate": ag.Tools.Delegate} {
+				if enabled == nil || !*enabled {
+					t.Fatalf("starter agent %s must inherit %s settings by default", ag.ID, name)
+				}
+			}
+		} else if !ag.Tools.Auto {
+			t.Fatalf("starter runtime %s must use tools: auto", ag.Runtime)
+		}
 	}
 	var rosterURL string
 	for _, line := range strings.Split(out, "\n") {

@@ -78,10 +78,14 @@ const sdlcRosterStarter = `version: 1
 # Pick a supported model for each CLI, then set disabled: false to enroll it.
 # IDs are your labels. roles decide which step an agent can do; rubric tells
 # Jev when to choose it among eligible agents. Add more agents for any role.
-# tools: auto inherits runtime or native agent settings (also the default).
+# Codex/Claude runtime-model entries expose the tool families below:
+#   shell: commands; web: search/fetch; delegate: subagents.
+# false disables a family; true keeps runtime settings and approval requirements.
+# Replace the entire tools mapping with tools: auto to inherit runtime settings.
+# OpenCode, Cursor, and Antigravity support tools: auto only.
+# Entries selecting agent: NAME use native tool configuration; use tools: auto.
 # runtimeArgs: '--dangerously-skip-permissions' adds CLI options without a shell.
-# Codex/Claude runtime-model entries can set tools: {web: false, delegate: false}.
-# Entries selecting agent: NAME use native tool configuration; omit tools there.
+# See runtime-specific examples with: jevkit sdlc agents c
 # Check setup with: jevkit sdlc doctor --policy lean
 agents:
   - id: claude-architect
@@ -91,6 +95,10 @@ agents:
     via: runtime
     runtime: claude
     model: YOUR_MODEL
+    tools:
+      shell: true
+      web: true
+      delegate: true
   - id: codex-builder
     disabled: true
     roles: [implementer]
@@ -98,6 +106,10 @@ agents:
     via: runtime
     runtime: codex
     model: YOUR_MODEL
+    tools:
+      shell: true
+      web: true
+      delegate: true
   - id: opencode-reviewer
     disabled: true
     roles: [assessor]
@@ -105,6 +117,7 @@ agents:
     via: runtime
     runtime: opencode
     model: YOUR_MODEL
+    tools: auto
   - id: codex-api-generalist
     disabled: true
     roles: [planner, implementer, assessor]
@@ -116,6 +129,10 @@ agents:
     via: runtime
     runtime: codex
     model: YOUR_MODEL
+    tools:
+      shell: true
+      web: true
+      delegate: true
 `
 
 // ensureSDLCRoster gives the path shown by `sdlc agents` a real file to open.
