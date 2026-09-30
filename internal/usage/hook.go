@@ -86,7 +86,7 @@ func ReadHooks(path string) ([]HookInvocation, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []HookInvocation
 	r := bufio.NewReader(f)
 	for {

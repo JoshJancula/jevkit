@@ -55,6 +55,20 @@ func (b *Breaker) Path() string { return filepath.Join(b.dir, fileName) }
 
 // Load returns the current state; a missing or corrupt file reads as closed.
 func (b *Breaker) Load() State {
+	// On Windows an open reader prevents the atomic rename used by update.
+	// Avoid creating state on a fresh read, then serialize reads with writes.
+	if _, err := os.Stat(b.Path()); err != nil {
+		return State{}
+	}
+	l, err := filelock.Acquire(filepath.Join(b.dir, lockName))
+	if err != nil {
+		return State{}
+	}
+	defer l.Release()
+	return b.load()
+}
+
+func (b *Breaker) load() State {
 	data, err := os.ReadFile(b.Path())
 	if err != nil {
 		return State{}
@@ -120,7 +134,7 @@ func (b *Breaker) update(fn func(*State)) {
 	}
 	defer l.Release()
 
-	s := b.Load()
+	s := b.load()
 	before := s
 	fn(&s)
 	if s == before {

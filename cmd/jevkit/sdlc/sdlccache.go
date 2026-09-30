@@ -64,7 +64,7 @@ func (a *App) askPromptCache(ctx context.Context, run ledger.Run, req worker.Req
 	if cfg.Transport != jev.TransportFixture {
 		key, _, err = a.Store().Resolve(ctx)
 		if err != nil || key == "" {
-			return 0, fmt.Errorf("Jev key unavailable")
+			return 0, fmt.Errorf("jev key unavailable")
 		}
 	}
 	bytes, fingerprint := worker.StablePrefixMetadata(req.Assignment.Role)
@@ -102,11 +102,11 @@ func (a *App) askPromptCache(ctx context.Context, run ledger.Run, req worker.Req
 	client := a.JevClient(cfg, func() (string, error) { return key, nil })
 	resp, err := client.Ask(askCtx, query)
 	if err != nil || resp == nil {
-		return 0, fmt.Errorf("Jev cache decision unavailable")
+		return 0, fmt.Errorf("jev cache decision unavailable")
 	}
 	answer, ok := resp.Answers["cache"].(jev.NoulAnswer)
 	if !ok {
-		return 0, fmt.Errorf("Jev cache decision missing")
+		return 0, fmt.Errorf("jev cache decision missing")
 	}
 	return answer.Noul, nil
 }
