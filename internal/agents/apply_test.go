@@ -168,7 +168,7 @@ func TestInstallAgentIdempotentDryRunBackupUninstall(t *testing.T) {
 	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	settingsPath := filepath.Join(settingsDir, "settings.json")
+	settingsPath := filepath.Join(settingsDir, "settings.local.json")
 	if err := os.WriteFile(settingsPath, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestFakeAdapterInstallUninstallByteExact(t *testing.T) {
 
 func TestInstallComponentsAreSelectiveAndReversible(t *testing.T) {
 	dir := t.TempDir()
-	settings := filepath.Join(dir, ".claude", "settings.json")
+	settings := filepath.Join(dir, ".claude", "settings.local.json")
 	mcp := filepath.Join(dir, ".mcp.json")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
 		t.Fatal(err)

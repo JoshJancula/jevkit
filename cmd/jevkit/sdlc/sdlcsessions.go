@@ -3,12 +3,11 @@ package sdlc
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
-	"github.com/JoshJancula/jevkit/internal/registry"
 	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
-	"github.com/JoshJancula/jevkit/internal/sdlc/route"
 	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
 
@@ -60,43 +59,36 @@ func (a *App) chooseSession(ctx context.Context, store *ledger.Store, run ledger
 	key := sessionKey(assignment)
 	prior := run.Sessions[key]
 	basis := "configured policy"
+	if prior == "" && strategy != "fresh" {
+		for _, priorUsage := range run.Usage {
+			if priorUsage.Agent == assignment.AgentID && priorUsage.Role == assignment.Role && priorUsage.SessionID != "" {
+				return "", "", fmt.Errorf("previous agent session is unavailable; approve recovery with jevkit sdlc resume %s --session-strategy fresh", run.RunID)
+			}
+		}
+		for oldKey := range run.Sessions {
+			if strings.HasPrefix(oldKey, assignment.Binding+"/"+assignment.Role) {
+				return "", "", fmt.Errorf("saved session is incompatible; approve recovery with jevkit sdlc resume %s --session-strategy fresh", run.RunID)
+			}
+		}
+	}
 	if prior == "" {
 		strategy, basis = "fresh", "no prior session for this binding and role"
 	}
 	if strategy == "auto" && prior != "" {
-		strategy, basis = "resume", "policy fallback"
-		router, err := a.sdlcRouter()
-		if err == nil {
-			state := fmt.Sprintf("role: %s; stage: %s; plan revision: %s; diff revision: %s; workdir: %s; prior session available: true", assignment.Role, run.Adaptive.Stage, run.Adaptive.PlanRevision, run.Adaptive.DiffRevision, run.WorkDir)
-			res, err := router.Decide(ctx, "sdlc.session-strategy", state, route.CriteriaFromRubrics(map[string]string{
-				"fresh":   "Discard stale context and start a new session",
-				"resume":  "Continue the prior session for this exact binding, role, project, and revision",
-				"compact": "Compact the prior session before continuing",
-			}))
-			if err == nil && res.Available && res.Decision.Decision == registry.Act && res.Decision.Chosen != nil {
-				strategy, basis = *res.Decision.Chosen, "Jev choice"
-			}
-		}
+		strategy, basis = "resume", "compatible saved session preferred"
 	}
 	if strategy == "compact" && !sessionCompactAvailable(assignment.Runtime) {
 		strategy, basis = "resume", "native compaction unavailable in this adapter; resume explicit session"
 	}
 	if prior != "" && (strategy == "resume" || strategy == "compact") {
-		if stale, why := sessionStale(run, key); stale {
-			if sessionCompactAvailable(assignment.Runtime) && strategy != "fresh" {
-				strategy, basis = "compact", why
-			} else {
-				strategy, basis = "fresh", why
-			}
-			// Workdir/project change always starts fresh: prior transcripts are for another tree.
-			if why == "project/workdir changed since prior session" {
-				strategy, basis = "fresh", why
-			}
+		if stale, why := sessionStale(run, key); stale && (strategy != "compact" || why == "project/workdir changed since prior session") {
+			return "", "", fmt.Errorf("%s; approve artifact context recovery with jevkit sdlc resume %s --session-strategy fresh", why, run.RunID)
 		}
 	}
+
 	for _, pending := range run.Adaptive.Pending() {
 		if pending.InvocationID != assignment.InvocationID && pending.Binding == assignment.Binding && pending.Role == assignment.Role {
-			strategy, basis = "fresh", "parallel invocation owns the prior session"
+			return "", "", fmt.Errorf("parallel invocation owns the prior session; wait for it to finish")
 		}
 	}
 	id := ""
@@ -109,6 +101,25 @@ func (a *App) chooseSession(ctx context.Context, store *ledger.Store, run ledger
 
 func sessionCompactAvailable(runtime string) bool {
 	return runtime == "codex" || runtime == "claude"
+}
+
+func (a *App) pauseSessionRecovery(runID string, assignment adaptive.Assignment, cause error) error {
+	store := ledger.Open(a.SDLCRunsDir(), runID)
+	if err := store.WithRunLock(func() error {
+		r, err := store.ReadRun()
+		if err != nil {
+			return err
+		}
+		if err := a.completeBudget(&r, assignment.InvocationID, false, 0); err != nil {
+			return err
+		}
+		r.Adaptive.Pause("session-recovery-required")
+		r.Adaptive.PendingReason = cause.Error()
+		return store.WriteRun(r)
+	}); err != nil {
+		return err
+	}
+	return fmt.Errorf("run %s paused: %v; approve rebuilding context from saved artifacts with jevkit sdlc resume %s --session-strategy fresh", runID, cause, runID)
 }
 
 // sessionStale detects project/workdir or plan/diff revision drift against the
@@ -180,6 +191,20 @@ func (a *App) saveInvocationUsage(store *ledger.Store, assignment adaptive.Assig
 		}
 		if !found {
 			r.Usage = append(r.Usage, u)
+		}
+		if reply.CostReported || reply.CostUSD > 0 {
+			_, err := a.updateBudget(r, mustPolicy(a), func(b *ledger.Budget) error {
+				prior := b.Reservations[assignment.InvocationID]
+				if reply.CostUSD > prior.CostUSD {
+					b.Usage.CostUSD += reply.CostUSD - prior.CostUSD
+					prior.CostUSD = reply.CostUSD
+					b.Reservations[assignment.InvocationID] = prior
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
 		}
 		return store.WriteRun(r)
 	})

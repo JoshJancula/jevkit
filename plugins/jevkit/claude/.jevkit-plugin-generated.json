@@ -6,6 +6,7 @@
     ".claude-plugin/marketplace.json",
     "hooks/hooks.json",
     ".mcp.json",
+    "skills/jev-decisions/SKILL.md",
     "host-manifest.json"
   ],
   "pluginVersion": "dev",

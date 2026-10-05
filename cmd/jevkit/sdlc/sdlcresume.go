@@ -3,9 +3,12 @@ package sdlc
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +21,8 @@ import (
 func (a *App) sdlcResumeCmd() *cobra.Command {
 	var step, silent, retryFailed, approvePlan, authorizeChecks bool
 	var authorizeChecksDigest, sessionStrategy, guidance string
+	var add ledger.Allowances
+	var addTime, invocationTimeout time.Duration
 	c := &cobra.Command{
 		Use:   "resume <run-id>",
 		Short: "approve a plan or continue an active run by ID",
@@ -34,16 +39,53 @@ integration can also leave an active run. A pending specialist decision from
 an older run or required specialist policy can be retried after changing the
 policy or enrolling the missing expert. An older pending delegation decision
 can also be retried.
-Runs paused by hard run limits cannot continue. A handoff-budget pause can be
-retried with --retry-failed.`,
-		Example: "  jevkit sdlc resume RUN_ID --approve-plan\n  jevkit sdlc resume RUN_ID --authorize-checks\n  jevkit sdlc resume RUN_ID --guidance \"the vet failure is pre-existing; only fix the new tests\"\n  jevkit sdlc resume RUN_ID --step",
+Budget pauses are recoverable on the same run tree. Explicit --add-* flags grant
+additional allowance without resetting usage, artifacts or approvals. Interactive
+resume offers editable amounts and a final confirmation. Plain noninteractive
+resume prints the matching extension command; --auto never grants budget.
+Time budgets count active work, excluding operator waits and offline periods.
+Invocation timeouts are separate; retry with --retry-failed and optionally
+--invocation-timeout 45m. --session-strategy fresh explicitly approves rebuilding
+context from saved artifacts when a prior session cannot be reused.`,
+		Example: "  jevkit sdlc resume RUN_ID --add-assignments 5 --add-revisions 1 --add-time 90m\n  jevkit sdlc resume RUN_ID --approve-plan\n  jevkit sdlc resume RUN_ID --authorize-checks\n  jevkit sdlc resume RUN_ID --guidance \"the vet failure is pre-existing; only fix the new tests\"\n  jevkit sdlc resume RUN_ID --step",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			for name, value := range map[string]float64{"add-assignments": float64(add.Assignments), "add-revisions": float64(add.Revisions), "add-steps": float64(add.Steps), "add-children": float64(add.Children), "add-cost-usd": add.CostUSD, "add-time": addTime.Seconds(), "invocation-timeout": invocationTimeout.Seconds()} {
+				if cmd.Flags().Changed(name) && (value <= 0 || math.IsNaN(value) || math.IsInf(value, 0)) {
+					return app.Usagef("--%s must be positive and finite", name)
+				}
+			}
+			add.Seconds = addTime.Seconds()
+
 			if approvePlan && retryFailed {
 				return app.Usagef("--approve-plan and --retry-failed cannot be combined")
 			}
 			if authorizeChecks && retryFailed {
 				return app.Usagef("--authorize-checks and --retry-failed cannot be combined")
+			}
+			if sessionStrategy != "" {
+				if err := validateSessionStrategy(sessionStrategy); err != nil {
+					return err
+				}
+			}
+			if add != (ledger.Allowances{}) || invocationTimeout > 0 {
+				if err := a.extendBudget(args[0], add, invocationTimeout, "operator resume flags: "+extensionFlags(add)); err != nil {
+					return err
+				}
+			} else if a.sdlcInteractive() && !silent {
+				run, err := ledger.Open(a.SDLCRunsDir(), args[0]).ReadRun()
+				if err != nil {
+					return err
+				}
+				if run.Adaptive != nil && (adaptive.BudgetPause(run.Adaptive.Outcome) || a.budgetRecoveryRun(run).RunID != run.RunID) {
+					accepted, err := a.askBudgetExtension(cmd.Context(), args[0])
+					if err != nil {
+						return err
+					}
+					if !accepted {
+						return nil
+					}
+				}
 			}
 			if strings.TrimSpace(guidance) != "" {
 				if err := a.sdlcSetOperatorGuidance(args[0], guidance); err != nil {
@@ -112,6 +154,13 @@ retried with --retry-failed.`,
 			return err
 		},
 	}
+	c.Flags().IntVar(&add.Assignments, "add-assignments", 0, "explicitly add assignments to this run tree")
+	c.Flags().IntVar(&add.Revisions, "add-revisions", 0, "explicitly add revisions to this run tree")
+	c.Flags().DurationVar(&addTime, "add-time", 0, "explicitly add active work time (for example 90m)")
+	c.Flags().Float64Var(&add.CostUSD, "add-cost-usd", 0, "explicitly add estimated USD allowance; admitted work may exceed it")
+	c.Flags().IntVar(&add.Steps, "add-steps", 0, "add tree transitions and the selected authored workflow's allowance")
+	c.Flags().IntVar(&add.Children, "add-children", 0, "explicitly add child runs; nesting depth stays unchanged")
+	c.Flags().DurationVar(&invocationTimeout, "invocation-timeout", 0, "set timeout for subsequent invocations in this tree (for example 45m)")
 	c.Flags().BoolVar(&step, "step", false, "execute one question or agent action, then stop")
 	c.Flags().BoolVar(&silent, "silent", false, "show only final status")
 	c.Flags().BoolVar(&retryFailed, "retry-failed", false, "retry failed agent bindings or a handoff-budget pause")
@@ -169,6 +218,54 @@ func (a *App) sdlcResume(ctx context.Context, runID string, step, retryFailed, a
 		old := a.WorkDir
 		a.WorkDir = run.WorkDir
 		defer func() { a.WorkDir = old }()
+	}
+	wasBudget := adaptive.BudgetPause(run.Adaptive.Outcome)
+	if err := a.continueBudgetTree(runID, retryFailed); err != nil {
+		return err
+	}
+	if wasBudget {
+		retryFailed = false
+	}
+	run, err = ledger.Open(a.SDLCRunsDir(), runID).ReadRun()
+	if err != nil {
+		return err
+	}
+	if run.Adaptive.Stage == adaptive.Paused && (run.Adaptive.Outcome == "invocation-timeout" || run.Adaptive.Outcome == "session-recovery-required") {
+		if run.Adaptive.Outcome == "session-recovery-required" && run.SessionStrategy != "fresh" && run.SessionStrategy != "compact" {
+			return app.Failf("approve artifact context recovery: jevkit sdlc resume %s --session-strategy fresh", runID)
+		}
+		if run.Adaptive.Outcome == "invocation-timeout" && !retryFailed {
+			return app.Failf("invocation timed out; jevkit sdlc resume %s --retry-failed --invocation-timeout 45m", runID)
+		}
+		phase := run.Adaptive.RetryPhase
+		if phase == "" {
+			phase, err = recoverBudgetPhase(run, retryFailed)
+			if err != nil {
+				return err
+			}
+		}
+		if run.Adaptive.Outcome == "invocation-timeout" && run.Fanout != nil {
+			for id, sub := range run.Fanout.Subtasks {
+				if sub.Status == adaptive.SubtaskTimedOut {
+					data, _ := json.MarshalIndent(sub, "", "  ")
+					if err := ledger.Open(a.SDLCRunsDir(), runID).WriteArtifact(fmt.Sprintf("fanout/%s-attempt-%d.json", id, sub.Attempt), data); err != nil {
+						return err
+					}
+					sub.Status = adaptive.SubtaskPending
+					sub.Assignment = nil
+					sub.Result = nil
+					sub.Usage = nil
+					sub.PauseReason = ""
+					run.Fanout.Subtasks[id] = sub
+				}
+			}
+			run.Fanout.PauseReason = ""
+		}
+		run.Adaptive.Stage, run.Adaptive.Outcome, run.Adaptive.RetryPhase = phase, "", ""
+		if err := ledger.Open(a.SDLCRunsDir(), runID).WriteRun(run); err != nil {
+			return err
+		}
+		retryFailed = false
 	}
 	if err := a.recoverReview(ctx, runID); err != nil {
 		return err
@@ -261,7 +358,7 @@ func (a *App) sdlcResume(ctx context.Context, runID string, step, retryFailed, a
 				if err != nil {
 					return app.Failf("read automatic child: %v", err)
 				}
-				if child.Adaptive != nil && child.Adaptive.Stage == adaptive.Done {
+				if child.Adaptive != nil && (child.Adaptive.Stage == adaptive.Done || child.Adaptive.Stage != adaptive.Paused) {
 					run.Adaptive.Stage = adaptive.Implementing
 					run.Adaptive.Outcome = ""
 					if err := ledger.Open(a.SDLCRunsDir(), runID).WriteRun(run); err != nil {
@@ -325,7 +422,7 @@ func (a *App) sdlcResume(ctx context.Context, runID string, step, retryFailed, a
 			}
 		}
 	}
-	if run.Adaptive.Stage == adaptive.Done {
+	if run.Adaptive.Stage == adaptive.Done && (run.StageFlow == nil || run.StageFlow.PendingAnswer == "") {
 		a.Outf("run %s is already complete (%s)\n", runID, run.Adaptive.Outcome)
 		return nil
 	}
@@ -360,7 +457,7 @@ func (a *App) sdlcDashboardRetry(ctx context.Context, runID, strategy string) er
 // paused with this outcome.
 func pauseRetryable(outcome string) bool {
 	switch outcome {
-	case "review-workspace-drift", "review-recovery-invalid", "handoff-budget-exhausted", adaptive.OutcomeVerificationEnvironment:
+	case "invocation-timeout", "review-workspace-drift", "review-recovery-invalid", "handoff-budget-exhausted", adaptive.OutcomeVerificationEnvironment:
 		return true
 	}
 	return failedPauseRole(outcome) != ""

@@ -40,7 +40,7 @@ func TestToolPolicyPartitionsSavedSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	strategy, session, err = a.chooseSession(context.Background(), store, saved, assignment, "resume")
-	if err != nil || strategy != "fresh" || session != "" {
+	if err == nil || strategy != "" || session != "" {
 		t.Fatalf("reused session with different tool policy: %s %s %v", strategy, session, err)
 	}
 	if err := a.saveInvocationUsage(store, assignment, "m", worker.Reply{SessionID: "restricted-session"}); err != nil {
@@ -56,7 +56,7 @@ func TestToolPolicyPartitionsSavedSessions(t *testing.T) {
 	}
 	assignment.ToolPolicyFingerprint = (&enrollment.ToolPolicy{Shell: &off}).Fingerprint()
 	strategy, session, err = a.chooseSession(context.Background(), store, saved, assignment, "resume")
-	if err != nil || strategy != "fresh" || session != "" {
+	if err == nil || strategy != "" || session != "" {
 		t.Fatalf("changed policy reused a session: %s %s %v", strategy, session, err)
 	}
 }

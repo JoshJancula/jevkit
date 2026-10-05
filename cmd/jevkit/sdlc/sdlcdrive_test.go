@@ -388,7 +388,7 @@ agents:
 	}
 }
 
-func TestSDLCNextPausesExpiredRun(t *testing.T) {
+func TestSDLCNextExcludesOperatorWait(t *testing.T) {
 	a := newApp(t)
 	fakeSDLCReach(a)
 	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -407,19 +407,19 @@ agents:
 	runID := strings.Fields(out)[1]
 	a.Now = func() time.Time { return base.Add(2 * time.Second) }
 	code, _, errs = run(a, "", "sdlc", "next", runID)
-	if code == app.ExitOK || !strings.Contains(errs, "run-time-budget-exhausted") {
-		t.Fatalf("expired next: %d %q", code, errs)
+	if code != app.ExitOK {
+		t.Fatalf("idle time blocked next: %d %q", code, errs)
 	}
 	r, err := ledger.Open(a.SDLCRunsDir(), runID).ReadRun()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Adaptive.Stage != adaptive.Paused || r.Adaptive.Outcome != "run-time-budget-exhausted" {
+	if r.Adaptive.Stage != adaptive.Planning || len(r.Adaptive.Assignments) != 1 {
 		t.Fatalf("run: %+v", r.Adaptive)
 	}
 }
 
-func TestSDLCReportPausesExpiredRun(t *testing.T) {
+func TestSDLCReportCompletesAdmittedWorkAfterRunLimit(t *testing.T) {
 	a := newApp(t)
 	fakeSDLCReach(a)
 	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -446,14 +446,14 @@ agents:
 	}
 	a.Now = func() time.Time { return base.Add(2 * time.Second) }
 	code, _, errs = run(a, "", "sdlc", "report", runID, "--invocation", assignment.InvocationID, "--agent", assignment.AgentID, "--outcome", "answer")
-	if code == app.ExitOK || !strings.Contains(errs, "run-time-budget-exhausted") {
-		t.Fatalf("expired report: %d %q", code, errs)
+	if code != app.ExitOK {
+		t.Fatalf("admitted report rejected: %d %q", code, errs)
 	}
 	r, err := ledger.Open(a.SDLCRunsDir(), runID).ReadRun()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Adaptive.Stage != adaptive.Paused {
+	if r.Adaptive.Stage != adaptive.Done {
 		t.Fatalf("run: %+v", r.Adaptive)
 	}
 }

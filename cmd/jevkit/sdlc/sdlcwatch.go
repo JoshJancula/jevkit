@@ -82,6 +82,7 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 	paused := false
 	frozen := false
 	canRetry := false
+	canExtend := false
 	retryAction := ""
 	composing := false
 	var draft []byte
@@ -104,16 +105,8 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 		} else {
 			fmt.Fprintf(&b, "SDLC run %s  (q detach, n next agent, a all activity, d details, l log tail)\n", root)
 		}
-		if len(runs) > 0 && runs[0].TreeUsage != nil && runs[0].Adaptive != nil {
-			u := runs[0].TreeUsage
-			st := runs[0].Adaptive
-			fmt.Fprintf(&b, "Root budget: %d assignments left, %d revisions left, %d child runs left", max(0, st.MaxAssignments-u.Assignments), max(0, st.MaxRevisions-u.Revisions), max(0, sdlcMaxChildRuns-u.ChildRuns))
-			if policy, _, err := a.sdlcEnrollment(); err == nil {
-				if remaining, err := a.treeRemaining(runs[0], policy); err == nil {
-					fmt.Fprintf(&b, ", %s left", remaining.Round(time.Second))
-				}
-			}
-			fmt.Fprintln(&b)
+		if len(runs) > 0 && runs[0].Adaptive != nil {
+			fmt.Fprintln(&b, a.budgetDescription(runs[0]))
 		}
 		active := false
 		usage := usagecmd.AggregateRuntime(runs).Totals
@@ -239,7 +232,7 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 			view = a.sdlcTTYView(runs, decisions, watchTTYState{
 				selected: selected, scroll: logScroll, detailScroll: detailScroll, details: details, logs: showLogs, all: allActivity, toolView: toolView, help: help,
 				focusInvocation: invocation,
-				paused:          paused, canRetry: canRetry, driving: driveDone != nil, frozen: frozen,
+				paused:          paused, canRetry: canRetry, canExtend: canExtend, driving: driveDone != nil, frozen: frozen,
 				retryAction: retryAction, composing: composing, draft: string(draft),
 				cause:       a.sdlcPauseCause(root, driveErr),
 				inputTokens: usage.InputTokens, outputTokens: usage.OutputTokens,
@@ -274,6 +267,7 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 				return readErr
 			}
 			paused = fresh.Adaptive != nil && fresh.Adaptive.Stage == "paused"
+			canExtend = paused && (adaptive.BudgetPause(fresh.Adaptive.Outcome) || a.budgetRecoveryRun(fresh).RunID != fresh.RunID) && retry != nil
 			canRetry = paused && (pauseRetryable(fresh.Adaptive.Outcome) || fresh.Adaptive.PendingDecision != "" || fresh.Adaptive.Outcome == "automatic-child-paused")
 			retryAction = ""
 			if canRetry {
@@ -337,6 +331,21 @@ func (a *App) sdlcWatchLoop(ctx context.Context, root string, drive func() error
 					return nil
 				}
 				return context.Canceled
+			}
+			if (key == 'e' || key == 'E') && canExtend && driveDone == nil {
+				_, _ = fmt.Fprint(a.Stdout, "\x1b[H\x1b[J")
+				accepted, err := a.askBudgetExtension(ctx, root)
+				last = ""
+				if err != nil {
+					driveErr = err
+					continue
+				}
+				if accepted {
+					paused = false
+					canExtend = false
+					startDrive(func() error { return retry("auto") })
+				}
+				continue
 			}
 			if strategy := watchRetryStrategy(key); strategy != "" && paused && canRetry && retry != nil {
 				paused = false

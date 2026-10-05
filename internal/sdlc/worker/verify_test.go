@@ -175,7 +175,7 @@ func TestApplyVerificationResultReturnsToImplementingOnFailure(t *testing.T) {
 	rec := adaptive.VerificationRecord{
 		Status: adaptive.VerificationStatusFailed, AllPassed: false,
 		Receipts: []adaptive.CheckReceipt{{CheckID: "c", Passed: false, WorktreeIdentity: "wt"}},
-		Summary: "boom", FailureSummaryPath: adaptive.ArtifactVerificationSummary,
+		Summary:  "boom", FailureSummaryPath: adaptive.ArtifactVerificationSummary,
 	}
 	if err := adaptive.ApplyVerificationResult(&st, rec, time.Now()); err != nil {
 		t.Fatal(err)

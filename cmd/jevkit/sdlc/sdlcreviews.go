@@ -44,7 +44,16 @@ func (a *App) sdlcDriveParallelReviews(ctx context.Context, runID string) error 
 		}
 		if newSlots <= 0 {
 			if len(run.Adaptive.Assignments) == 0 {
-				return app.Failf("run %s cannot admit a review and has no active reviewers; inspect concurrency policy and remaining run budgets", runID)
+				return store.WithRunLock(func() error {
+					fresh, err := store.ReadRun()
+					if err != nil {
+						return err
+					}
+					if err := a.budgetGate(&fresh, policy, "assignment"); err != nil {
+						return err
+					}
+					return fmt.Errorf("review admission blocked by concurrency or eligible bindings")
+				})
 			}
 			break
 		}
@@ -146,40 +155,19 @@ func (a *App) reviewAdmitCap(run ledger.Run, policy enrollment.Policy) (int, err
 	if err != nil {
 		return 0, app.Failf("%v", err)
 	}
-	if remaining <= 0 {
-		return 0, app.Failf("review admission blocked: run-time budget exhausted")
-	}
-	root, err := a.rootRun(run)
+
+	b, err := a.budgetView(run, policy)
 	if err != nil {
-		return 0, app.Failf("%v", err)
-	}
-	rootUsage := root.TreeUsage
-	if rootUsage == nil {
-		rootUsage = &ledger.TreeUsage{}
+		return 0, err
 	}
 	candidates, err := a.adaptiveCandidates(*run.Adaptive, a.cliReach())
 	if err != nil {
-		return 0, app.Failf("%v", err)
+		return 0, err
 	}
-	costOK := policy.MaxEstimatedCostUSD <= 0 || rootUsage.EstimatedCostUSD < policy.MaxEstimatedCostUSD
-	remainAssign := policy.MaxAssignments - rootUsage.Assignments
-	if remainAssign < 0 {
-		remainAssign = 0
-	}
-	if run.Adaptive.MaxAssignments > 0 {
-		left := run.Adaptive.MaxAssignments - run.Adaptive.AssignmentCount
-		if left < remainAssign {
-			remainAssign = left
-		}
-	}
-	if !costOK {
-		return 0, app.Failf("review admission blocked: run-tree cost budget exhausted")
-	}
-	if remainAssign <= 0 {
-		if len(run.Adaptive.Assignments) > 0 {
-			return 0, nil // Already-charged reservations may still execute.
-		}
-		return 0, app.Failf("review admission blocked: assignment budget exhausted")
+	costOK := b.Limits.CostUSD <= 0 || b.Usage.CostUSD < b.Limits.CostUSD
+	remainAssign := max(0, b.Limits.Assignments-b.Usage.Assignments)
+	if !costOK || remainAssign <= 0 || remaining <= 0 {
+		return 0, nil
 	}
 	needed := run.Adaptive.ReviewSlotsNeeded()
 	effective := run.Adaptive.MaxConcurrent
@@ -230,6 +218,9 @@ func (a *App) sdlcNoteCancelledReview(runID string, assignment adaptive.Assignme
 				return err
 			}
 		}
+		if err := a.completeBudget(&run, assignment.InvocationID, false, 0); err != nil {
+			return err
+		}
 		_ = store.AppendEvent(ledger.Event{
 			At: a.Clock().UTC().Format(time.RFC3339), RunID: runID, Stage: run.Adaptive.Stage,
 			Outcome: "cancelled", Agent: assignment.AgentID, Runtime: assignment.Runtime,
@@ -245,12 +236,8 @@ func (a *App) sdlcNoteCancelledReview(runID string, assignment adaptive.Assignme
 }
 
 func (a *App) sdlcIgnoreStaleReview(store *ledger.Store, runID string, run *ledger.Run, result adaptive.Result, reason string) error {
-	if result.CostUSD > 0 {
-		policy, _, err := a.sdlcEnrollment()
-		if err == nil {
-			_ = a.chargeTreeCost(run, policy, result.CostUSD)
-			_ = store.WriteRun(*run)
-		}
+	if err := a.completeBudget(run, result.InvocationID, false, result.CostUSD); err != nil {
+		return err
 	}
 	_ = a.recordDecision(store, ledger.Decision{
 		RunID: runID, Kind: "invocation-outcome", Stage: run.Adaptive.Stage,

@@ -88,19 +88,19 @@ func TestSessionInvalidatesOnWorkdirAndRevisionChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	role, session, err := a.chooseSession(context.Background(), store, r, adaptive.Assignment{InvocationID: "inv", Binding: "binding", Role: "planner", Runtime: "claude"}, "auto")
-	if err != nil || role != "fresh" || session != "" {
+	if err == nil || role != "" || session != "" {
 		t.Fatalf("workdir change: %q %q %v", role, session, err)
 	}
 
 	r.WorkDir = "/proj-a"
 	r.SessionContexts["binding/planner"] = ledger.SessionContext{WorkDir: "/proj-a", PlanRevision: "plan-1", DiffRevision: "diff-1"}
 	role, session, err = a.chooseSession(context.Background(), store, r, adaptive.Assignment{InvocationID: "inv2", Binding: "binding", Role: "planner", Runtime: "claude"}, "auto")
-	if err != nil || role != "compact" || session != "prior-session" {
+	if err == nil || role != "" || session != "" {
 		t.Fatalf("revision change with compact runtime: %q %q %v", role, session, err)
 	}
 
 	role, session, err = a.chooseSession(context.Background(), store, r, adaptive.Assignment{InvocationID: "inv3", Binding: "binding", Role: "planner", Runtime: "opencode"}, "auto")
-	if err != nil || role != "fresh" || session != "" {
+	if err == nil || role != "" || session != "" {
 		t.Fatalf("revision change without compact: %q %q %v", role, session, err)
 	}
 }

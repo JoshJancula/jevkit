@@ -24,7 +24,7 @@ func TestInstallUninstallClaudeRoundTrip(t *testing.T) {
 	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	settingsPath := filepath.Join(settingsDir, "settings.json")
+	settingsPath := filepath.Join(settingsDir, "settings.local.json")
 	original := []byte("{\n  \"permissions\": {\n    \"allow\": [\"Bash\"]\n  }\n}\n")
 	if err := os.WriteFile(settingsPath, original, 0o644); err != nil {
 		t.Fatal(err)

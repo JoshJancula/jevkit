@@ -33,6 +33,13 @@ jobs:
       - name: Validate GoReleaser config
         run: goreleaser check
 
+      - name: Validate release notes extraction and version manifest
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_release_notes.py'
+          python3 -c 'import json; from pathlib import Path; config = json.loads(Path(".github/release-config.json").read_text()); manifest = json.loads(Path(".github/release-manifest.json").read_text()); assert set(config["packages"]) == set(manifest) == {"."}'
+          version=$(python3 -c 'import json; print(json.load(open(".github/release-manifest.json"))["."])')
+          python3 scripts/release-notes.py "v$version"
+
   lint-test:
     name: Devcontainer lint & test
     runs-on: ubuntu-latest

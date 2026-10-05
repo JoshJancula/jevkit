@@ -23,7 +23,7 @@ import (
 type watchTTYState struct {
 	selected, scroll, detailScroll, unknownInput, unknownOutput int
 	details, logs, all, toolView, help                          bool
-	paused, canRetry, driving, frozen                           bool
+	paused, canRetry, canExtend, driving, frozen                bool
 	focusInvocation                                             string
 	cause                                                       string
 	// retryAction says what r does for this pause ("retry the implementer
@@ -96,19 +96,12 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 		lines = append(lines, ttyWrapLabel("Task  ", a.sdlcRedactedDisplay(root.Task), width, 2)...)
 	}
 	if !focused && root.Adaptive != nil {
-		used := root.Adaptive.AssignmentCount
-		revisions := root.Adaptive.RevisionCount
-		if root.TreeUsage != nil {
-			used = root.TreeUsage.Assignments
-			revisions = root.TreeUsage.Revisions
-		}
-		budget := fmt.Sprintf("Budget  %d/%d assignments · %d/%d revisions", used, root.Adaptive.MaxAssignments, revisions, root.Adaptive.MaxRevisions)
-		if policy, _, err := a.sdlcEnrollment(); err == nil {
-			if remaining, err := a.treeRemaining(root, policy); err == nil {
-				budget += " · " + remaining.Round(time.Second).String() + " left"
-			}
+		budget := "Budget unavailable"
+		if b, err := a.budgetView(root, mustPolicy(a)); err == nil {
+			budget = fmt.Sprintf("Budget  %d/%d assignments · %d/%d revisions · %s active left", b.Usage.Assignments, b.Limits.Assignments, b.Usage.Revisions, b.Limits.Revisions, time.Duration((b.Limits.Seconds-b.Usage.Seconds)*float64(time.Second)).Round(time.Second))
 		}
 		lines = append(lines, budget)
+
 	}
 	if !focused && len(runs) > 1 {
 		var child []string
@@ -161,6 +154,15 @@ func (a *App) sdlcTTYView(runs []ledger.Run, decisions []ledger.Decision, state 
 			case !state.canRetry:
 				bottom = append(bottom, "NEXT  this pause needs a new run or a policy change; q leaves it paused")
 			}
+		}
+	}
+	if root.Adaptive != nil && (adaptive.BudgetPause(root.Adaptive.Outcome) || a.budgetRecoveryRun(root).RunID != root.RunID) {
+		recovery := a.budgetRecoveryRun(root)
+		if b, err := a.budgetView(recovery, mustPolicy(a)); err == nil {
+			bottom = append(bottom, "NEXT  "+a.budgetCommand(recovery, b))
+		}
+		if state.canExtend {
+			bottom = append(bottom, "e: Extend and continue · q: leave paused")
 		}
 	}
 	if state.frozen {
@@ -321,6 +323,8 @@ func watchControls(state watchTTYState, width int) string {
 		return "Enter send guidance and retry  Esc cancel  Ctrl-U clear"
 	case state.frozen:
 		return "p resume display  Ctrl-C stop"
+	case state.paused && state.canExtend:
+		return "e Extend and continue  q leave paused  ? help"
 	case state.paused && state.canRetry && narrow:
 		return "r retry  g guide  q leave  ? help"
 	case state.paused && state.canRetry:

@@ -60,6 +60,10 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 		if !ok || stage.Spawn == nil {
 			return app.Failf("run %s has an invalid workflow stage", runID)
 		}
+		if parent.StageFlow.ChildRunID != "" {
+			childID = parent.StageFlow.ChildRunID
+			return nil
+		}
 		for _, transition := range parent.StageFlow.Transitions {
 			if transition.ChildRunID == "" {
 				continue
@@ -86,24 +90,8 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 		if parent.Depth >= sdlcMaxChildDepth {
 			return a.pauseSpawnLocked(parent, store, "workflow-depth-exhausted")
 		}
-		rootID := parent.RunID
-		for ancestor := parent; ancestor.ParentRunID != ""; {
-			rootID = ancestor.ParentRunID
-			ancestor, err = ledger.Open(a.SDLCRunsDir(), rootID).ReadRun()
-			if err != nil {
-				return app.Failf("read ancestor run: %v", err)
-			}
-		}
-		if tree, err := a.sdlcTree(rootID); err != nil {
-			return app.Failf("read run tree: %v", err)
-		} else if len(tree) > sdlcMaxChildRuns {
-			return a.pauseSpawnLocked(parent, store, "workflow-child-budget-exhausted")
-		}
-		if parent.Adaptive.BudgetExhausted() || parent.Adaptive.MaxAssignments-parent.Adaptive.AssignmentCount < 1 || parent.Adaptive.MaxRevisions-parent.Adaptive.RevisionCount < 1 {
-			return a.pauseSpawnLocked(parent, store, "workflow-budget-exhausted")
-		}
-		if parent.StageFlow.Workflow.MaxSteps-parent.StageFlow.Steps < 2 {
-			return a.pauseSpawnLocked(parent, store, "stage-step-budget-exhausted")
+		if err := a.budgetGate(&parent, policy, "child"); err != nil {
+			return err
 		}
 		if parent.StageFlow.ChildRunID != "" {
 			childID = parent.StageFlow.ChildRunID
@@ -158,6 +146,16 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 	}
 	if child.Adaptive.Stage != adaptive.Done && child.Adaptive.Stage != adaptive.Paused {
 		return driveErr
+	}
+	if child.Adaptive.Stage == adaptive.Paused && adaptive.BudgetPause(child.Adaptive.Outcome) {
+		return store.WithRunLock(func() error {
+			parent, err := store.ReadRun()
+			if err != nil {
+				return err
+			}
+			parent.Adaptive.Pause(child.Adaptive.Outcome)
+			return store.WriteRun(parent)
+		})
 	}
 	if child.Adaptive.Stage == adaptive.Paused && child.Adaptive.Outcome == "plan-approval-required" {
 		return store.WithRunLock(func() error {
@@ -219,15 +217,8 @@ func (a *App) sdlcDriveSpawn(ctx context.Context, runID string, store *ledger.St
 			rec := *child.Verification
 			parent.Verification = &rec
 		}
-		if err := parent.StageFlow.Advance(outcome, parent.Adaptive); err != nil {
-			return app.Failf("advance workflow stage: %v", err)
-		}
-		policy, _, err := a.sdlcEnrollment()
-		if err != nil {
+		if err := a.advanceBudgetFlow(&parent, parent.Adaptive, outcome); err != nil {
 			return err
-		}
-		if err := a.chargeTree(&parent, policy, "step"); err != nil {
-			parent.Adaptive.Pause("stage-step-budget-exhausted")
 		}
 		parent.UpdatedAt = a.Clock().UTC().Format(time.RFC3339)
 		if err := store.WriteRun(parent); err != nil {
@@ -292,32 +283,18 @@ func (a *App) createSpawnChild(parent ledger.Run, name, objective, childID strin
 	if parent.Adaptive.MaxConcurrent < concurrent {
 		concurrent = parent.Adaptive.MaxConcurrent
 	}
-	st, err := adaptive.New(target.Name, parent.Adaptive.Profile, quorum, concurrent, parent.Adaptive.MaxRevisions-parent.Adaptive.RevisionCount)
+	st, err := adaptive.New(target.Name, parent.Adaptive.Profile, quorum, concurrent, max(1, parent.Adaptive.MaxRevisions))
 	if err != nil {
 		return err
 	}
-	st.MaxAssignments = parent.Adaptive.MaxAssignments - parent.Adaptive.AssignmentCount
-	if policy.MaxAssignments < st.MaxAssignments {
-		st.MaxAssignments = policy.MaxAssignments
-	}
-	if policy.MaxRevisions < st.MaxRevisions {
-		st.MaxRevisions = policy.MaxRevisions
-	}
-	if parent.Adaptive.MaxEstimatedCostUSD > 0 {
-		st.MaxEstimatedCostUSD = parent.Adaptive.MaxEstimatedCostUSD - parent.Adaptive.EstimatedCostUSD
-	}
-	if policy.MaxEstimatedCostUSD > 0 && (st.MaxEstimatedCostUSD == 0 || policy.MaxEstimatedCostUSD < st.MaxEstimatedCostUSD) {
-		st.MaxEstimatedCostUSD = policy.MaxEstimatedCostUSD
-	}
+	st.TreeBudget = true
+	st.MaxAssignments = parent.Adaptive.MaxAssignments
+	st.MaxEstimatedCostUSD = parent.Adaptive.MaxEstimatedCostUSD
 	var flow *stageflow.State
 	if !target.Builtin {
 		f, err := stageflow.New(*target.W, &st)
 		if err != nil {
 			return err
-		}
-		remainingSteps := parent.StageFlow.Workflow.MaxSteps - parent.StageFlow.Steps - 1
-		if f.Workflow.MaxSteps > remainingSteps {
-			f.Workflow.MaxSteps = remainingSteps
 		}
 		flow = &f
 	}

@@ -36,4 +36,5 @@ Redaction is pattern based, so check it against your own data before using Jevki
 - [Inspect local usage and state](docs/USAGE.md).
 - [Browse all guides and references](docs/README.md).
 - [Contribute](CONTRIBUTING.md).
+- [Release notes](CHANGELOG.md).
 - [MIT License](LICENSE).

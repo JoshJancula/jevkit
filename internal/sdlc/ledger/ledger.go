@@ -61,6 +61,8 @@ type RuntimeIntegration struct {
 }
 
 type Run struct {
+	BudgetDefaults           *Allowances         `json:"budgetDefaults,omitempty"`
+	InvocationSeconds        float64             `json:"invocationSeconds,omitempty"`
 	RunID                    string              `json:"runId"`
 	SessionStrategy          string              `json:"sessionStrategy,omitempty"`
 	RuntimeIntegration       *RuntimeIntegration `json:"runtimeIntegration,omitempty"`

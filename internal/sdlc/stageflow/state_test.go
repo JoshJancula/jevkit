@@ -48,7 +48,7 @@ func TestQuestionLoopStopsAtMaxSteps(t *testing.T) {
 	if err := flow.Advance("again", &worker); err != nil {
 		t.Fatal(err)
 	}
-	if worker.Stage != adaptive.Paused || worker.Outcome != "stage-step-budget-exhausted" || flow.Steps != 3 {
+	if worker.Stage != adaptive.Paused || worker.Outcome != "stage-step-budget-exhausted" || flow.Steps != 2 || flow.PendingAnswer != "again" {
 		t.Fatalf("flow=%+v worker=%+v", flow, worker)
 	}
 }
@@ -67,7 +67,6 @@ func TestMigrateSavedKeepsVersionOneReadable(t *testing.T) {
 		t.Fatal("expected unsupported version error")
 	}
 }
-
 
 func TestStageValidationRejectsUnknownTargetAndFallbackChoice(t *testing.T) {
 	for _, tc := range []struct{ from, to, want string }{

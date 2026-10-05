@@ -10,14 +10,14 @@ import (
 	"strings"
 )
 
-// Backup sidecar next to settings.json. Holds the pre-install byte-exact
+// Backup sidecar next to the settings file. Holds the pre-install byte-exact
 // original, or absentSentinel when the file did not exist.
 const claudeBackupSuffix = ".jevkit-original"
 
 const absentSentinel = "JEVKIT_ABSENT\n"
 
 // Install merges the Claude PostToolUse:Bash hook into
-// .claude/settings.json (project) or <ConfigDir>/.claude/settings.json (user).
+// .claude/settings.local.json (project) or <ConfigDir>/.claude/settings.json (user).
 // It is idempotent: a second apply leaves a single managed entry. DryRun
 // computes the merge without writing.
 func (c *Claude) Install(opts InstallOptions) error {
@@ -88,7 +88,7 @@ func claudeSettingsPath(opts InstallOptions) (string, error) {
 		if opts.WorkDir == "" {
 			return "", errors.New("claude install: project scope requires WorkDir")
 		}
-		return filepath.Join(opts.WorkDir, ".claude", "settings.json"), nil
+		return filepath.Join(opts.WorkDir, ".claude", "settings.local.json"), nil
 	case "user":
 		if opts.ConfigDir == "" {
 			return "", errors.New("claude install: user scope requires ConfigDir (home)")

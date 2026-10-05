@@ -38,7 +38,7 @@ func TestApplyVerificationResultReturnsToImplementingOnFailure(t *testing.T) {
 	rec := VerificationRecord{
 		Status: VerificationStatusFailed, AllPassed: false,
 		Receipts: []CheckReceipt{{CheckID: "c", Passed: false, TimedOut: true, WorktreeIdentity: "wt"}},
-		Summary: "boom", FailureSummaryPath: ArtifactVerificationSummary,
+		Summary:  "boom", FailureSummaryPath: ArtifactVerificationSummary,
 	}
 	if err := ApplyVerificationResult(&st, rec, time.Now()); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestApplyVerificationResultPausesWhenRevisionBudgetExhausted(t *testing.T) 
 	rec := VerificationRecord{
 		Status: VerificationStatusFailed, AllPassed: false,
 		Receipts: []CheckReceipt{{CheckID: "c", Passed: false, WorktreeIdentity: "wt"}},
-		Summary: "still failing", FailureSummaryPath: ArtifactVerificationSummary,
+		Summary:  "still failing", FailureSummaryPath: ArtifactVerificationSummary,
 	}
 	if err := ApplyVerificationResult(&st, rec, time.Now()); err != nil {
 		t.Fatal(err)

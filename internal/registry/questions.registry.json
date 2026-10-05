@@ -180,7 +180,8 @@
         "primaryQuestion": "relevant_lines",
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
-        "fallback": "_generic_size_fallback"
+        "fallback": "_generic_size_fallback",
+        "gatherHint": "Tag every candidate line with its id in state and include the task the lines are meant to explain; read the top-ranked lines yourself before acting on them."
       },
       "calibration": "placeholder - uncalibrated"
     },
@@ -238,7 +239,8 @@
         "primaryQuestion": "target",
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
-        "fallback": "router defaultTarget"
+        "fallback": "router defaultTarget",
+        "gatherHint": "Restate the request with its concrete goal and scope, or narrow the allowed options, then ask again."
       },
       "calibration": "placeholder - uncalibrated"
     },
@@ -267,7 +269,8 @@
         "primaryQuestion": "failure_class",
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
-        "fallback": "graph_failure_match_text"
+        "fallback": "graph_failure_match_text",
+        "gatherHint": "Add the failing stage's last log lines, exit status, and any error code or path named in the failure, then ask again."
       },
       "calibration": "placeholder - uncalibrated"
     },
@@ -340,7 +343,8 @@
         "primaryQuestion": "risk",
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
-        "fallback": "escalate to human review"
+        "fallback": "escalate to human review",
+        "gatherHint": "Add the files or packages touched, whether tests cover them, and how the change is rolled back (state.testOutput, state.environment, state.constraints), then ask again."
       },
       "calibration": "placeholder - uncalibrated"
     },
@@ -366,7 +370,8 @@
         "primaryQuestion": "cause",
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
-        "fallback": "unknown"
+        "fallback": "unknown",
+        "gatherHint": "Add the diff that preceded the failure (state.diffSummary) and where it fails versus passes (state.environment: OS, runner, rerun result), then ask again."
       },
       "calibration": "placeholder - uncalibrated"
     },
@@ -391,7 +396,8 @@
         "primaryQuestion": "priority",
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
-        "fallback": "full-suite"
+        "fallback": "full-suite",
+        "gatherHint": "Add the affected areas and what existing tests cover them (state.affectedAreas, state.testOutput), then ask again."
       },
       "calibration": "placeholder - uncalibrated"
     },
@@ -416,7 +422,8 @@
         "primaryQuestion": "disposition",
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
-        "fallback": "needs-review"
+        "fallback": "needs-review",
+        "gatherHint": "Add affected areas, test results and any policy constraints (state.affectedAreas, state.testOutput, state.constraints), then ask again."
       },
       "calibration": "placeholder - uncalibrated"
     },
@@ -439,7 +446,8 @@
         "primaryQuestion": "ready",
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
-        "fallback": "not ready - escalate to human release owner"
+        "fallback": "not ready - escalate to human release owner",
+        "gatherHint": "Add the full test/CI summary, the target environment, and any open blockers or required approvals, then ask again."
       },
       "calibration": "placeholder - uncalibrated"
     },
@@ -617,6 +625,83 @@
         "actThreshold": 0.85,
         "escalateThreshold": 0.6,
         "fallback": "allow"
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "developer.proceed-check": {
+      "id": "developer.proceed-check",
+      "version": 1,
+      "surface": "mcp",
+      "description": "Decision support only: before acting, decide whether a coding agent's planned action matches what the user asked for. Expects state.request and state.plannedAction; state.affectedAreas, state.environment and state.constraints sharpen the decision when available. Thresholds are placeholders pending shadow-mode calibration and must not be treated as validated.",
+      "questions": {
+        "action": {
+          "type": "choice",
+          "instructions": "Compare the user's request with the agent's planned action, including scope, reversibility and anything in state.environment or state.constraints (shared working tree, production systems, uncommitted work). How should the agent proceed?",
+          "criteria": {
+            "proceed": "The planned action matches the request in scope and is reversible or clearly authorized.",
+            "narrow-scope": "The request is clear but the plan does more than asked; do only the requested part.",
+            "ask-user": "The request is ambiguous, or the plan is destructive, outward-facing or hard to reverse without explicit authorization; confirm with the user first.",
+            "stop": "The planned action contradicts the request or a stated constraint and should not be taken."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "action",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "ask-user",
+        "gatherHint": "State exactly which files, commands or external systems the plan touches and quote what the user authorized (state.plannedAction, state.constraints), then ask again; if still unsure, ask the user."
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "developer.done-check": {
+      "id": "developer.done-check",
+      "version": 1,
+      "surface": "mcp",
+      "description": "Decision support only: before reporting a task finished, decide whether the change actually completes the user's request. Expects state.request and state.diffSummary; state.testOutput and state.constraints sharpen the decision when available. Thresholds are placeholders pending shadow-mode calibration and must not be treated as validated.",
+      "questions": {
+        "status": {
+          "type": "choice",
+          "instructions": "Compare the user's request with the change summary and any test output. Is the task complete?",
+          "criteria": {
+            "done": "The change covers every part of the request and is verified by test output or equivalent evidence.",
+            "needs-verification": "The change appears to cover the request but nothing in state shows it was run or tested.",
+            "incomplete": "Part of the request is not addressed, or tests show failures.",
+            "off-target": "The change addresses something other than what the user asked for."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "status",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "needs-verification",
+        "gatherHint": "Run the relevant tests or the changed code path and add the result (state.testOutput), and list each part of the request with where the diff addresses it, then ask again."
+      },
+      "calibration": "placeholder - uncalibrated"
+    },
+    "developer.finding-validity": {
+      "id": "developer.finding-validity",
+      "version": 1,
+      "surface": "mcp",
+      "description": "Decision support only: decide whether a review finding (from a reviewer, linter or another agent) is a real defect before acting on it. Expects state.finding; state.diffSummary, state.testOutput and state.constraints sharpen the decision when available. Thresholds are placeholders pending shadow-mode calibration and must not be treated as validated.",
+      "questions": {
+        "validity": {
+          "type": "choice",
+          "instructions": "Given the finding and the code or diff context in state, is the finding a real defect that should be fixed?",
+          "criteria": {
+            "valid": "The finding describes a real defect reachable from the code shown; fix it.",
+            "false-positive": "The context shows the finding does not apply (the case is handled, unreachable, or intended).",
+            "needs-verification": "Plausible, but the context is not enough to confirm; reproduce or read more code first."
+          }
+        }
+      },
+      "policy": {
+        "primaryQuestion": "validity",
+        "actThreshold": 0.85,
+        "escalateThreshold": 0.6,
+        "fallback": "needs-verification",
+        "gatherHint": "Add the exact code the finding points at and its callers (state.diffSummary), or a failing test or reproduction (state.testOutput), then ask again."
       },
       "calibration": "placeholder - uncalibrated"
     }

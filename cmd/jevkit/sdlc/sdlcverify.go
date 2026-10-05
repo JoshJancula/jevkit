@@ -33,6 +33,16 @@ func (a *App) sdlcEnsureVerification(ctx context.Context, store *ledger.Store, r
 		return false, nil
 	}
 
+	if err := a.budgetGate(run, mustPolicy(a), "work"); err != nil {
+		return false, err
+	}
+	stop, err := a.budgetActivity(ctx, *run, run.RunID+"/verification")
+	if err != nil {
+		return false, err
+	}
+	defer stop()
+	st.TreeBudget = true
+
 	checksRaw, err := store.ReadArtifact(adaptive.ArtifactChecks)
 	if err != nil {
 		if os.IsNotExist(err) {

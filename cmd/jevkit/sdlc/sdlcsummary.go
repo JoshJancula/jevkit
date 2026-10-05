@@ -169,7 +169,7 @@ func (a *App) sdlcFinalSummary(out io.Writer, rootID string, driveErr error) {
 	if err != nil {
 		_, _ = fmt.Fprintln(out, "    Jev usage file unavailable; Jev rows may be missing.")
 	}
-	_, _ = fmt.Fprintf(out, "\n  %s     %s\n", a.Styled(out, app.ANSICyan, "Next:"), summaryText(a, sdlcSummaryNext(root, rootID)))
+	_, _ = fmt.Fprintf(out, "\n  %s     %s\n", a.Styled(out, app.ANSICyan, "Next:"), summaryText(a, a.sdlcRecoveryNext(root, rootID)))
 	_, _ = fmt.Fprintf(out, "  %s     jevkit sdlc logs %s\n", a.Styled(out, app.ANSICyan, "Logs:"), rootID)
 }
 

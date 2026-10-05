@@ -9,6 +9,11 @@
 // jev_ask is the raw, unversioned escape hatch. Every tool redacts state
 // before it reaches the transport.
 //
+// Agents decide whether to call these tools from very little: the server's
+// initialize [Instructions] and the tool descriptions. Registry-backed results
+// therefore carry one line of guidance next to the decision, so a gather says
+// what evidence to add instead of reading as no answer.
+//
 // stdout is the protocol channel; all logging goes to the configured log
 // writer (stderr in production). The API key is resolved by the injected
 // client, never by a caller, and is never logged or returned.

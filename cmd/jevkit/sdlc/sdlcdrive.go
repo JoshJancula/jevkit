@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
+	"github.com/JoshJancula/jevkit/internal/keepawake"
 	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
@@ -54,7 +55,7 @@ func (a *App) sdlcDriveUntilDone(ctx context.Context, runID string) error {
 		if run.Adaptive == nil {
 			return app.Failf("run %s has an unsupported run format", runID)
 		}
-		if run.Adaptive.Role() == "" && len(run.Adaptive.Assignments) == 0 && run.Adaptive.Stage != "question" && run.Adaptive.Stage != "spawn" && run.Adaptive.Stage != adaptive.Verifying {
+		if (run.StageFlow == nil || run.StageFlow.PendingAnswer == "") && run.Adaptive.Role() == "" && len(run.Adaptive.Assignments) == 0 && run.Adaptive.Stage != "question" && run.Adaptive.Stage != "spawn" && run.Adaptive.Stage != adaptive.Verifying {
 			a.Outf("run %s: %s", runID, run.Adaptive.Stage)
 			if run.Adaptive.Outcome != "" {
 				a.Outf(" (%s)", run.Adaptive.Outcome)
@@ -75,7 +76,7 @@ func (a *App) pauseDriveError(runID string, cause error) error {
 		if err != nil {
 			return err
 		}
-		if run.Adaptive == nil || run.Adaptive.Stage == adaptive.Paused || run.Adaptive.Stage == adaptive.Done {
+		if run.Adaptive == nil || run.Adaptive.Stage == adaptive.Paused || run.Adaptive.Stage == adaptive.Draining || run.Adaptive.Stage == adaptive.Done {
 			return nil
 		}
 		st := *run.Adaptive
@@ -104,6 +105,7 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	if !app.RunIDPattern.MatchString(runID) {
 		return app.Usagef("invalid run ID")
 	}
+	defer keepawake.Hold()()
 	defer func() {
 		if driveErr != nil && ctx.Err() == nil {
 			_ = a.pauseDriveError(runID, driveErr)
@@ -116,6 +118,21 @@ func (a *App) sdlcDrive(ctx context.Context, runID string) (driveErr error) {
 	}
 	if run.Adaptive == nil {
 		return app.Failf("run %s has an unsupported run format", runID)
+	}
+	if run.StageFlow != nil && run.StageFlow.PendingAnswer != "" && run.Adaptive.Stage != adaptive.Paused {
+		return store.WithRunLock(func() error {
+			fresh, err := store.ReadRun()
+			if err != nil {
+				return err
+			}
+			if fresh.StageFlow.PendingAnswer == "" {
+				return nil
+			}
+			if err := a.advanceBudgetFlow(&fresh, fresh.Adaptive, fresh.StageFlow.PendingAnswer); err != nil {
+				return err
+			}
+			return store.WriteRun(fresh)
+		})
 	}
 	if run.WorkDir != "" {
 		old := a.WorkDir
@@ -187,13 +204,6 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 	if err != nil {
 		return app.Failf("%v", err)
 	}
-	remaining, err := a.treeRemaining(run, policy)
-	if err != nil {
-		return a.sdlcFailAssignment(runID, *assignment, err)
-	}
-	if remaining <= 0 {
-		return a.sdlcTimeoutAssignment(runID, *assignment, "run-time-exhausted")
-	}
 	if err := a.sdlcQuotaCheck(runID); err != nil {
 		return a.sdlcFailAssignment(runID, *assignment, err)
 	}
@@ -236,7 +246,7 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 	if agent.Via == enrollment.Runtime {
 		strategy, sessionID, err := a.chooseSession(ctx, store, run, *assignment, policy.SessionStrategy)
 		if err != nil {
-			return a.sdlcFailAssignment(runID, *assignment, err)
+			return a.pauseSessionRecovery(runID, *assignment, err)
 		}
 		if strategy == "compact" && agent.Runtime == "codex" {
 			if err := worker.CompactCodex(ctx, agent.Binary, a.WorkDir, sessionID); err != nil {
@@ -244,6 +254,9 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 				return a.sdlcFailAssignment(runID, *assignment, err)
 			}
 			_ = a.recordDecision(store, ledger.Decision{RunID: runID, Kind: "session-compaction", Stage: run.Adaptive.Stage, Invocation: assignment.InvocationID, Choice: "completed", Next: "resume compacted session"})
+		}
+		if strategy == "fresh" && len(run.Sessions) > 0 {
+			req.Task += "\n\nContext recovered from saved run artifacts. This is a new conversation; the original agent conversation is unavailable here."
 		}
 		req.SessionID, req.CaptureSession = sessionID, true
 		req.Compact = strategy == "compact" && agent.Runtime == "claude"
@@ -339,11 +352,13 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 	if executor == nil {
 		executor = worker.CLIExecutor{}
 	}
-	timeout := time.Duration(policy.MaxInvocationSeconds) * time.Second
+	timeout := a.invocationTimeout(run, policy)
 	timeoutOutcome := "timed-out"
-	if remaining < timeout {
-		timeout, timeoutOutcome = remaining, "run-time-exhausted"
+	stopActivity, err := a.budgetActivity(ctx, run, assignment.InvocationID)
+	if err != nil {
+		return err
 	}
+	defer stopActivity()
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	reply, execErr := executor.Execute(stepCtx, req)
@@ -351,7 +366,7 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 		return a.sdlcPauseInjectionReview(runID, rec.ID)
 	}
 	if execErr != nil {
-		if reply.InputTokens != nil || reply.OutputTokens != nil || reply.ToolCalls != nil || reply.CostReported {
+		if reply.SessionID != "" || reply.InputTokens != nil || reply.OutputTokens != nil || reply.ToolCalls != nil || reply.CostReported {
 			if err := a.saveInvocationUsage(store, *assignment, agent.Model, reply); err != nil {
 				return a.sdlcFailAssignment(runID, *assignment, err)
 			}
@@ -365,6 +380,9 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if req.SessionID != "" {
+			return a.pauseSessionRecovery(runID, *assignment, execErr)
 		}
 		var invocationFailure *worker.InvocationFailure
 		if !errors.As(execErr, &invocationFailure) {
@@ -540,6 +558,9 @@ func (a *App) sdlcFailAssignment(runID string, assignment adaptive.Assignment, c
 		}
 		if run.Adaptive == nil {
 			return fmt.Errorf("run has no adaptive state")
+		}
+		if err := a.completeBudget(&run, assignment.InvocationID, false, 0); err != nil {
+			return err
 		}
 		st := *run.Adaptive
 		st.PendingReason = cause.Error()

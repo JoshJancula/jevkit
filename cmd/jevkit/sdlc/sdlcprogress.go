@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 )
 
@@ -111,18 +112,15 @@ func (a *App) progressEvent(p *sdlcProgress, root, run ledger.Run, event ledger.
 			label += " (" + event.Outcome + ")"
 		}
 		_, _ = fmt.Fprintf(p.out, "%s%s: %s  %s\n", indent, run.Workflow, a.Styled(p.out, app.ANSICyan, label), progressElapsed(run.CreatedAt, event.At))
-		if run.RunID == p.root && root.TreeUsage != nil && root.Adaptive != nil {
-			_, _ = fmt.Fprintf(p.out, "%s  left: %d assignments | %d revisions | %d children", indent,
-				max(0, root.Adaptive.MaxAssignments-root.TreeUsage.Assignments),
-				max(0, root.Adaptive.MaxRevisions-root.TreeUsage.Revisions),
-				max(0, sdlcMaxChildRuns-root.TreeUsage.ChildRuns))
-			if policy, _, err := a.sdlcEnrollment(); err == nil {
-				if remaining, err := a.treeRemaining(root, policy); err == nil {
-					_, _ = fmt.Fprintf(p.out, " | %s", remaining.Round(time.Second))
+		if run.RunID == p.root && root.Adaptive != nil {
+			if b, err := a.budgetView(root, mustPolicy(a)); err == nil {
+				_, _ = fmt.Fprintf(p.out, "%s  left: %d assignments | %d revisions | %d children | %s active\n", indent, max(0, b.Limits.Assignments-b.Usage.Assignments), max(0, b.Limits.Revisions-b.Usage.Revisions-b.ReservedRevisions()), max(0, b.Limits.Children-b.Usage.Children), time.Duration((b.Limits.Seconds-b.Usage.Seconds)*float64(time.Second)).Round(time.Second))
+				if adaptive.BudgetPause(root.Adaptive.Outcome) {
+					_, _ = fmt.Fprintln(p.out, a.budgetCommand(root, b))
 				}
 			}
-			_, _ = fmt.Fprintln(p.out)
 		}
+
 	}
 	if event.Agent != "" {
 		assignment := event.Agent + "/" + event.Runtime + "/" + event.Invocation

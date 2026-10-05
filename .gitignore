@@ -11,5 +11,9 @@ node_modules/
 .ralph-workspace
 .jevkit/compact-corpus/local/
 .jevkit-review-*.diff
+# Machine-local agent hooks, MCP config, and their installation backups.
 .claude/
 .codex/
+/.mcp.json
+*.jevkit-original
+__pycache__/

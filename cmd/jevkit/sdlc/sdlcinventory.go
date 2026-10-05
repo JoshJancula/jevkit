@@ -449,7 +449,7 @@ func (a *App) sdlcShowCmd() *cobra.Command {
 			if !raw {
 				a.Outf("\nTask text is redacted; use --raw to show it unredacted. Pattern redaction is best-effort and does not guarantee a secret-free log.\n")
 			}
-			a.Outf("\nNext: %s\n", summaryText(a, sdlcSummaryNext(r, runID)))
+			a.Outf("\nNext: %s\n", summaryText(a, a.sdlcRecoveryNext(r, runID)))
 			a.Outf("Logs: jevkit sdlc logs %s\n", runID)
 			a.Outf("Decisions: jevkit sdlc logs %s --stream decisions\n", runID)
 			a.Outf("Live view: jevkit sdlc watch %s\n", runID)
@@ -497,25 +497,33 @@ func (a *App) sdlcShowJSON(info sdlcRunInfo, task string, raw bool) error {
 		Pruned                bool   `json:"pruned"`
 	}
 	out := struct {
-		RunID     string    `json:"runId"`
-		Status    string    `json:"status"`
-		Workflow  string    `json:"workflow,omitempty"`
-		WorkDir   string    `json:"workDir,omitempty"`
-		ParentID  string    `json:"parentRunId,omitempty"`
-		CreatedAt string    `json:"createdAt"`
-		UpdatedAt string    `json:"updatedAt"`
-		Bytes     int64     `json:"bytes"`
-		Path      string    `json:"path"`
-		Children  []string  `json:"childRuns,omitempty"`
-		Artifacts []string  `json:"artifacts,omitempty"`
-		Logs      []jsonLog `json:"logs,omitempty"`
-		Task      string    `json:"task,omitempty"`
-		TaskRaw   bool      `json:"taskRaw"`
+		RunID     string         `json:"runId"`
+		Status    string         `json:"status"`
+		Workflow  string         `json:"workflow,omitempty"`
+		WorkDir   string         `json:"workDir,omitempty"`
+		ParentID  string         `json:"parentRunId,omitempty"`
+		CreatedAt string         `json:"createdAt"`
+		UpdatedAt string         `json:"updatedAt"`
+		Bytes     int64          `json:"bytes"`
+		Path      string         `json:"path"`
+		Children  []string       `json:"childRuns,omitempty"`
+		Artifacts []string       `json:"artifacts,omitempty"`
+		Logs      []jsonLog      `json:"logs,omitempty"`
+		Task      string         `json:"task,omitempty"`
+		TaskRaw   bool           `json:"taskRaw"`
+		Budget    *ledger.Budget `json:"budget,omitempty"`
+		Next      string         `json:"next,omitempty"`
 	}{
 		RunID: info.Run.RunID, Status: sdlcStatusText(info.Run), Workflow: info.Run.Workflow,
 		WorkDir: info.Run.WorkDir, ParentID: info.Run.ParentRunID, CreatedAt: info.Run.CreatedAt,
 		UpdatedAt: info.Run.UpdatedAt, Bytes: info.Bytes, Path: info.Path, Children: info.Children,
 		Artifacts: info.Artifacts, Task: task, TaskRaw: raw,
+	}
+	if info.Run.Adaptive != nil {
+		if b, err := a.budgetView(info.Run, mustPolicy(a)); err == nil {
+			out.Budget = &b
+		}
+		out.Next = a.sdlcRecoveryNext(info.Run, info.Run.RunID)
 	}
 	for _, l := range info.Logs {
 		out.Logs = append(out.Logs, jsonLog(l))

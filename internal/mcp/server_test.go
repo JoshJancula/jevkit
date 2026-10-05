@@ -694,7 +694,7 @@ func TestJevAskIsRawAndUnregistered(t *testing.T) {
 	if r.Error != nil || tr.IsError {
 		t.Fatalf("error: %+v", r.Error)
 	}
-	if !mustGet[bool](t, tr.Structured, "unversioned") || !mustGet[bool](t, tr.Structured, "unaudited") || !mustGet[bool](t, tr.Structured, "unregistered") {
+	if !mustGet[bool](t, tr.Structured, "unversioned") || !mustGet[bool](t, tr.Structured, "audited") || !mustGet[bool](t, tr.Structured, "unregistered") {
 		t.Errorf("flags = %v", tr.Structured)
 	}
 	if got := mustGet[string](t, tr.Structured, "answer", "pick", "choice"); got != "a" {
@@ -905,7 +905,7 @@ func TestDeveloperAssessToolDiscoverable(t *testing.T) {
 			t.Errorf("description missing assessment %q: %q", id, desc)
 		}
 	}
-	for _, field := range []string{"diffSummary", "affectedAreas", "testOutput", "environment", "constraints"} {
+	for _, field := range developerStateKeys {
 		if !strings.Contains(desc, field) {
 			t.Errorf("description missing state field %q", field)
 		}
@@ -917,6 +917,12 @@ func TestDeveloperAssessToolDiscoverable(t *testing.T) {
 
 func developerAssessState(id string) map[string]any {
 	switch id {
+	case "developer.proceed-check":
+		return map[string]any{"request": "fix the typo in README", "plannedAction": "edit README.md line 12"}
+	case "developer.done-check":
+		return map[string]any{"request": "fix the typo in README", "diffSummary": "README.md: teh -> the"}
+	case "developer.finding-validity":
+		return map[string]any{"finding": "possible nil dereference of cfg in New"}
 	case "developer.change-risk":
 		return map[string]any{"diffSummary": "widen auth token TTL", "affectedAreas": []string{"auth"}}
 	case "developer.failure-triage":
@@ -941,6 +947,9 @@ func TestDeveloperAssessRequestConstruction(t *testing.T) {
 		question string
 		answer   jev.Answer
 	}{
+		{"developer.proceed-check", "action", jev.ChoiceAnswer{Choice: "narrow-scope", Confidence: 0.9}},
+		{"developer.done-check", "status", jev.ChoiceAnswer{Choice: "needs-verification", Confidence: 0.9}},
+		{"developer.finding-validity", "validity", jev.ChoiceAnswer{Choice: "false-positive", Confidence: 0.9}},
 		{"developer.change-risk", "risk", jev.ScoreAnswer{Score: 3, Confidence: 0.9}},
 		{"developer.failure-triage", "cause", jev.ChoiceAnswer{Choice: "regression", Confidence: 0.9}},
 		{"developer.test-priority", "priority", jev.ChoiceAnswer{Choice: "targeted-tests", Confidence: 0.9}},
@@ -971,7 +980,7 @@ func TestDeveloperAssessRequestConstruction(t *testing.T) {
 			}
 			for k := range tr.Structured {
 				switch k {
-				case "answer", "decision", "assessment", "registryVersion":
+				case "answer", "decision", "guidance", "assessment", "registryVersion":
 				default:
 					t.Errorf("unexpected structured key %q (no automatic-action fields expected)", k)
 				}

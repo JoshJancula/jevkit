@@ -60,6 +60,8 @@ capture the actual workspace diff.
 
 `sdlc run` checks enrollment, project limits, driver reach, and assessor quorum before starting a task. A requested profile is never downgraded. Use `jevkit sdlc doctor --policy NAME` to diagnose setup problems.
 
+On macOS, `run` and `resume` hold a `caffeinate -i -s` assertion while agents execute, so idle sleep does not stall a long run. The display can still sleep, and the assertion ends when Jevkit exits. Set `JEVKIT_NO_CAFFEINATE=1` to disable it.
+
 ## Live run view
 
 In a terminal, `run` and `resume` display the live run view. It follows the
@@ -412,7 +414,61 @@ and built-in delegation can be used together.
 The choice is stored in the run ledger for resume. Authored `spawn` stages
 retain their explicit targets.
 
-Runs have hard loop and time limits. By default, a run allows at most 3 implementation revisions and 20 total agent assignments across its tree. Each CLI invocation has a 30-minute deadline, and the root run expires 6 hours after creation. A run can create at most eight children across three child levels. Custom stage workflows also have `maxSteps` (20 by default) to bound question and work transitions. Set `maxRevisions`, `maxAssignments`, `maxInvocationSeconds`, and `maxRunSeconds` in project policy to tighten or widen those limits. Hitting a limit pauses the run. `maxEstimatedCostUsd` is optional and applies when workers report an estimate.
+Runs start with 20 assignments, 3 implementation revisions, and 6 hours of
+**active work** across the entire run tree. Each invocation has a separate
+30-minute timeout. Child creation is limited to eight children; the three-level
+nesting limit is structural. Authored workflows default to 20 transitions.
+Project policy snapshots these defaults when a run is created. Editing policy
+changes new runs; an existing run requires an explicit extension.
+
+Budget exhaustion is an operator checkpoint. Jevkit stops admitting work,
+shows `draining` while admitted assignments finish, and saves their artifacts,
+results, review findings, sessions, and measured usage. If that work satisfies
+all completion gates, the run can finish. Otherwise its next phase or authored
+transition is saved for continuation. A warning appears once at 80% of each
+finite allowance. The pause view shows usage, remaining allowance, outstanding
+work, saved-session availability, and the matching resume command.
+
+In the controlling terminal dashboard press **e: Extend and continue**. Interactive
+`resume` also offers editable amounts, resulting totals, and a final confirmation.
+Cancel or leave to keep the run paused. Suggested grants are 25% of the original
+allowance, rounded up to whole units, minutes, or cents, and increased when
+needed to cover recorded overage plus one unit. For scripts, grant explicitly:
+
+```sh
+jevkit sdlc resume RUN_ID --add-assignments 5 --add-revisions 1 --add-time 90m
+jevkit sdlc resume RUN_ID --add-cost-usd 2.50 --add-steps 5 --add-children 2
+```
+
+All supplied amounts must be positive and finite. Plain noninteractive resume
+prints the command without granting it. Extensions update only the selected
+root tree, preserve cumulative usage, and record before/after limits and the
+operator action in `budget.json`. A child-targeted grant identifies its root;
+`--add-steps` also extends the selected authored workflow's local allowance.
+An insufficient grant leaves the run paused. `watch`, `show`, and status are
+observational. `--auto`, agent results, and routing choices cannot extend limits.
+Enrollment, permissions, quorum, command authorization, and concurrency still apply.
+
+Active time is the union of worker, supervisor-check, and workflow-decision
+intervals, so overlapping workers count once. Operator waits, budget pauses,
+and periods without work do not count. Driver heartbeats checkpoint ownership;
+after a crash, offline time after the last checkpoint is excluded. Host-owned
+assignments count from dispatch through report or invocation expiry. Hosts must
+terminate their own processes. A run-time allowance does not shorten an admitted
+invocation's timeout. Retry an invocation timeout on the same run with:
+
+```sh
+jevkit sdlc resume RUN_ID --retry-failed --invocation-timeout 45m
+```
+
+The override applies to subsequent invocations in this tree. Optional
+`maxEstimatedCostUsd` controls admission using reported cost. Already admitted
+work can overshoot it; this is not a guaranteed billing ceiling. Unknown usage
+remains unknown. Legacy ledgers remain readable: continuation initializes the
+budget record from saved limits and usage. Historical active time without
+sufficient evidence is estimated as elapsed time capped at the prior allowance
+and labeled estimated. Ambiguous legacy checkpoints require an explicit
+`--retry-failed` approval within the same run.
 
 ## Planner checks and supervisor verification
 
@@ -455,8 +511,13 @@ its own measured usage.
 
 `--session-strategy auto|fresh|resume|compact` is available on `run`, `start`,
 and `resume`; a resume override is saved in the run. Sessions are keyed by run,
-binding, and role. `auto` asks Jev when a prior session exists and records the
-choice and policy fallback. Codex manual compaction uses its app server
+binding, and role. `auto` prefers the compatible saved session; first use of a
+new role starts its own session. Returned session IDs are saved even when an
+invocation fails without token usage. If reuse fails or compatibility would
+require replacement, the run pauses. Approve rebuilding from saved artifacts
+with `resume RUN_ID --session-strategy fresh`; this creates a new conversation
+and is explicitly described as recovered artifact context. Use `compact` to
+request native compaction of a compatible session. Codex manual compaction uses its app server
 protocol. Claude manual compaction sends `/compact` ahead of the work prompt
 through the installed Claude CLI's stream JSON mode, as Ralph does. A
 failed native compaction pauses the run with the error. Other runtimes resolve

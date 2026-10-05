@@ -1,12 +1,51 @@
 package sdlc
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
 	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 )
+
+// Save the selected route before admitting the transition. Continuation applies
+// that route, without rerunning the agent, question, child or verification.
+func (a *App) advanceBudgetFlow(run *ledger.Run, st *adaptive.State, answer string) error {
+	flow := run.StageFlow
+	flow.PendingAnswer = answer
+	run.Adaptive = st
+	store := ledger.Open(a.SDLCRunsDir(), run.RunID)
+	if err := store.WriteRun(*run); err != nil {
+		return err
+	}
+	var blocked bool
+	b, err := a.updateBudget(*run, mustPolicy(a), func(b *ledger.Budget) error {
+		id := fmt.Sprintf("%s/transition/%d", run.RunID, flow.Steps+1)
+		if _, admitted := b.Reservations[id]; admitted {
+			return nil
+		}
+		if flow.Steps >= flow.Workflow.MaxSteps+b.WorkflowSteps[run.RunID] || len(b.Blockers("step")) > 0 {
+			blocked = true
+			return nil
+		}
+		return b.Reserve(fmt.Sprintf("%s/transition/%d", run.RunID, flow.Steps+1), run.RunID, "step")
+	})
+	if err != nil {
+		return err
+	}
+	if blocked {
+		st.BudgetBlockers = b.Blockers("step")
+		if flow.Steps >= flow.Workflow.MaxSteps+b.WorkflowSteps[run.RunID] {
+			st.BudgetBlockers = append(st.BudgetBlockers, "steps")
+		}
+		st.Pause("stage-step-budget-exhausted")
+		return store.WriteRun(*run)
+	}
+	st.TreeBudget = true
+	syncTreeUsage(run, b)
+	return flow.Advance(answer, st)
+}
 
 // stageflowRouteAfterResult decides whether an authored StageFlow should advance
 // after an agent result. Fan-out, supervisor verification, and the completion
@@ -61,15 +100,8 @@ func (a *App) sdlcAdvanceStageFlowAfterVerification(store *ledger.Store, run *le
 	if _, has := stage.Work.Routes["changed"]; !has {
 		return nil
 	}
-	if err := run.StageFlow.Advance("changed", st); err != nil {
-		return app.Failf("advance workflow after verification: %v", err)
-	}
-	policy, _, err := a.sdlcEnrollment()
-	if err != nil {
+	if err := a.advanceBudgetFlow(run, st, "changed"); err != nil {
 		return err
-	}
-	if err := a.chargeTree(run, policy, "step"); err != nil {
-		st.Pause("stage-step-budget-exhausted")
 	}
 	run.Adaptive = st
 	run.UpdatedAt = a.Clock().UTC().Format(time.RFC3339)

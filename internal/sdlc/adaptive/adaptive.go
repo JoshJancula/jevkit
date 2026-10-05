@@ -4,6 +4,7 @@ package adaptive
 
 import (
 	"fmt"
+	"math"
 	"sort"
 )
 
@@ -15,6 +16,7 @@ const (
 	Specializing = "specializing"
 	Done         = "done"
 	Paused       = "paused"
+	Draining     = "draining"
 )
 
 type Assignment struct {
@@ -73,6 +75,10 @@ type RepairFeedback struct {
 }
 
 type State struct {
+	TreeBudget             bool                  `json:"treeBudget,omitempty"`
+	BudgetPhase            string                `json:"budgetPhase,omitempty"`
+	BudgetBlockers         []string              `json:"budgetBlockers,omitempty"`
+	RetryPhase             string                `json:"retryPhase,omitempty"`
 	TaskKind               string                `json:"taskKind"`
 	Profile                string                `json:"profile"`
 	Stage                  string                `json:"stage"`
@@ -158,7 +164,7 @@ func (s State) Role() string {
 // ParallelReviews reports whether the stage admits concurrent read-only
 // reviewer invocations (assessors and optional specialists).
 func (s State) ParallelReviews() bool {
-	return s.Stage == Assessing || s.Stage == Specializing
+	return s.Stage == Assessing || s.Stage == Specializing || s.Stage == Draining && (s.BudgetPhase == Assessing || s.BudgetPhase == Specializing)
 }
 
 // ReviewSlotsNeeded is how many additional independent reviewers the stage
@@ -277,7 +283,7 @@ func (s *State) Assign(a Assignment) error {
 }
 
 func (s State) BudgetExhausted() bool {
-	return s.MaxAssignments > 0 && s.AssignmentCount >= s.MaxAssignments || s.MaxEstimatedCostUSD > 0 && s.EstimatedCostUSD >= s.MaxEstimatedCostUSD
+	return !s.TreeBudget && (s.MaxAssignments > 0 && s.AssignmentCount >= s.MaxAssignments || s.MaxEstimatedCostUSD > 0 && s.EstimatedCostUSD >= s.MaxEstimatedCostUSD)
 }
 
 // Apply leaves state untouched when a result is invalid.
@@ -315,16 +321,22 @@ func (s *State) Apply(r Result) error {
 }
 
 func (s *State) apply(r Result) error {
-	if r.CostUSD < 0 {
+	if r.CostUSD < 0 || math.IsNaN(r.CostUSD) || math.IsInf(r.CostUSD, 0) {
 		return fmt.Errorf("adaptive: cost must be nonnegative")
 	}
 	a, ok := s.Assignments[r.InvocationID]
 	if !ok || a.AgentID != r.AgentID {
 		return fmt.Errorf("adaptive: result does not match a pending independent invocation")
 	}
+	if s.BudgetPhase != "" {
+		s.Stage = s.BudgetPhase
+		s.BudgetPhase = ""
+		s.BudgetBlockers = nil
+		s.Outcome = ""
+	}
 	delete(s.Assignments, r.InvocationID)
 	s.EstimatedCostUSD += r.CostUSD
-	if s.MaxEstimatedCostUSD > 0 && s.EstimatedCostUSD > s.MaxEstimatedCostUSD {
+	if !s.TreeBudget && s.MaxEstimatedCostUSD > 0 && s.EstimatedCostUSD > s.MaxEstimatedCostUSD {
 		s.Pause("cost-budget-exhausted")
 		return nil
 	}
@@ -453,7 +465,7 @@ func (s *State) apply(r Result) error {
 				return nil
 			}
 			s.RevisionCount++
-			if s.RevisionCount > s.MaxRevisions {
+			if !s.TreeBudget && s.RevisionCount > s.MaxRevisions {
 				s.Stage, s.Outcome = Paused, "revision-budget-exhausted"
 				return nil
 			}
@@ -483,7 +495,7 @@ func (s *State) apply(r Result) error {
 		// and return to implementation (or pause when the revision budget is spent).
 		if r.Outcome == "changes-required" {
 			s.rememberRejection(a, r)
-			if s.RevisionCount >= s.MaxRevisions {
+			if !s.TreeBudget && s.RevisionCount >= s.MaxRevisions {
 				s.Pause("revision-budget-exhausted")
 			} else {
 				s.Stage = Implementing
@@ -508,7 +520,7 @@ func (s *State) apply(r Result) error {
 					return nil
 				}
 				s.Stage, s.Outcome = Done, "approved"
-			} else if s.RevisionCount >= s.MaxRevisions {
+			} else if !s.TreeBudget && s.RevisionCount >= s.MaxRevisions {
 				s.Pause("revision-budget-exhausted")
 			} else {
 				s.Stage = Implementing
@@ -536,7 +548,28 @@ func (s *State) implementationMadeNoProgress() {
 	}
 }
 
+func BudgetPause(reason string) bool {
+	switch reason {
+	case "assignment-budget-exhausted", "revision-budget-exhausted", "cost-budget-exhausted", "run-time-budget-exhausted", "run-time-exhausted", "workflow-child-budget-exhausted", "workflow-budget-exhausted", "stage-step-budget-exhausted", "fanout-budget-exhausted":
+		return true
+	}
+	return false
+}
+
 func (s *State) Pause(reason string) {
+	if BudgetPause(reason) {
+		if s.Stage != Paused && s.Stage != Draining {
+			s.BudgetPhase = s.Stage
+		}
+		s.Stage, s.Outcome = Paused, reason
+		if len(s.Assignments) > 0 {
+			s.Stage = Draining
+		}
+		return
+	}
+	if reason == "invocation-timeout" || reason == "session-recovery-required" {
+		s.RetryPhase = s.Stage
+	}
 	s.Stage, s.Outcome = Paused, reason
 	s.Assignments = map[string]Assignment{}
 }

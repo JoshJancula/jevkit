@@ -194,13 +194,9 @@ func (a *App) sdlcDriveFanout(ctx context.Context, runID string, store *ledger.S
 	if err != nil {
 		return true, app.Failf("%v", err)
 	}
-	root, err := a.rootRun(run)
+	budget, err := a.budgetView(run, policy)
 	if err != nil {
-		return true, app.Failf("%v", err)
-	}
-	rootUsage := root.TreeUsage
-	if rootUsage == nil {
-		rootUsage = &ledger.TreeUsage{}
+		return true, err
 	}
 	// Route candidates as implementers even when adaptive Role() is implementer.
 	implState := *run.Adaptive
@@ -209,18 +205,10 @@ func (a *App) sdlcDriveFanout(ctx context.Context, runID string, store *ledger.S
 		return true, app.Failf("%v", err)
 	}
 	bindings := enrollment.DistinctBindings(candidates)
-	costOK := policy.MaxEstimatedCostUSD <= 0 || rootUsage.EstimatedCostUSD < policy.MaxEstimatedCostUSD
-	remainAssign := policy.MaxAssignments - rootUsage.Assignments
-	if remainAssign < 0 {
-		remainAssign = 0
-	}
-	if run.Adaptive.MaxAssignments > 0 {
-		left := run.Adaptive.MaxAssignments - run.Adaptive.AssignmentCount
-		if left < remainAssign {
-			remainAssign = left
-		}
-	}
-	remainChild := sdlcMaxChildRuns - rootUsage.ChildRuns
+	costOK := budget.Limits.CostUSD <= 0 || budget.Usage.CostUSD < budget.Limits.CostUSD
+	remainAssign := max(0, budget.Limits.Assignments-budget.Usage.Assignments)
+	remainAssign = min(remainAssign, max(0, budget.Limits.Revisions-budget.Usage.Revisions-budget.ReservedRevisions()))
+	remainChild := max(0, budget.Limits.Children-budget.Usage.Children)
 	budgets := adaptive.AdmitBudgets{
 		PolicyMax:            policy.MaxConcurrent,
 		RunTreeLimit:         run.Fanout.EffectiveConcurrency,
@@ -340,10 +328,7 @@ func (a *App) sdlcDriveFanout(ctx context.Context, runID string, store *ledger.S
 		wsPath := workspace
 		mode := decision.Mode
 		err := store.ReserveFanoutSlot(now, func(r *ledger.Run, s *adaptive.Schedule) error {
-			if err := chargeTreeInPlace(r, policy, "assignment"); err != nil {
-				return err
-			}
-			if err := chargeTreeInPlace(r, policy, "child"); err != nil {
+			if err := a.reserveAssignment(r, policy, assignCopy, true); err != nil {
 				return err
 			}
 			if r.Adaptive != nil {
@@ -356,6 +341,9 @@ func (a *App) sdlcDriveFanout(ctx context.Context, runID string, store *ledger.S
 				_ = creator.Remove(ctx, worker.IsolatedWorkspace{Path: workspace, RepoRoot: a.WorkDir, Worktree: true})
 			}
 			if strings.Contains(err.Error(), "budget exhausted") {
+				if len(reserved) > 0 {
+					break
+				}
 				return true, a.pauseFanout(store, runID, "fanout-budget-exhausted")
 			}
 			if strings.Contains(err.Error(), "is ") {
@@ -420,36 +408,6 @@ func fanoutHasWritable(reserved []fanoutReservation) bool {
 	return false
 }
 
-func chargeTreeInPlace(r *ledger.Run, p enrollment.Policy, kind string) error {
-	if r.TreeUsage == nil {
-		r.TreeUsage = &ledger.TreeUsage{}
-		if r.Adaptive != nil {
-			r.TreeUsage.Assignments = r.Adaptive.AssignmentCount
-			r.TreeUsage.Revisions = r.Adaptive.RevisionCount
-			r.TreeUsage.EstimatedCostUSD = r.Adaptive.EstimatedCostUSD
-		}
-	}
-	u := r.TreeUsage
-	if p.MaxEstimatedCostUSD > 0 && u.EstimatedCostUSD >= p.MaxEstimatedCostUSD {
-		return fmt.Errorf("root cost budget exhausted")
-	}
-	switch kind {
-	case "assignment":
-		if u.Assignments >= p.MaxAssignments {
-			return fmt.Errorf("root assignment budget exhausted")
-		}
-		u.Assignments++
-	case "child":
-		if u.ChildRuns >= sdlcMaxChildRuns {
-			return fmt.Errorf("root child-run budget exhausted")
-		}
-		u.ChildRuns++
-	default:
-		return fmt.Errorf("unknown charge kind %q", kind)
-	}
-	return nil
-}
-
 func (a *App) runFanoutSubtask(ctx context.Context, runID string, store *ledger.Store, subtaskID string, assignment adaptive.Assignment, agent enrollment.Agent, workspace, mode string) error {
 	now := a.Clock()
 	_ = store.UpdateFanout(now, func(r *ledger.Run, s *adaptive.Schedule) error {
@@ -473,12 +431,26 @@ func (a *App) runFanoutSubtask(ctx context.Context, runID string, store *ledger.
 	if plan, err := store.ReadArtifact(adaptive.ArtifactPlan); err == nil {
 		req.Plan = string(plan)
 	}
+	if agent.Via == enrollment.Runtime {
+		strategy, sessionID, sessionErr := a.chooseSession(ctx, store, run, assignment, mustPolicy(a).SessionStrategy)
+		if sessionErr != nil {
+			return a.pauseSessionRecovery(runID, assignment, sessionErr)
+		}
+		req.SessionID, req.CaptureSession = sessionID, true
+		req.Compact = strategy == "compact" && agent.Runtime == "claude"
+	}
 	a.sdlcPromptCacheDecision(ctx, store, run, &req)
 	executor := a.SdlcExecutor
 	if executor == nil {
 		executor = worker.CLIExecutor{}
 	}
-	invokeCtx, cancel := context.WithCancel(ctx)
+	invokeCtx, cancel := context.WithTimeout(ctx, a.invocationTimeout(run, mustPolicy(a)))
+	stop, err := a.budgetActivity(ctx, run, assignment.InvocationID)
+	if err != nil {
+		cancel()
+		return err
+	}
+	defer stop()
 	defer cancel()
 
 	type replyOrErr struct {
@@ -496,7 +468,7 @@ func (a *App) runFanoutSubtask(ctx context.Context, runID string, store *ledger.
 	case <-ctx.Done():
 		cancel()
 		stopped := <-done
-		if stopped.reply.InputTokens != nil || stopped.reply.OutputTokens != nil || stopped.reply.ToolCalls != nil || stopped.reply.CostReported {
+		if stopped.reply.SessionID != "" || stopped.reply.InputTokens != nil || stopped.reply.OutputTokens != nil || stopped.reply.ToolCalls != nil || stopped.reply.CostReported {
 			if err := a.saveInvocationUsage(store, assignment, agent.Model, stopped.reply); err != nil {
 				return err
 			}
@@ -510,7 +482,7 @@ func (a *App) runFanoutSubtask(ctx context.Context, runID string, store *ledger.
 			return a.sdlcPauseInjectionReview(runID, rec.ID)
 		}
 		if res.err != nil {
-			if res.reply.InputTokens != nil || res.reply.OutputTokens != nil || res.reply.ToolCalls != nil || res.reply.CostReported {
+			if res.reply.SessionID != "" || res.reply.InputTokens != nil || res.reply.OutputTokens != nil || res.reply.ToolCalls != nil || res.reply.CostReported {
 				if err := a.saveInvocationUsage(store, assignment, agent.Model, res.reply); err != nil {
 					return err
 				}
@@ -544,13 +516,7 @@ func (a *App) runFanoutSubtask(ctx context.Context, runID string, store *ledger.
 	if reply.CostUSD > 0 || reply.InputTokens != nil || reply.OutputTokens != nil || reply.ToolCalls != nil {
 		cost := reply.CostUSD
 		usage = &adaptive.SubtaskUsage{InputTokens: reply.InputTokens, OutputTokens: reply.OutputTokens, ToolCalls: reply.ToolCalls, CostUSD: &cost}
-		_ = store.WithRunLock(func() error {
-			latest, err := store.ReadRun()
-			if err != nil {
-				return err
-			}
-			return a.chargeTreeCost(&latest, mustPolicy(a), reply.CostUSD)
-		})
+
 	}
 	if err := a.saveInvocationUsage(store, assignment, agent.Model, reply); err != nil {
 		return err
@@ -571,6 +537,13 @@ func mustPolicy(a *App) enrollment.Policy {
 func (a *App) completeFanout(store *ledger.Store, subtaskID string, assignment adaptive.Assignment, status string, result adaptive.Result, usage *adaptive.SubtaskUsage) error {
 	now := a.Clock()
 	return store.UpdateFanout(now, func(r *ledger.Run, s *adaptive.Schedule) error {
-		return s.Complete(subtaskID, status, result, usage, now)
+		if err := s.Complete(subtaskID, status, result, usage, now); err != nil {
+			return err
+		}
+		if status == adaptive.SubtaskTimedOut {
+			r.Adaptive.Pause("invocation-timeout")
+			s.PauseReason = "invocation-timeout"
+		}
+		return a.completeBudget(r, assignment.InvocationID, result.Outcome == "changed", result.CostUSD)
 	})
 }

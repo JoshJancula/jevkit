@@ -150,6 +150,7 @@ func hostSpecs(host string) ([]fileSpec, error) {
 			fileSpec{"claude/marketplace.json", ".claude-plugin/marketplace.json", 0o644, true},
 			fileSpec{"claude/hooks.json", "hooks/hooks.json", 0o644, true},
 			fileSpec{"claude/mcp.json", ".mcp.json", 0o644, true},
+			fileSpec{"claude/skills/jev-decisions/SKILL.md", "skills/jev-decisions/SKILL.md", 0o644, true},
 			fileSpec{"claude/host-manifest.json", "host-manifest.json", 0o644, true},
 		), nil
 	case "cursor":

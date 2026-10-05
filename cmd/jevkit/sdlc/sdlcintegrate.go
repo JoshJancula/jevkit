@@ -30,6 +30,14 @@ func (a *App) sdlcIntegrateFanout(ctx context.Context, runID string, store *ledg
 		return nil
 	}
 
+	if err := a.budgetGate(&run, mustPolicy(a), "work"); err != nil {
+		return err
+	}
+	stop, err := a.budgetActivity(ctx, run, runID+"/integration")
+	if err != nil {
+		return err
+	}
+	defer stop()
 	patches := map[string][]byte{}
 	handoffs := map[string]string{}
 	changed := map[string][]string{}
@@ -124,6 +132,7 @@ func (a *App) persistIntegration(store *ledger.Store, runID string, rec adaptive
 		}
 		if rec.Status == adaptive.IntegrationStatusApplied && run.Adaptive != nil && len(combined) > 0 {
 			st := *run.Adaptive
+			st.TreeBudget = true
 			if err := adaptive.ApplyIntegratedCandidate(&st, rec.CandidateFingerprint); err != nil {
 				return err
 			}

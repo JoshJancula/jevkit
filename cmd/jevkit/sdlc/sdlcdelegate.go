@@ -30,6 +30,9 @@ func (a *App) sdlcMaybeDelegate(ctx context.Context, run ledger.Run) (bool, erro
 	if err != nil {
 		return false, err
 	}
+	if run.AutoChildRunID != "" {
+		return a.driveAutoChild(ctx, run)
+	}
 	remaining, err := a.treeRemaining(run, p)
 	if err != nil {
 		return false, err
@@ -87,6 +90,11 @@ func (a *App) sdlcMaybeDelegate(ctx context.Context, run ledger.Run) (bool, erro
 		if err != nil {
 			return a.continueDelegation(run, store, "router unavailable")
 		}
+		stop, activityErr := a.budgetActivity(ctx, run, run.RunID+"/delegation")
+		if activityErr != nil {
+			return true, activityErr
+		}
+		defer stop()
 		res, err := router.Decide(ctx, "sdlc.builtin-delegation", fmt.Sprintf("Task: %s\nPlan revision: %s\nShould a built-in child workflow handle implementation?", run.Task, run.Adaptive.PlanRevision), route.CriteriaFromRubrics(criteria))
 		if err == nil {
 			delegation.Confidence = &res.Decision.Confidence

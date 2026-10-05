@@ -11,63 +11,50 @@ import (
 	"github.com/JoshJancula/jevkit/internal/sdlc/stageflow"
 )
 
-func TestDirectChildChargesRootAndUsesRootDeadline(t *testing.T) {
+func TestDirectChildChargesAuthoritativeRoot(t *testing.T) {
 	a := newApp(t)
 	p := enrollment.DefaultPolicy()
 	p.MaxAssignments = 1
 	p.MaxRevisions = 1
-	p.MaxEstimatedCostUSD = 0.5
+	p.MaxEstimatedCostUSD = .5
 	p.MaxRunSeconds = 60
-	st, err := adaptive.New("feature", "lean", 1, 1, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
+	st, _ := adaptive.New("feature", "lean", 1, 1, 1)
+	st.MaxAssignments = 1
+	st.MaxEstimatedCostUSD = .5
 	created := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
-	root := ledger.Run{RunID: "root", Workflow: "feature", CreatedAt: created.Format(time.RFC3339), Adaptive: &st, TreeUsage: &ledger.TreeUsage{}, StageFlow: &stageflow.State{Workflow: spec.Workflow{MaxSteps: 1}}}
-	child := ledger.Run{RunID: "child", ParentRunID: "root", Depth: 1, Workflow: "bugfix", CreatedAt: created.Add(50 * time.Second).Format(time.RFC3339), Adaptive: &st}
+	a.Now = func() time.Time { return created }
+	root := ledger.Run{RunID: "root", Workflow: "feature", CreatedAt: created.Format(time.RFC3339), Adaptive: &st, StageFlow: &stageflow.State{Workflow: spec.Workflow{MaxSteps: 1}}}
+	snapshotBudget(&root, p)
+	child := ledger.Run{RunID: "child", ParentRunID: "root", Adaptive: &st}
 	if err := ledger.Open(a.SDLCRunsDir(), "root").WriteRun(root); err != nil {
 		t.Fatal(err)
 	}
 	if err := ledger.Open(a.SDLCRunsDir(), "child").WriteRun(child); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.chargeTree(&child, p, "assignment"); err != nil {
+	first := adaptive.Assignment{InvocationID: "one", Role: "implementer"}
+	if err := a.reserveAssignment(&child, p, first, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.chargeTree(&child, p, "assignment"); err == nil {
-		t.Fatal("second child assignment exceeded root limit")
+	if err := a.reserveAssignment(&child, p, adaptive.Assignment{InvocationID: "two", Role: "implementer"}, false); err == nil {
+		t.Fatal("overspent root")
 	}
-	if err := a.chargeTree(&child, p, "revision"); err != nil {
+	if err := a.completeBudget(&child, "one", true, .6); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.chargeTree(&child, p, "revision"); err == nil {
-		t.Fatal("second child revision exceeded root limit")
-	}
-	if err := a.chargeTree(&child, p, "step"); err != nil {
+	if err := a.completeBudget(&child, "one", true, .6); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.chargeTree(&child, p, "step"); err == nil {
-		t.Fatal("second child stage step exceeded root limit")
-	}
-	if err := a.chargeTreeCost(&child, p, 0.3); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.chargeTreeCost(&child, p, 0.3); err == nil {
-		t.Fatal("reported child cost exceeded root limit")
-	}
-	root, err = ledger.Open(a.SDLCRunsDir(), "root").ReadRun()
+	b, err := a.budgetView(child, p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if root.TreeUsage.Assignments != 1 || root.TreeUsage.Revisions != 1 || root.TreeUsage.EstimatedCostUSD < 0.6 {
-		t.Fatalf("root usage: %+v", root.TreeUsage)
+	if b.Usage.Assignments != 1 || b.Usage.Revisions != 1 || b.Usage.CostUSD != .6 {
+		t.Fatalf("usage: %+v", b.Usage)
 	}
-	a.Now = func() time.Time { return created.Add(61 * time.Second) }
+	a.Now = func() time.Time { return created.Add(time.Hour) }
 	remaining, err := a.treeRemaining(child, p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if remaining >= 0 {
-		t.Fatalf("child escaped root deadline: %s", remaining)
+	if err != nil || remaining != time.Minute {
+		t.Fatalf("idle charged: %s %v", remaining, err)
 	}
 }

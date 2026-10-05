@@ -23,7 +23,7 @@ func BenchmarkInvocationLogWriteManySmallChunks(b *testing.B) {
 		numWrite int
 		tailCap  int
 	}{
-		{"under-cap", 500, MaxLogTail},        // 500 * 201B ~= 100KB, well under the 1MiB cap
+		{"under-cap", 500, MaxLogTail},          // 500 * 201B ~= 100KB, well under the 1MiB cap
 		{"over-cap-small-tail", 5000, 64 << 10}, // forces repeated rollover against a small cap
 	}
 	for _, c := range cases {

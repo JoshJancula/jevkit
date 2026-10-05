@@ -3,6 +3,7 @@ package util
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
 	"github.com/JoshJancula/jevkit/internal/upgrade"
@@ -29,6 +30,10 @@ func (a *App) upgradeCmd() *cobra.Command {
 		if check {
 			return nil
 		}
+		if strings.TrimPrefix(r.TagName, "v") == strings.TrimPrefix(a.Version, "v") {
+			a.Outf("jevkit %s is already the latest\n", r.TagName)
+			return nil
+		}
 		dir := filepath.Dir(exe)
 		candidate := filepath.Join(dir, ".jevkit-upgrade-download")
 		defer func() { _ = os.Remove(candidate) }()
@@ -38,7 +43,7 @@ func (a *App) upgradeCmd() *cobra.Command {
 		if err := upgrade.Replace(exe, candidate); err != nil {
 			return app.Failf("replace executable: %v", err)
 		}
-		a.Outf("upgraded to %s\n", r.TagName)
+		a.Outf("jevkit upgraded from %s to %s\n", a.Version, r.TagName)
 		return nil
 	}}
 }

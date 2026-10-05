@@ -35,31 +35,20 @@ func (a *App) sdlcDriveQuestion(ctx context.Context, runID string, store *ledger
 		if err != nil {
 			return app.Failf("%v", err)
 		}
-		remaining, err := a.treeRemaining(run, policy)
-		if err != nil {
-			return app.Failf("%v", err)
+		if err := a.budgetGate(&run, policy, "step"); err != nil {
+			return err
 		}
 		st := *run.Adaptive
-		if remaining <= 0 {
-			st.Pause("run-time-budget-exhausted")
-			run.Adaptive = &st
-			run.UpdatedAt = a.Clock().UTC().Format(time.RFC3339)
-			if err := store.WriteRun(run); err != nil {
-				return app.Failf("store timeout: %v", err)
-			}
-			return app.Failf("run %s paused: %s", runID, st.Outcome)
+		stop, err := a.budgetActivity(ctx, run, runID+"/question")
+		if err != nil {
+			return err
 		}
-		if limit := time.Duration(policy.MaxInvocationSeconds) * time.Second; remaining > limit {
-			remaining = limit
-		}
-		stepCtx, cancel := context.WithTimeout(ctx, remaining)
+		defer stop()
+		stepCtx, cancel := context.WithTimeout(ctx, a.invocationTimeout(run, policy))
 		defer cancel()
 		answer, reason := a.askStageQuestion(stepCtx, run, stage, store)
-		if err := run.StageFlow.Advance(answer, &st); err != nil {
-			return app.Failf("advance question: %v", err)
-		}
-		if err := a.chargeTree(&run, policy, "step"); err != nil {
-			return app.Failf("charge stage step: %v", err)
+		if err := a.advanceBudgetFlow(&run, &st, answer); err != nil {
+			return err
 		}
 		run.Adaptive = &st
 		run.UpdatedAt = a.Clock().UTC().Format(time.RFC3339)

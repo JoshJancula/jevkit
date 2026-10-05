@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,14 +19,6 @@ import (
 	"github.com/JoshJancula/jevkit/internal/sdlc/stageflow"
 	"github.com/JoshJancula/jevkit/internal/sdlc/worker"
 )
-
-func sdlcRunRemaining(run ledger.Run, policy enrollment.Policy, now time.Time) (time.Duration, error) {
-	created, err := time.Parse(time.RFC3339, run.CreatedAt)
-	if err != nil {
-		return 0, fmt.Errorf("run %s has invalid creation time: %w", run.RunID, err)
-	}
-	return created.Add(time.Duration(policy.MaxRunSeconds) * time.Second).Sub(now), nil
-}
 
 func (a *App) adaptiveCandidates(st adaptive.State, reach enrollment.Reach) ([]enrollment.Candidate, error) {
 	p, r, err := a.sdlcEnrollment()
@@ -229,49 +220,17 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 	if p.MaxConcurrent < st.MaxConcurrent {
 		st.MaxConcurrent = p.MaxConcurrent
 	}
-	if p.MaxAssignments < st.MaxAssignments {
-		st.MaxAssignments = p.MaxAssignments
-	}
-	if p.MaxRevisions < st.MaxRevisions {
-		st.MaxRevisions = p.MaxRevisions
-	}
-	if p.MaxEstimatedCostUSD > 0 && (st.MaxEstimatedCostUSD == 0 || p.MaxEstimatedCostUSD < st.MaxEstimatedCostUSD) {
-		st.MaxEstimatedCostUSD = p.MaxEstimatedCostUSD
-	}
 	if st.Role() == "" {
 		a.Outf("run %s: %s (%s)\n", runID, st.Stage, st.Outcome)
 		return nil, nil
 	}
-	remaining, err := a.treeRemaining(run, p)
-	if err != nil {
-		return nil, app.Failf("%v", err)
-	}
-	if remaining <= 0 {
-		st.Pause("run-time-budget-exhausted")
-		run.Adaptive = &st
-		run.UpdatedAt = a.Clock().UTC().Format(time.RFC3339)
-		if err := store.WriteRun(run); err != nil {
-			return nil, app.Failf("%v", err)
+	if err := a.budgetGate(&run, p, budgetKind(st)); err != nil {
+		if len(run.Adaptive.Assignments) > 0 {
+			return nil, nil
 		}
-		return nil, app.Failf("run %s paused: %s", runID, st.Outcome)
+		return nil, err
 	}
-	if st.Stage == adaptive.Implementing && st.DiffRevision != "" && st.RevisionCount >= st.MaxRevisions {
-		st.Pause("revision-budget-exhausted")
-		run.Adaptive = &st
-		run.UpdatedAt = a.Clock().UTC().Format(time.RFC3339)
-		if err := store.WriteRun(run); err != nil {
-			return nil, app.Failf("%v", err)
-		}
-		return nil, app.Failf("run %s paused: %s", runID, st.Outcome)
-	}
-	if st.BudgetExhausted() {
-		st.Pause("assignment-budget-exhausted")
-		run.Adaptive = &st
-		if err := store.WriteRun(run); err != nil {
-			return nil, app.Failf("%v", err)
-		}
-		return nil, app.Failf("run %s paused: %s", runID, st.Outcome)
-	}
+	st = *run.Adaptive
 	if st.Stage == adaptive.Assessing && len(st.Assessments)+len(st.Assignments) >= st.Quorum {
 		return nil, a.printPending(runID, st)
 	}
@@ -323,6 +282,11 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 	decision.Candidates = routingCandidates(roster, st, candidates)
 	decision.Outcome = "single eligible binding"
 	if len(candidates) > 1 {
+		stop, err := a.budgetActivity(ctx, run, runID+"/agent-selection")
+		if err != nil {
+			return nil, err
+		}
+		defer stop()
 		router, err := a.sdlcRouter()
 		if err != nil {
 			return nil, app.Failf("%v", err)
@@ -396,12 +360,14 @@ func (a *App) sdlcAssignNextLocked(ctx context.Context, runID string, store *led
 	if err := st.Assign(assignment); err != nil {
 		return nil, app.Failf("%v", err)
 	}
-	if err := a.chargeTree(&run, p, "assignment"); err != nil {
+	if err := a.reserveAssignment(&run, p, assignment, false); err != nil {
 		st.AssignmentCount--
-		st.Pause("assignment-budget-exhausted")
+		delete(st.Assignments, assignment.InvocationID)
 		run.Adaptive = &st
-		_ = store.WriteRun(run)
-		return nil, app.Failf("run %s paused: %v", runID, err)
+		if gateErr := a.budgetGate(&run, p, budgetKind(st)); gateErr != nil {
+			return nil, gateErr
+		}
+		return nil, err
 	}
 	run.Adaptive = &st
 	run.UpdatedAt = a.Clock().UTC().Format("2006-01-02T15:04:05Z")
@@ -562,24 +528,9 @@ func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artif
 		}
 		return app.Usagef("adaptive: result does not match a pending independent invocation")
 	}
-	if st.Role() != "" && result.Outcome != "run-time-exhausted" {
-		policy, _, err := a.sdlcEnrollment()
-		if err != nil {
-			return app.Failf("%v", err)
-		}
-		remaining, err := a.treeRemaining(run, policy)
-		if err != nil {
-			return app.Failf("%v", err)
-		}
-		if remaining <= 0 {
-			st.Pause("run-time-budget-exhausted")
-			run.Adaptive = &st
-			run.UpdatedAt = a.Clock().UTC().Format(time.RFC3339)
-			if err := store.WriteRun(run); err != nil {
-				return app.Failf("store timeout: %v", err)
-			}
-			return app.Failf("run %s paused: %s", runID, st.Outcome)
-		}
+	st.TreeBudget = true
+	if st.BudgetPhase != "" {
+		previousStage = st.BudgetPhase
 	}
 	if result.Outcome == "changes-required" && len(artifact) > 0 {
 		result.Reason = worker.BoundText(string(artifact), worker.MaxVerificationSummaryBytes)
@@ -594,23 +545,8 @@ func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artif
 	if run.OperatorGuidance != "" && operatorGuidanceConsumed(result.Outcome) {
 		run.OperatorGuidance = ""
 	}
-	if result.CostUSD > 0 {
-		policy, _, err := a.sdlcEnrollment()
-		if err != nil {
-			return err
-		}
-		if err := a.chargeTreeCost(&run, policy, result.CostUSD); err != nil {
-			st.Pause("cost-budget-exhausted")
-		}
-	}
-	if result.Outcome == "changed" && st.RevisionCount > run.Adaptive.RevisionCount {
-		policy, _, err := a.sdlcEnrollment()
-		if err != nil {
-			return err
-		}
-		if err := a.chargeTree(&run, policy, "revision"); err != nil {
-			st.Pause("revision-budget-exhausted")
-		}
+	if err := a.completeBudget(&run, result.InvocationID, newCandidate, result.CostUSD); err != nil {
+		return err
 	}
 	if artifactName != "" {
 		if err := store.WriteArtifact(artifactName, artifact); err != nil {
@@ -685,22 +621,22 @@ func (a *App) sdlcRecordResultLocked(runID string, result adaptive.Result, artif
 	}
 	if run.StageFlow != nil {
 		if route, ok := stageflowRouteAfterResult(previousStage, st.Stage, result.Outcome, st); ok {
-			if err := run.StageFlow.Advance(route, &st); err != nil {
-				return app.Failf("advance workflow: %v", err)
-			}
-			policy, _, err := a.sdlcEnrollment()
-			if err != nil {
+			if err := a.advanceBudgetFlow(&run, &st, route); err != nil {
 				return err
 			}
-			if err := a.chargeTree(&run, policy, "step"); err != nil {
-				st.Pause("stage-step-budget-exhausted")
-			}
 		}
+
 	}
 	run.Adaptive = &st
 	run.UpdatedAt = a.Clock().UTC().Format("2006-01-02T15:04:05Z")
 	if err := store.WriteRun(run); err != nil {
 		return app.Failf("store outcome: %v", err)
+	}
+	if st.Stage != adaptive.Done && st.Stage != adaptive.Paused {
+		if err := a.budgetGate(&run, mustPolicy(a), budgetKind(st)); err != nil && !adaptive.BudgetPause(run.Adaptive.Outcome) {
+			return err
+		}
+		st = *run.Adaptive
 	}
 	_ = a.recordDecision(store, ledger.Decision{RunID: runID, Kind: "invocation-outcome", Stage: previousStage, Invocation: result.InvocationID, Runtime: completedAssignment.Runtime, Trigger: result.AgentID, Choice: result.Outcome, Outcome: st.Stage, Next: st.PendingReason, Detail: result.Reason})
 	if result.Outcome == "handoff" || result.Outcome == "invocation-failed" || result.Outcome == "auth-failed" {

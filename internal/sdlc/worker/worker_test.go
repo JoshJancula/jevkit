@@ -162,7 +162,7 @@ func TestCLIExecutorInstallsOptedInHooksAndSetsCompactionOnlyForAgent(t *testing
 	if err != nil || string(got) != "1,1,0" {
 		t.Fatalf("agent compaction environment = %q, %v", got, err)
 	}
-	hooks, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	hooks, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.local.json"))
 	if err != nil || !strings.Contains(string(hooks), "/opt/jevkit") {
 		t.Fatalf("project hooks were not installed: %q, %v", hooks, err)
 	}
@@ -204,7 +204,7 @@ func TestCLIExecutorInstallsMCPWithoutHooks(t *testing.T) {
 	if err != nil || !strings.Contains(string(mcp), "/opt/jevkit") || !strings.Contains(string(mcp), "mcp") {
 		t.Fatalf("project MCP was not installed: %q, %v", mcp, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.local.json")); !os.IsNotExist(err) {
 		t.Fatalf("unexpected hook install: %v", err)
 	}
 	if !strings.Contains(makePrompt(req), "jev_ask") {

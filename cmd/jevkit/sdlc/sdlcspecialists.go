@@ -22,6 +22,21 @@ func (a *App) scheduleSpecialists(ctx context.Context, run ledger.Run, st *adapt
 		st.PendingFocus, st.PendingReason = "", ""
 		return
 	}
+	if err == nil {
+		run.Adaptive = st
+		if gateErr := a.budgetGate(&run, p, "work"); gateErr != nil {
+			st.PendingDecision = kind
+			return
+		}
+		stop, activityErr := a.budgetActivity(ctx, run, run.RunID+"/specialists")
+		if activityErr != nil {
+			st.PendingDecision = kind
+			st.PendingReason = activityErr.Error()
+			st.Pause("specialist-decision-unavailable")
+			return
+		}
+		defer stop()
+	}
 	prior := make(map[string]string)
 	for _, d := range st.SpecialistDecisions {
 		prior[d.Role+"/"+d.Revision] = d.Choice + "/" + d.Reason

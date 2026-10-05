@@ -15,7 +15,7 @@ import (
 const ClaudeName = "claude"
 
 // Managed hook command token used as an idempotency marker inside
-// .claude/settings.json. Installer matching is substring-based on this token
+// Claude settings files. Installer matching is substring-based on this token
 // so a binary-path change still replaces the prior entry instead of duplicating.
 // Full command is `<binary> _runtime dispatch --protocol 1 claude post-tool`.
 const ClaudeHookMarker = "_runtime dispatch --protocol 1 claude post-tool"

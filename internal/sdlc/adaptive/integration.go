@@ -10,11 +10,11 @@ import (
 
 // Integration outcome statuses persisted on the supervisor-owned record.
 const (
-	IntegrationStatusPending   = "pending"
-	IntegrationStatusApplied   = "applied"
-	IntegrationStatusConflict  = "conflict"
-	IntegrationStatusRepair    = "repair"
-	IntegrationStatusPaused    = "paused-for-human"
+	IntegrationStatusPending    = "pending"
+	IntegrationStatusApplied    = "applied"
+	IntegrationStatusConflict   = "conflict"
+	IntegrationStatusRepair     = "repair"
+	IntegrationStatusPaused     = "paused-for-human"
 	IntegrationStatusRolledBack = "rolled-back"
 )
 
@@ -67,53 +67,53 @@ type SubtaskProvenance struct {
 
 // IntegrationDecision is one recorded choice during planning or apply.
 type IntegrationDecision struct {
-	At     string `json:"at,omitempty"`
-	Kind   string `json:"kind"`
-	Detail string `json:"detail,omitempty"`
+	At     string   `json:"at,omitempty"`
+	Kind   string   `json:"kind"`
+	Detail string   `json:"detail,omitempty"`
 	Paths  []string `json:"paths,omitempty"`
 }
 
 // PathApply describes one path the supervisor intends to write or skip.
 type PathApply struct {
-	Path     string `json:"path"`
-	Subtask  string `json:"subtaskId"`
-	Action   string `json:"action"` // apply, preserve-dirty, skip
-	Reason   string `json:"reason,omitempty"`
+	Path    string `json:"path"`
+	Subtask string `json:"subtaskId"`
+	Action  string `json:"action"` // apply, preserve-dirty, skip
+	Reason  string `json:"reason,omitempty"`
 }
 
 // RepairBrief is the exact artifact set and summary for one bounded repair.
 type RepairBrief struct {
-	Summary      string   `json:"summary"`
-	SubtaskIDs   []string `json:"subtaskIds,omitempty"`
-	Artifacts    []string `json:"artifacts,omitempty"`
+	Summary       string   `json:"summary"`
+	SubtaskIDs    []string `json:"subtaskIds,omitempty"`
+	Artifacts     []string `json:"artifacts,omitempty"`
 	ConflictPaths []string `json:"conflictPaths,omitempty"`
-	FailedIDs    []string `json:"failedIds,omitempty"`
+	FailedIDs     []string `json:"failedIds,omitempty"`
 }
 
 // IntegrationRecord is the durable supervisor-owned integration step. Only this
 // record (not a subtask) may advance the aggregate candidate after fan-out.
 type IntegrationRecord struct {
-	Status                 string               `json:"status"`
-	SourceRevision         string               `json:"sourceRevision,omitempty"`
-	ProjectHead            string               `json:"projectHead,omitempty"`
-	CandidateFingerprint   string               `json:"candidateFingerprint,omitempty"`
-	ApplyOrder             []string             `json:"applyOrder,omitempty"`
-	AppliedSubtasks        []string             `json:"appliedSubtasks,omitempty"`
-	PendingSubtasks        []string             `json:"pendingSubtasks,omitempty"`
-	PathPlan               []PathApply          `json:"pathPlan,omitempty"`
-	PreservedDirty         []string             `json:"preservedDirty,omitempty"`
-	ApplyPolicy            string               `json:"applyPolicy,omitempty"`
-	RollbackPolicy         string               `json:"rollbackPolicy,omitempty"`
-	Decisions              []IntegrationDecision `json:"decisions,omitempty"`
-	Provenance             []SubtaskProvenance  `json:"provenance,omitempty"`
-	Repair                 *RepairBrief         `json:"repair,omitempty"`
-	RepairAssignment       *Assignment          `json:"repairAssignment,omitempty"`
-	Summary                string               `json:"summary,omitempty"`
-	CombinedPatchArtifact  string               `json:"combinedPatchArtifact,omitempty"`
-	CheckReceiptsCleared   bool                 `json:"checkReceiptsCleared,omitempty"`
-	AssessmentsCleared     bool                 `json:"assessmentsCleared,omitempty"`
-	AppliedAt              string               `json:"appliedAt,omitempty"`
-	RolledBackAt           string               `json:"rolledBackAt,omitempty"`
+	Status                string                `json:"status"`
+	SourceRevision        string                `json:"sourceRevision,omitempty"`
+	ProjectHead           string                `json:"projectHead,omitempty"`
+	CandidateFingerprint  string                `json:"candidateFingerprint,omitempty"`
+	ApplyOrder            []string              `json:"applyOrder,omitempty"`
+	AppliedSubtasks       []string              `json:"appliedSubtasks,omitempty"`
+	PendingSubtasks       []string              `json:"pendingSubtasks,omitempty"`
+	PathPlan              []PathApply           `json:"pathPlan,omitempty"`
+	PreservedDirty        []string              `json:"preservedDirty,omitempty"`
+	ApplyPolicy           string                `json:"applyPolicy,omitempty"`
+	RollbackPolicy        string                `json:"rollbackPolicy,omitempty"`
+	Decisions             []IntegrationDecision `json:"decisions,omitempty"`
+	Provenance            []SubtaskProvenance   `json:"provenance,omitempty"`
+	Repair                *RepairBrief          `json:"repair,omitempty"`
+	RepairAssignment      *Assignment           `json:"repairAssignment,omitempty"`
+	Summary               string                `json:"summary,omitempty"`
+	CombinedPatchArtifact string                `json:"combinedPatchArtifact,omitempty"`
+	CheckReceiptsCleared  bool                  `json:"checkReceiptsCleared,omitempty"`
+	AssessmentsCleared    bool                  `json:"assessmentsCleared,omitempty"`
+	AppliedAt             string                `json:"appliedAt,omitempty"`
+	RolledBackAt          string                `json:"rolledBackAt,omitempty"`
 }
 
 // CollectContributions builds contributions from a durable schedule plus driver-
@@ -174,11 +174,11 @@ func CollectContributions(s Schedule, patches map[string][]byte, handoffs map[st
 func PlanIntegration(s Schedule, contribs []SubtaskContribution, project ProjectSurface, alreadyApplied []string) IntegrationRecord {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rec := IntegrationRecord{
-		Status:         IntegrationStatusPending,
-		SourceRevision: s.SourceRevision,
-		ProjectHead:    project.HeadRevision,
-		ApplyPolicy:    ApplyPreserveDirty,
-		RollbackPolicy: RollbackExplicit,
+		Status:                IntegrationStatusPending,
+		SourceRevision:        s.SourceRevision,
+		ProjectHead:           project.HeadRevision,
+		ApplyPolicy:           ApplyPreserveDirty,
+		RollbackPolicy:        RollbackExplicit,
 		CombinedPatchArtifact: "patch.diff",
 	}
 	appliedSet := map[string]bool{}
@@ -423,7 +423,7 @@ func ApplyIntegratedCandidate(st *State, fingerprint string) error {
 	}
 	InvalidateOnCandidateChange(st)
 	st.RevisionCount++
-	if st.MaxRevisions > 0 && st.RevisionCount > st.MaxRevisions {
+	if !st.TreeBudget && st.MaxRevisions > 0 && st.RevisionCount > st.MaxRevisions {
 		st.Pause("revision-budget-exhausted")
 		return nil
 	}

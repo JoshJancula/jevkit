@@ -20,6 +20,22 @@ jevkit doctor              # check the binary, hooks, and MCP setup
 
 The default install adds hooks and an MCP server. It is project scoped; add `--scope user` to install for your user account. Jevkit keeps a backup of configuration it changes, and `jevkit uninstall codex` restores it. Preview changes with `jevkit install codex --dry-run`.
 
+Claude project hooks go in `.claude/settings.local.json`, leaving shared
+`.claude/settings.json` untouched. User-scoped Claude hooks use
+`~/.claude/settings.json`. Keep local hook files and their `.jevkit-original`
+backups out of Git: this repository ignores `.claude/` and `.codex/` because
+installed hooks can contain machine-specific binary paths. In other projects,
+ignore `.claude/settings.local.json`, its backup, `.codex/hooks.json`, and its
+backup when installing local hooks.
+
+For a project installed by an older Jevkit version, remove the old managed
+hooks from `.claude/settings.json` before reinstalling, to avoid running them
+from both settings files. If that file contains only your local Jevkit hooks
+and no shared settings, rename it and its backup to `settings.local.json` and
+`settings.local.json.jevkit-original` when those destination files do not
+already exist. Otherwise use the older binary to uninstall its hooks before
+installing with the new one.
+
 For SDLC runs, `jevkit sdlc integrations` shows the personal default for this
 project. Each new interactive run asks whether to auto-install hooks for its
 CLI agents and enable tool-output compaction, unless you select “keep this as
@@ -132,17 +148,33 @@ jevkit mcp start
 
 | Tool | Role |
 | --- | --- |
-| `jev_classify_request` | Classify a request |
-| `jev_classify_failure` | Classify a failure |
-| `jev_rank_relevance` | Rank line relevance |
-| `jev_developer_assess` | Dispatch one of five built-in `developer.*` decision-support assessments |
+| `jev_classify_request` | Route a request to one of a closed set of caller-supplied targets |
+| `jev_classify_failure` | Classify a jevkit SDLC graph-stage failure |
+| `jev_rank_relevance` | Rank tagged evidence lines, most relevant first (`ranked`) |
+| `jev_developer_assess` | Dispatch one of eight built-in `developer.*` decision-support assessments |
 | `jev_ask` | Unregistered escape hatch: arbitrary state and named questions, not a registry set |
+
+The server sends MCP `instructions` in its initialize result telling agents *when* to call these tools (before broad or destructive actions, before reporting work done, on unclear failures, when judging review findings, and on long logs). Hosts that defer tool schemas, such as Claude Code, otherwise show agents only bare tool names. The Claude Code plugin also ships a `jev-decisions` skill with the same guidance.
+
+Registry-backed tools return a compact result:
+
+```json
+{
+  "answer": {"cause": {"type": "choice", "choice": "test-defect-flake", "confidence": 0.84, "probabilities": {"test-defect-flake": 0.88, "configuration-environment": 0.12}}},
+  "decision": {"decision": "gather", "reason": "gather", "chosen": "test-defect-flake", "confidence": 0.84, "questionSetVersion": 1},
+  "guidance": "Confidence 0.84 is below the act threshold (0.85), so treat the answer as a lean, not a decision. It leans \"test-defect-flake\". Not provided: state.diffSummary. To firm it up: ...",
+  "assessment": "developer.failure-triage",
+  "registryVersion": "1"
+}
+```
+
+`guidance` turns the decision into one instruction: on `act` the answer can be relied on as input, on `gather` it names the optional state fields the caller left out plus the set's `policy.gatherHint`, and on `fallback` it repeats the set's `policy.fallback`. The full decision record, including every answer, is still written to `decisions.jsonl`; it is no longer repeated in the tool result. `jev_rank_relevance` also returns `ranked`, every option with nonzero probability ordered most relevant first, since its question set picks a single line.
 
 The server resolves the API key itself; client configs never embed it. Without a key (or with an open circuit breaker), tools return a successful envelope with `available: false` so agents fall back natively.
 
-`jev_ask` accepts a `state` value and a named `questions` map (each `{type, instructions, criteria}`), both of which may be plain strings or literal JSON (an object or array) for structured content; it applies the same JSON-aware redaction and size limits as the curated tools, marks every call `unregistered: true`, and records a privacy-safe local audit line (timestamp, caller, question ids/types, byte counts, redaction rule counts — never payload text) to `<state>/jevkit/jev-ask-audit.jsonl`. Its `options` field (a bare array of Choice labels) is a **deprecated** compatibility alias for null-valued `criteria` entries; do not combine it with `criteria`, and prefer `criteria` in new integrations — `options` is removed in the next breaking release. For large context, load and redact content from a file rather than pasting it inline, the same way `jevkit ask request --file <path|->` does for a human operator.
+`jev_ask` accepts a `state` value and a named `questions` map (each `{type, instructions, criteria}`), both of which may be plain strings or literal JSON (an object or array) for structured content; it applies the same JSON-aware redaction and size limits as the curated tools, marks every call `unregistered: true`, and, when auditing is enabled (reported as `audited` in the result), records a privacy-safe local audit line (timestamp, caller, question ids/types, byte counts, redaction rule counts — never payload text) to `<state>/jevkit/jev-ask-audit.jsonl`. Its `options` field (a bare array of Choice labels) is a **deprecated** compatibility alias for null-valued `criteria` entries; do not combine it with `criteria`, and prefer `criteria` in new integrations — `options` is removed in the next breaking release. For large context, load and redact content from a file rather than pasting it inline, the same way `jevkit ask request --file <path|->` does for a human operator.
 
-`jev_developer_assess` dispatches to a small, versioned, opt-in set of registry-backed `developer.*` question sets built for coding-agent decision support, not autonomous execution: `developer.change-risk` (Score, low-to-critical), `developer.failure-triage` (Choice: regression, dependency-toolchain, configuration-environment, test-defect-flake, unknown), `developer.test-priority` (Choice: block, targeted-tests, full-suite, no-additional-tests), `developer.review-disposition` (Choice: block, needs-review, informational, no-finding), and `developer.release-readiness` (Noul with explicit true/false criteria). Its `state` argument is a structured object drawn from a shared field set (`diffSummary`, `affectedAreas`, `testOutput`, `environment`, `constraints`); each assessment requires its own subset and rejects unknown keys. Every call applies the same JSON-aware redaction and size limits as the curated tools, then returns the typed answer plus the registry act/gather/fallback decision, confidence, and registry version, logged to `decisions.jsonl` exactly like `jev_classify_request`. No `developer.*` answer is ever turned into an automatic code change, command, merge, deploy, or secret exposure — it is data for the caller to act on. Thresholds are uncalibrated placeholders: use `JEVKIT_SHADOW=1` to log would-have decisions before trusting `act`. For custom, one-off, or project-local questions outside this curated set, use `jev_ask` instead — a project-local addition should never bypass `jev_ask`'s redaction to reach the wire, since that is the only way a locally-defined question keeps the built-in safety guarantees.
+`jev_developer_assess` dispatches to a small, versioned, opt-in set of registry-backed `developer.*` question sets built for coding-agent decision support, not autonomous execution: `developer.proceed-check` (Choice: proceed, narrow-scope, ask-user, stop; requires `request` and `plannedAction`), `developer.done-check` (Choice: done, needs-verification, incomplete, off-target; requires `request` and `diffSummary`), `developer.finding-validity` (Choice: valid, false-positive, needs-verification; requires `finding`), `developer.change-risk` (Score, low-to-critical), `developer.failure-triage` (Choice: regression, dependency-toolchain, configuration-environment, test-defect-flake, unknown), `developer.test-priority` (Choice: block, targeted-tests, full-suite, no-additional-tests), `developer.review-disposition` (Choice: block, needs-review, informational, no-finding), and `developer.release-readiness` (Noul with explicit true/false criteria). Its `state` argument is a structured object drawn from a shared field set (`request`, `plannedAction`, `finding`, `diffSummary`, `affectedAreas`, `testOutput`, `environment`, `constraints`); each assessment requires its own subset and rejects unknown keys. Every call applies the same JSON-aware redaction and size limits as the curated tools, then returns the typed answer, the registry act/gather/fallback decision, guidance, and registry version, logged to `decisions.jsonl` exactly like `jev_classify_request`. No `developer.*` answer is ever turned into an automatic code change, command, merge, deploy, or secret exposure — it is data for the caller to act on. Thresholds are uncalibrated placeholders: use `JEVKIT_SHADOW=1` to log would-have decisions before trusting `act`. For custom, one-off, or project-local questions outside this curated set, use `jev_ask` instead — a project-local addition should never bypass `jev_ask`'s redaction to reach the wire, since that is the only way a locally-defined question keeps the built-in safety guarantees.
 
 Representative MCP assessment requests:
 
@@ -154,10 +186,16 @@ Representative MCP assessment requests:
 {"assessment":"developer.failure-triage","state":{"testOutput":"FAIL TestLogin: dial tcp: i/o timeout after 30s","diffSummary":"no related changes in the last 3 commits"}}
 ```
 
+```json
+{"assessment":"developer.proceed-check","state":{"request":"fix the typo in the README intro","plannedAction":"reformat README.md and rename three headings","constraints":"working tree has 50 uncommitted files from another session"}}
+```
+
 The other registered assessments use the same shape with their required fields:
-`developer.test-priority` and `developer.review-disposition` use `diffSummary`
-and `affectedAreas`; `developer.release-readiness` uses `testOutput` and
-`constraints`. Unknown fields are rejected and all values are redacted before
+`developer.done-check` uses `request` and `diffSummary`;
+`developer.finding-validity` uses `finding`; `developer.test-priority` and
+`developer.review-disposition` use `diffSummary`; `developer.release-readiness`
+uses `testOutput` and `constraints`. The tool description lists each
+assessment's optional fields. Unknown fields are rejected and all values are redacted before
 the request is sent.
 
 `jevkit install` registers the MCP entry for each agent; `jevkit mcp config --merge <file>` can merge the same entry into an existing client config.

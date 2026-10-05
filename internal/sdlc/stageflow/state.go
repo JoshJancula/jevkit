@@ -21,11 +21,12 @@ type Transition struct {
 }
 
 type State struct {
-	Workflow    spec.Workflow `json:"workflow"`
-	Current     string        `json:"current"`
-	Steps       int           `json:"steps"`
-	ChildRunID  string        `json:"childRunId,omitempty"`
-	Transitions []Transition  `json:"transitions,omitempty"`
+	PendingAnswer string        `json:"pendingAnswer,omitempty"`
+	Workflow      spec.Workflow `json:"workflow"`
+	Current       string        `json:"current"`
+	Steps         int           `json:"steps"`
+	ChildRunID    string        `json:"childRunId,omitempty"`
+	Transitions   []Transition  `json:"transitions,omitempty"`
 }
 
 // MigrateSaved upgrades a persisted stageflow snapshot when needed. Version 1
@@ -81,13 +82,16 @@ func (s *State) Advance(answer string, worker *adaptive.State) error {
 	if next == "" {
 		return fmt.Errorf("stageflow: stage %q has no route for %q", stage.ID, answer)
 	}
-	s.Steps++
-	s.Transitions = append(s.Transitions, Transition{Stage: stage.ID, Answer: answer, Next: next, ChildRunID: s.ChildRunID})
-	s.ChildRunID = ""
-	if s.Steps > s.Workflow.MaxSteps {
+	if !worker.TreeBudget && s.Steps >= s.Workflow.MaxSteps {
+		s.PendingAnswer = answer
 		worker.Pause("stage-step-budget-exhausted")
 		return nil
 	}
+	s.PendingAnswer = ""
+	s.Steps++
+	s.Transitions = append(s.Transitions, Transition{Stage: stage.ID, Answer: answer, Next: next, ChildRunID: s.ChildRunID})
+	s.ChildRunID = ""
+
 	s.Current = next
 	return s.enter(worker)
 }

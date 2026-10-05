@@ -56,11 +56,12 @@ type Server struct {
 	srv *sdk.Server
 }
 
-// The curated tools, each bound to one registered question set.
+// The curated tools, each bound to one registered question set. blurb says
+// what the tool does and when an agent should reach for it.
 var curated = []struct{ tool, set, blurb string }{
-	{"jev_classify_failure", "graph.failure-class", "Classify a graph-stage failure"},
-	{"jev_classify_request", "graph.router-confidence", "Route a request"},
-	{"jev_rank_relevance", "compaction.line-relevance", "Rank evidence/context lines"},
+	{"jev_classify_failure", "graph.failure-class", "Classify a jevkit SDLC graph-stage failure (transient, agent-correctable, permission, contract, configuration, integrity, cancelled) to decide whether to retry, fix or escalate. For an ordinary test or build failure use jev_developer_assess with developer.failure-triage instead."},
+	{"jev_classify_request", "graph.router-confidence", "Route a request to one of a closed set of targets you supply in options (for example implement, investigate, ask-user), and report whether the request is specific enough to route at all. Use it when a task could reasonably go several ways."},
+	{"jev_rank_relevance", "compaction.line-relevance", "Rank evidence lines (log lines, search hits, stack frames) by how much they explain what happened. Put each line in state prefixed by an id (L000: ..., L001: ...) and pass those ids as options; the result's ranked list orders every option with nonzero probability, most relevant first. Use it to pick what to read first in long output."},
 }
 
 // New builds the server and registers its tools.
@@ -91,6 +92,7 @@ func New(cfg Config) (*Server, error) {
 			Logger: s.log,
 			// Tools only: no logging capability, no list-changed notices.
 			Capabilities: &sdk.ServerCapabilities{Tools: &sdk.ToolCapabilities{}},
+			Instructions: Instructions,
 		},
 	)
 

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/JoshJancula/jevkit/cmd/jevkit/app"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
 	"github.com/JoshJancula/jevkit/internal/sdlc/ledger"
 
 	"github.com/spf13/cobra"
@@ -135,6 +136,9 @@ func (a *App) sdlcSilentStatus(out io.Writer, id string, step bool, completed st
 			_, _ = fmt.Fprintf(out, " (%s)", r.Adaptive.Outcome)
 		}
 		_, _ = fmt.Fprintln(out)
+		if adaptive.BudgetPause(r.Adaptive.Outcome) {
+			_, _ = fmt.Fprintln(out, a.sdlcRecoveryNext(r, id))
+		}
 	}
 }
 

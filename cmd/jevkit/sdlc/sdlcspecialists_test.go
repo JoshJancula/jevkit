@@ -38,7 +38,7 @@ agents:
 	}
 	st.Stage = adaptive.Implementing
 	st.PlanRevision = "plan-revision"
-	a.scheduleSpecialists(context.Background(), ledger.Run{RunID: "test", Task: "check API compatibility", Adaptive: &st}, &st, "plan")
+	a.scheduleSpecialists(context.Background(), ledger.Run{CreatedAt: a.Clock().Format("2006-01-02T15:04:05Z"), RunID: "test", Task: "check API compatibility", Adaptive: &st}, &st, "plan")
 	if st.Stage != adaptive.Specializing || st.Role() != "research" || len(st.SpecialistQueue) != 1 {
 		t.Fatalf("research queue: %+v", st)
 	}
@@ -73,7 +73,7 @@ func TestAdvisorySpecialistFallsBackToCoreRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Stage, st.PlanRevision = adaptive.Implementing, "plan"
-	a.scheduleSpecialists(context.Background(), ledger.Run{RunID: "advisory", Task: "implement plan"}, &st, "plan")
+	a.scheduleSpecialists(context.Background(), ledger.Run{CreatedAt: a.Clock().Format("2006-01-02T15:04:05Z"), RunID: "advisory", Task: "implement plan"}, &st, "plan")
 	if st.Stage != adaptive.Implementing || st.PendingDecision != "" || len(st.SpecialistDecisions) != 1 || st.SpecialistDecisions[0].Confidence != 0.03 {
 		t.Fatalf("advisory decision: %+v", st)
 	}
@@ -90,7 +90,7 @@ func TestAdvisorySkipsAbsentSpecialistWithoutAskingJev(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Stage, st.PlanRevision = adaptive.Implementing, "plan"
-	a.scheduleSpecialists(context.Background(), ledger.Run{RunID: "advisory", Task: "implement plan"}, &st, "plan")
+	a.scheduleSpecialists(context.Background(), ledger.Run{CreatedAt: a.Clock().Format("2006-01-02T15:04:05Z"), RunID: "advisory", Task: "implement plan"}, &st, "plan")
 	if st.Stage != adaptive.Implementing || fj.Calls != 0 || len(st.SpecialistDecisions) != 1 {
 		t.Fatalf("absent specialist: %+v calls=%d", st, fj.Calls)
 	}
@@ -148,7 +148,7 @@ func TestResumeLegacySpecialistPauseWithAdvisoryPolicy(t *testing.T) {
 	st.AssignmentCount = 1
 	st.Pause("specialist-decision-unavailable")
 	now := time.Now().UTC().Format(time.RFC3339)
-	stored := ledger.Run{RunID: "legacy-specialist", WorkDir: a.WorkDir, Workflow: "feature", Task: "build feature", CreatedAt: now, UpdatedAt: now, Adaptive: &st, TreeUsage: &ledger.TreeUsage{Assignments: 1}}
+	stored := ledger.Run{CreatedAt: a.Clock().Format("2006-01-02T15:04:05Z"), RunID: "legacy-specialist", WorkDir: a.WorkDir, Workflow: "feature", Task: "build feature", UpdatedAt: now, Adaptive: &st, TreeUsage: &ledger.TreeUsage{Assignments: 1}}
 	store := ledger.Open(a.SDLCRunsDir(), stored.RunID)
 	if err := store.WriteRun(stored); err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestMissingNeededExpertStaysPendingUntilEnrolled(t *testing.T) {
 	}
 	st.Stage = adaptive.Implementing
 	st.PlanRevision = "plan"
-	run := ledger.Run{RunID: "pending", Task: "check schema", Adaptive: &st}
+	run := ledger.Run{CreatedAt: a.Clock().Format("2006-01-02T15:04:05Z"), RunID: "pending", Task: "check schema", Adaptive: &st}
 	a.scheduleSpecialists(context.Background(), run, &st, "plan")
 	if st.Stage != adaptive.Paused || st.Outcome != "unmet-specialist-research" || st.PendingDecision != "plan" {
 		t.Fatalf("missing expert: %+v", st)
@@ -221,7 +221,7 @@ func TestPendingSpecialistDecisionRetriesWithoutRepeatingWorker(t *testing.T) {
 	st.PendingPhase = adaptive.Implementing
 	st.AssignmentCount = 1
 	now := time.Now().UTC().Format(time.RFC3339)
-	run := ledger.Run{RunID: "crashed", Workflow: "feature", Task: "check schema", Adaptive: &st, CreatedAt: now, UpdatedAt: now, TreeUsage: &ledger.TreeUsage{Assignments: 1}}
+	run := ledger.Run{CreatedAt: a.Clock().Format("2006-01-02T15:04:05Z"), RunID: "crashed", Workflow: "feature", Task: "check schema", Adaptive: &st, UpdatedAt: now, TreeUsage: &ledger.TreeUsage{Assignments: 1}}
 	store := ledger.Open(a.SDLCRunsDir(), run.RunID)
 	if err := store.WriteRun(run); err != nil {
 		t.Fatal(err)

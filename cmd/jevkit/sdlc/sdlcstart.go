@@ -465,6 +465,7 @@ func (a *App) startStageFlow(wf availableWorkflow, task string, files []seed.Fil
 	runID := a.newRunID(now)
 	ts := now.UTC().Format(time.RFC3339)
 	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, AllowRead: append([]string(nil), a.sdlcAllowRead...), Workflow: wf.Name, GraphSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, StageFlow: &flow, TreeUsage: &ledger.TreeUsage{}, SessionStrategy: a.sdlcSessionChoice, RuntimeIntegration: a.sdlcRuntimeChoice, RequirePlanApproval: !a.sdlcAutoChoice}
+	snapshotBudget(&run, p)
 	run.DelegateBuiltins, err = a.sdlcDelegationAllowed(p)
 	if err != nil {
 		return err
@@ -617,6 +618,7 @@ func (a *App) startAdaptive(name, task string, files []seed.FileArg, profile str
 	store := ledger.Open(a.SDLCRunsDir(), runID)
 	ts := now.UTC().Format(time.RFC3339)
 	run := ledger.Run{RunID: runID, WorkDir: a.WorkDir, AllowRead: append([]string(nil), a.sdlcAllowRead...), Workflow: name, Task: task, CreatedAt: ts, UpdatedAt: ts, Adaptive: &st, TreeUsage: &ledger.TreeUsage{}, SessionStrategy: a.sdlcSessionChoice, RuntimeIntegration: a.sdlcRuntimeChoice, RequirePlanApproval: !a.sdlcAutoChoice}
+	snapshotBudget(&run, p)
 	run.DelegateBuiltins, err = a.sdlcDelegationAllowed(p)
 	if err != nil {
 		return err

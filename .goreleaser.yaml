@@ -46,4 +46,7 @@ release:
     owner: JoshJancula
     name: jevkit
   prerelease: auto
+  # Release Please may have created the release already. Use the reviewed
+  # CHANGELOG.md entry even when its PR-body notes differ.
+  mode: replace
   name_template: "{{ .ProjectName }} {{ .Version }}"
