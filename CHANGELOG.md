@@ -11,8 +11,10 @@
 * harden runtime integrations and policies ([6134982](https://github.com/JoshJancula/jevkit/commit/613498239e01f707eb6914661905c511bdd127d5))
 * prompt injection detection ([ced3a6a](https://github.com/JoshJancula/jevkit/commit/ced3a6a3a3d5bdb67376f5af36f9aeaf58901e61))
 * **release:** prepare GitHub binaries and streamline docs ([4a786f6](https://github.com/JoshJancula/jevkit/commit/4a786f6fbb5678f6816b82fa70392525664d164d))
+* **sdlc:** add run budgets, keep-awake, and Release Please versioning ([36eb578](https://github.com/JoshJancula/jevkit/commit/36eb5787ab9d3e7d0bb0d0373d971c68b48c5da6))
 * **sdlc:** configure agent tools and runtime arguments ([f886d69](https://github.com/JoshJancula/jevkit/commit/f886d690353e731729f14086fddd5667430f7f96))
 * **sdlc:** prefill roster tool settings and examples ([75470d1](https://github.com/JoshJancula/jevkit/commit/75470d1d1cacdd2428a59adf09572b5698cf48a1))
+* **usage:** track agent time and show usage by model, role, and SDLC run ([f129c7b](https://github.com/JoshJancula/jevkit/commit/f129c7b60aeae06b8d080535fe66597bd6775843))
 
 ### Fixed
 
