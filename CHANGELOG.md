@@ -10,7 +10,6 @@
 
 ### Fixed
 
-* **install:** keep the archive path when verifying its checksum ([b0bfe66](https://github.com/JoshJancula/jevkit/commit/b0bfe6602ade289369a39ec3ac947e53fc91f31c))
 * **install:** keep the archive path when verifying its checksum ([c4fac09](https://github.com/JoshJancula/jevkit/commit/c4fac0911e765115b4277e8cbdd9991332ef18b5))
 
 ## 0.1.0 (2026-09-30)
