@@ -72,9 +72,12 @@ main() {
   verify_checksum "$tmp/$archive" "$tmp/checksums.txt"
   if command -v cosign >/dev/null 2>&1; then
     curl -fsSL "$base/checksums.txt.sigstore.json" -o "$tmp/checksums.txt.sigstore.json" || fail "cosign bundle download failed"
+    # The release workflow signs from the version's tag when a tag push runs
+    # it, and from main when the auto-version workflow on main calls it.
+    escaped_version=$(printf '%s' "$version" | sed 's/[.]/\\./g')
     cosign verify-blob \
       --bundle "$tmp/checksums.txt.sigstore.json" \
-      --certificate-identity "https://github.com/$REPO/.github/workflows/release.yml@refs/tags/v$version" \
+      --certificate-identity-regexp "^https://github\\.com/$REPO/\\.github/workflows/release\\.yml@refs/(tags/v$escaped_version|heads/main)\$" \
       --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
       "$tmp/checksums.txt" >/dev/null || fail "cosign verification failed"
   fi
