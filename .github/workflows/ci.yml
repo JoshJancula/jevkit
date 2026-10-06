@@ -77,3 +77,48 @@ jobs:
         # Covers keystore (keychain abstraction), exec wrapper, and installer
         # packages among the full ./... suite.
         run: go test ./... -race
+
+  installers:
+    # Installs the latest published release with this change's installers,
+    # verifying its signature where cosign is available, so an installer
+    # bug fails a pull request instead of a release.
+    name: Install latest release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Find latest release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "JEVKIT_VERSION=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)" >> "$GITHUB_ENV"
+
+      - name: Install cosign
+        if: runner.os != 'Windows'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Install with install.sh
+        if: runner.os != 'Windows'
+        env:
+          JEVKIT_INSTALL_DIR: ${{ runner.temp }}/jevkit-bin
+        run: |
+          sh ./install.sh
+          test "$("$JEVKIT_INSTALL_DIR/jevkit" version)" = "jevkit ${JEVKIT_VERSION#v}"
+
+      - name: Install with install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          JEVKIT_INSTALL_DIR: ${{ runner.temp }}\jevkit-bin
+        run: |
+          ./install.ps1
+          $got = & (Join-Path $env:JEVKIT_INSTALL_DIR 'jevkit.exe') version
+          if ($got -ne "jevkit $($env:JEVKIT_VERSION.TrimStart('v'))") { throw "installed version: $got" }
