@@ -463,7 +463,14 @@ func TestParallelReviewsDoNotAdvanceWhilePending(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- a.sdlcDrive(ctx, id) }()
-	time.Sleep(50 * time.Millisecond)
+	// Wait for both reviews to be running rather than for a fixed time:
+	// slow CI runners under -race can take longer than any guess.
+	for deadline := time.Now().Add(5 * time.Second); exec.started.Load() < 2; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatalf("reviews did not start: %d running", exec.started.Load())
+		}
+	}
 	stored, err := ledger.Open(a.SDLCRunsDir(), id).ReadRun()
 	if err != nil {
 		t.Fatal(err)
