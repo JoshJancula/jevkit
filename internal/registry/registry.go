@@ -14,7 +14,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -117,6 +117,9 @@ type Policy struct {
 	ActThreshold      float64 `json:"actThreshold"`
 	EscalateThreshold float64 `json:"escalateThreshold"`
 	Fallback          string  `json:"fallback"`
+	// GatherHint, when set, tells a caller what evidence to add before
+	// asking again after a gather decision.
+	GatherHint string `json:"gatherHint,omitempty"`
 }
 
 // Parse validates raw against the embedded schema and the per-type shape

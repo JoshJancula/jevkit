@@ -15,6 +15,10 @@
 # You may use the same runtime for several agents. These are just examples.
 # Roles are chosen when adding to your team, not in this suggestions file.
 # Later edits here do not update copies already in someone's personal roster.
+# Tool settings copy into your roster when you add a suggestion.
+# Claude/Codex: false disables a family; true keeps runtime settings and approvals.
+# Replace the mapping with tools: auto to inherit all runtime tool settings.
+# OpenCode, Cursor, Antigravity, and native agent entries use tools: auto.
 version: 1
 agents:
   # Commented examples are inactive until uncommented.
@@ -26,6 +30,10 @@ agents:
 #     runtime: claude
 #     model: YOUR_MODEL
 #     rubric: Plan complex changes and clarify the approach before implementation.
+#     tools:
+#       shell: true
+#       web: true
+#       delegate: true
 
   # Implementation example. After uncommenting and editing:
   # jevkit sdlc agents add codex-builder --role implementer
@@ -34,6 +42,10 @@ agents:
 #     runtime: codex
 #     model: YOUR_MODEL
 #     rubric: Implement planned code changes and report the result.
+#     tools:
+#       shell: true
+#       web: true
+#       delegate: true
 
   # Review example. After uncommenting and editing:
   # jevkit sdlc agents add opencode-reviewer --role assessor
@@ -42,3 +54,4 @@ agents:
 #     runtime: opencode
 #     model: YOUR_MODEL
 #     rubric: Assess code changes against the task and plan.
+#     tools: auto

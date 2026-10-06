@@ -325,3 +325,42 @@ func TestCost(t *testing.T) {
 		t.Fatal(b.String())
 	}
 }
+
+func TestAggregateKeepsOldRecordsReadableWithoutCacheFields(t *testing.T) {
+	// Jev usage.jsonl never recorded provider cache counters; old lines must
+	// still aggregate, and estimated cost must not be labeled a billing saving.
+	recs := []Record{
+		{Model: "jev-1.13.0", QuestionSetID: "qs", InputTokens: 100, OutputTokens: 10, UsageSource: SourceMeasured, Transport: TransportHTTPS},
+	}
+	s := Aggregate(recs, Filter{}, env(nil))
+	if s.Calls != 1 || s.InputTokens != 100 || s.OutputTokens != 10 {
+		t.Fatalf("%+v", s)
+	}
+	if s.Cost == nil || s.Cost.Note != "estimated" {
+		t.Fatalf("cost note must remain estimated, not a measured billing saving: %+v", s.Cost)
+	}
+}
+
+func TestPurposeClassifiesByRunThenQuestionSetThenOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		rec  Record
+		want string
+	}{
+		{Record{RunID: "run-1", QuestionSetID: "developer.done-check", Origin: "mcp"}, PurposeSDLC},
+		{Record{QuestionSetID: "sdlc.agent-selection"}, PurposeSDLC},
+		{Record{QuestionSetID: "graph.router-confidence"}, PurposeSDLC},
+		{Record{QuestionSetID: "compaction.line-relevance", Origin: "hook"}, PurposeCompaction},
+		{Record{QuestionSetID: "security.command-risk", Origin: "shell-wrapper"}, PurposeSecurity},
+		{Record{QuestionSetID: "developer.proceed-check", Origin: "mcp"}, PurposeMCP},
+		{Record{QuestionSetID: "manual.request"}, PurposeCLI},
+		{Record{QuestionSetID: "developer.change-risk"}, PurposeOther},
+	} {
+		if got := Purpose(tc.rec); got != tc.want {
+			t.Errorf("Purpose(%+v) = %q, want %q", tc.rec, got, tc.want)
+		}
+	}
+	s := Aggregate([]Record{{RunID: "run-1", QuestionSetID: "sdlc.route"}, {QuestionSetID: "compaction.triage.v2", Status: "http-500"}}, Filter{}, nil)
+	if s.ByPurpose[PurposeSDLC].Calls != 1 || s.ByPurpose[PurposeCompaction].Calls != 0 || s.ByPurpose[PurposeCompaction].Attempts != 1 || s.ByRun["run-1"].Calls != 1 {
+		t.Fatalf("purpose and run breakdowns: %+v %+v", s.ByPurpose, s.ByRun)
+	}
+}

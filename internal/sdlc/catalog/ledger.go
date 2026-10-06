@@ -5,21 +5,24 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 	"gopkg.in/yaml.v3"
 )
 
 // LedgerAgent is one .jevkit/sdlc/agents.yaml entry.
 type LedgerAgent struct {
-	ID          string   `yaml:"id"`
-	Rubric      string   `yaml:"rubric"`
-	Via         string   `yaml:"via"`
-	Subagent    string   `yaml:"subagent"`
-	Runtime     string   `yaml:"runtime"`
-	Model       string   `yaml:"model"`
-	Agent       string   `yaml:"agent"` // the foreign runtime's own named agent
-	Binary      string   `yaml:"binary"`
-	WriteScopes []string `yaml:"writeScopes"`
-	ReadOnly    bool     `yaml:"readOnly"`
+	ID          string                 `yaml:"id"`
+	Rubric      string                 `yaml:"rubric"`
+	Via         string                 `yaml:"via"`
+	Subagent    string                 `yaml:"subagent"`
+	Runtime     string                 `yaml:"runtime"`
+	Model       string                 `yaml:"model"`
+	Agent       string                 `yaml:"agent"` // the foreign runtime's own named agent
+	Binary      string                 `yaml:"binary"`
+	RuntimeArgs string                 `yaml:"runtimeArgs,omitempty"`
+	WriteScopes []string               `yaml:"writeScopes"`
+	ReadOnly    bool                   `yaml:"readOnly"`
+	Tools       *enrollment.ToolPolicy `yaml:"tools,omitempty"`
 }
 
 // LedgerFile is one parsed agents.yaml, with Path kept for diagnostics and
@@ -68,6 +71,12 @@ func LoadLedger(path string) (LedgerFile, error) {
 }
 
 func (e LedgerAgent) validate() error {
+	if _, err := (enrollment.Agent{ID: e.ID, Via: e.Via, Runtime: e.Runtime, RuntimeArgs: e.RuntimeArgs, ReadOnly: e.ReadOnly, Tools: e.Tools}).ParseRuntimeArgs(e.ReadOnly); err != nil {
+		return err
+	}
+	if err := (enrollment.Agent{ID: e.ID, Via: e.Via, Runtime: e.Runtime, RuntimeAgent: e.Agent, Tools: e.Tools}).ValidateTools(); err != nil {
+		return err
+	}
 	switch e.Via {
 	case ViaNative:
 		if e.Subagent == "" {
@@ -100,7 +109,9 @@ func (e LedgerAgent) toAgent(path string) (*Agent, error) {
 		ID: e.ID, Rubric: e.Rubric, Via: e.Via,
 		Subagent: e.Subagent, Runtime: e.Runtime, Model: e.Model,
 		RuntimeAgent: e.Agent, Binary: e.Binary,
+		RuntimeArgs: e.RuntimeArgs,
 		WriteScopes: e.WriteScopes, ReadOnly: e.ReadOnly,
+		Tools:  e.Tools,
 		Source: "ledger:" + path,
 	}
 	return a, nil

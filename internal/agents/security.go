@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/security"
-	"github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/security"
+	"github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 func securityDecision(ctx context.Context, cfg *config.Config, decider *registry.Decider, command, cwd, workspace, runtime string) (Response, bool) {

@@ -15,7 +15,14 @@ try {
   Expand-Archive (Join-Path $tmp $archive) -DestinationPath $tmp -Force
   $dest = if ($env:JEVKIT_INSTALL_DIR) { $env:JEVKIT_INSTALL_DIR } else { Join-Path $HOME '.local\bin' }
   New-Item -ItemType Directory -Force -Path $dest | Out-Null
-  Copy-Item (Get-ChildItem $tmp -Recurse -Filter jevkit.exe | Select-Object -First 1).FullName (Join-Path $dest 'jevkit.exe') -Force
-  Write-Host "installed $dest\jevkit.exe"
-  Write-Host 'next: jevkit key set; jevkit install <agent>'
+  $exe = Join-Path $dest 'jevkit.exe'
+  $previous = ''
+  if (Test-Path $exe) { try { $previous = ((& $exe version 2>$null) -split '\s+')[1].TrimStart('v') } catch { $previous = '' } }
+  Copy-Item (Get-ChildItem $tmp -Recurse -Filter jevkit.exe | Select-Object -First 1).FullName $exe -Force
+  if ($previous -notmatch '^\d') { $previous = '' }
+  if (-not $previous) { Write-Host "jevkit v$version installed to $exe" }
+  elseif ($previous -eq $version) { Write-Host "jevkit v$version reinstalled to $exe" }
+  else { Write-Host "jevkit upgraded from v$previous to v$version ($exe)" }
+  if (-not (($env:Path -split ';') -contains $dest)) { Write-Warning "$dest is not on your PATH" }
+  Write-Host 'Get started: jevkit key set; jevkit install <agent>'
 } finally { Remove-Item -Recurse -Force $tmp }

@@ -97,6 +97,9 @@
               },
               "fallback": {
                 "type": "string"
+              },
+              "gatherHint": {
+                "type": "string"
               }
             }
           },

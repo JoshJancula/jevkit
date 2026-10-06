@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/agents"
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/agents"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 func TestClaudeLookupRegistered(t *testing.T) {
@@ -176,9 +176,14 @@ func TestClaudeInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	settingsPath := filepath.Join(settingsDir, "settings.json")
+	settingsPath := filepath.Join(settingsDir, "settings.local.json")
 	original := []byte("{\n  \"permissions\": {\n    \"allow\": [\"Bash\"]\n  }\n}\n")
 	if err := os.WriteFile(settingsPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sharedPath := filepath.Join(settingsDir, "settings.json")
+	shared := []byte("{\n  \"hooks\": {},\n  \"permissions\": {\"deny\": [\"Read(.env)\"]}\n}\n")
+	if err := os.WriteFile(sharedPath, shared, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,6 +217,17 @@ func TestClaudeInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if !strings.Contains(string(data), `"permissions"`) {
 		t.Fatalf("lost unrelated settings: %s", data)
 	}
+	assertSharedUnchanged := func() {
+		t.Helper()
+		got, err := os.ReadFile(sharedPath)
+		if err != nil || !bytes.Equal(got, shared) {
+			t.Fatalf("shared settings changed: %q, %v", got, err)
+		}
+		if _, err := os.Stat(sharedPath + ".jevkit-original"); !os.IsNotExist(err) {
+			t.Fatalf("shared settings must not be backed up: %v", err)
+		}
+	}
+	assertSharedUnchanged()
 
 	if err := c.Uninstall(opts); err != nil {
 		t.Fatalf("uninstall: %v", err)
@@ -226,6 +242,7 @@ func TestClaudeInstallIdempotentAndUninstallRestoresBytes(t *testing.T) {
 	if _, err := os.Stat(settingsPath + ".jevkit-original"); !os.IsNotExist(err) {
 		t.Fatalf("backup should be removed after uninstall: %v", err)
 	}
+	assertSharedUnchanged()
 }
 
 func TestClaudeInstallDryRunWritesNothing(t *testing.T) {
@@ -240,7 +257,7 @@ func TestClaudeInstallDryRunWritesNothing(t *testing.T) {
 	if err := c.Install(opts); err != nil {
 		t.Fatal(err)
 	}
-	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	settingsPath := filepath.Join(dir, ".claude", "settings.local.json")
 	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
 		t.Fatalf("dry-run must not create settings: %v", err)
 	}

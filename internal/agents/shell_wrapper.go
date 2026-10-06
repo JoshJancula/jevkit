@@ -3,7 +3,7 @@ package agents
 import (
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 // BuildShellWrapperCommand returns a shell-safe invocation of the private
@@ -21,13 +21,16 @@ func BuildShellWrapperCommand(binary, workspace, command, runtime string) string
 
 // buildSecurityShellWrapperCommand carries --yolo across the separate wrapper
 // process through the environment, while leaving its workspace argument intact.
-func buildSecurityShellWrapperCommand(binary, workspace, command, runtime string, yolo bool, policy string) string {
+func buildSecurityShellWrapperCommand(binary, workspace, command, runtime string, yolo bool, policy string, guard bool) string {
 	base := BuildShellWrapperCommand(binary, workspace, command, runtime)
 	if policy != "" {
 		base = "JEVKIT_SECURITY_POLICY=" + shellQuote(policy) + " " + base
 	}
 	if yolo {
 		base = "JEVKIT_YOLO=1 " + base
+	}
+	if guard {
+		base = "JEVKIT_INJECTION_GUARD=1 " + base
 	}
 	return base
 }

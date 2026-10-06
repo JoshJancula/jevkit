@@ -1,0 +1,45 @@
+name: Auto version
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-version-main
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: github.repository == 'JoshJancula/jevkit'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Update release PR or create release
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: .github/release-config.json
+          manifest-file: .github/release-manifest.json
+
+  publish:
+    needs: version
+    if: needs.version.outputs.release_created == 'true'
+    permissions:
+      contents: write
+      id-token: write
+    # GITHUB_TOKEN-created tags do not trigger the tag-push workflow.
+    uses: ./.github/workflows/release.yml
+    with:
+      release_tag: ${{ needs.version.outputs.tag_name }}
+    secrets: inherit

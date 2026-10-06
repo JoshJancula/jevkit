@@ -1,8 +1,6 @@
-// Package usage records one JSONL line per successful Jev call and
+// Package usage records one JSONL line per observed Jev transport attempt and
 // aggregates those lines into a report with an estimated cost.
-//
-// Only the final successful attempt of a call is recorded; failed and
-// retried attempts never reach Append. Appends hold an exclusive file lock
+// Appends hold an exclusive file lock
 // so lines from concurrent goroutines and processes never interleave.
 package usage
 
@@ -20,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/filelock"
+	"github.com/JoshJancula/jevkit/internal/filelock"
 )
 
 // Usage sources and transports.
@@ -44,6 +42,8 @@ type Record struct {
 	PlanKey       string `json:"planKey,omitempty"`
 	Session       string `json:"session,omitempty"`
 	RunID         string `json:"runId,omitempty"`
+	Origin        string `json:"origin,omitempty"`
+	Status        string `json:"status,omitempty"`
 }
 
 // Path is <stateDir>/jevkit/usage.jsonl.
@@ -91,6 +91,95 @@ func Append(stateDir string, rec Record) error {
 		return err
 	}
 	return f.Close()
+}
+
+// RemoveRuns rewrites the usage log to drop every record whose RunID is in
+// runIDs — the "attributable" usage a deleted run tree owns. Records with an
+// empty RunID, or a RunID not in the set, are shared/unattributable and are
+// always preserved untouched. A missing file removes nothing.
+func RemoveRuns(stateDir string, runIDs map[string]bool) (removed int, err error) {
+	if len(runIDs) == 0 {
+		return 0, nil
+	}
+	path := Path(stateDir)
+	l, err := filelock.Acquire(path + ".lock")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Release()
+
+	recs, err := ReadRecords(path)
+	if err != nil {
+		return 0, err
+	}
+	kept := recs[:0]
+	for _, r := range recs {
+		if r.RunID != "" && runIDs[r.RunID] {
+			removed++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+
+	var buf bytes.Buffer
+	for _, r := range kept {
+		line, err := json.Marshal(r)
+		if err != nil {
+			return 0, err
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return 0, err
+	}
+	tmp, err := os.CreateTemp(dir, ".tmp-usage-*")
+	if err != nil {
+		return 0, err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return 0, err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return 0, err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return 0, err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return 0, err
+	}
+	return removed, nil
+}
+
+// CountRuns reports how many records are attributable to runIDs, without
+// modifying the log — used to preview how much a prune/delete would remove.
+func CountRuns(stateDir string, runIDs map[string]bool) (int, error) {
+	if len(runIDs) == 0 {
+		return 0, nil
+	}
+	recs, err := ReadRecords(Path(stateDir))
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range recs {
+		if r.RunID != "" && runIDs[r.RunID] {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ReadRecords returns every parseable record in path. A missing file yields
@@ -170,8 +259,11 @@ const (
 // Tokens is a call and token tally.
 type Tokens struct {
 	Calls        int `json:"calls"`
+	Attempts     int `json:"attempts,omitempty"`
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	Measured     int `json:"measured"`
+	Unavailable  int `json:"unavailable"`
 }
 
 // Cost is an estimate from the configured rates.
@@ -184,17 +276,24 @@ type Cost struct {
 
 // Summary is the aggregate report.
 type Summary struct {
-	Kind             string             `json:"kind"`
-	SchemaVersion    int                `json:"schema_version"`
-	Calls            int                `json:"calls"`
-	InputTokens      int                `json:"input_tokens"`
-	OutputTokens     int                `json:"output_tokens"`
-	CallsMeasured    int                `json:"calls_measured"`
-	CallsUnavailable int                `json:"calls_unavailable"`
-	ByQuestionSet    map[string]*Tokens `json:"by_question_set"`
-	ByModel          map[string]*Tokens `json:"by_model"`
-	ByAgent          map[string]*Tokens `json:"by_agent"`
-	Cost             *Cost              `json:"cost"`
+	Kind                string             `json:"kind"`
+	SchemaVersion       int                `json:"schema_version"`
+	Calls               int                `json:"calls"`
+	Attempts            int                `json:"attempts,omitempty"`
+	InputTokens         int                `json:"input_tokens"`
+	OutputTokens        int                `json:"output_tokens"`
+	CallsMeasured       int                `json:"calls_measured"`
+	CallsUnavailable    int                `json:"calls_unavailable"`
+	AttemptsMeasured    int                `json:"attempts_measured,omitempty"`
+	AttemptsUnavailable int                `json:"attempts_unavailable,omitempty"`
+	FailedAttempts      int                `json:"failed_attempts,omitempty"`
+	ByQuestionSet       map[string]*Tokens `json:"by_question_set"`
+	ByModel             map[string]*Tokens `json:"by_model"`
+	ByAgent             map[string]*Tokens `json:"by_agent"`
+	ByOrigin            map[string]*Tokens `json:"by_origin,omitempty"`
+	ByPurpose           map[string]*Tokens `json:"by_purpose,omitempty"`
+	ByRun               map[string]*Tokens `json:"by_run,omitempty"`
+	Cost                *Cost              `json:"cost"`
 }
 
 // Aggregate tallies the records that pass f. getenv supplies the rate
@@ -205,37 +304,65 @@ func Aggregate(recs []Record, f Filter, getenv func(string) string) Summary {
 		getenv = os.Getenv
 	}
 	s := Summary{
-		Kind: "jev_usage", SchemaVersion: 1,
-		ByQuestionSet: map[string]*Tokens{}, ByModel: map[string]*Tokens{}, ByAgent: map[string]*Tokens{},
+		Kind: "jev_usage", SchemaVersion: 2,
+		ByQuestionSet: map[string]*Tokens{}, ByModel: map[string]*Tokens{}, ByAgent: map[string]*Tokens{}, ByOrigin: map[string]*Tokens{},
+		ByPurpose: map[string]*Tokens{}, ByRun: map[string]*Tokens{},
 	}
-	add := func(m map[string]*Tokens, k string, in, out int) {
+	add := func(m map[string]*Tokens, k string, in, out int, measured, successful bool) {
 		t := m[k]
 		if t == nil {
 			t = &Tokens{}
 			m[k] = t
 		}
-		t.Calls++
+		t.Attempts++
+		if successful {
+			t.Calls++
+		}
 		t.InputTokens += in
 		t.OutputTokens += out
+		if measured {
+			t.Measured++
+		} else {
+			t.Unavailable++
+		}
 	}
 	for _, r := range recs {
 		if !f.match(r) {
 			continue
 		}
 		in, out := max(r.InputTokens, 0), max(r.OutputTokens, 0)
-		s.Calls++
+		s.Attempts++
+		statusCode, statusErr := strconv.Atoi(strings.TrimPrefix(r.Status, "http-"))
+		successful := r.Status == "" || r.Status == "ok" || (strings.HasPrefix(r.Status, "http-") && statusErr == nil && statusCode >= 200 && statusCode < 300)
+		if !successful {
+			s.FailedAttempts++
+		} else {
+			s.Calls++
+		}
 		s.InputTokens += in
 		s.OutputTokens += out
 		if r.UsageSource == SourceMeasured {
-			s.CallsMeasured++
+			s.AttemptsMeasured++
+			if successful {
+				s.CallsMeasured++
+			}
 		} else {
-			s.CallsUnavailable++
+			s.AttemptsUnavailable++
+			if successful {
+				s.CallsUnavailable++
+			}
 		}
-		add(s.ByQuestionSet, orDefault(r.QuestionSetID, "(unnamed)"), in, out)
-		add(s.ByModel, orDefault(r.Model, "(unresolved)"), in, out)
-		add(s.ByAgent, orDefault(r.Agent, "(none)"), in, out)
+		measured := r.UsageSource == SourceMeasured
+		add(s.ByQuestionSet, orDefault(r.QuestionSetID, "(unnamed)"), in, out, measured, successful)
+		add(s.ByModel, orDefault(r.Model, "(unresolved)"), in, out, measured, successful)
+		add(s.ByAgent, orDefault(r.Agent, "(none)"), in, out, measured, successful)
+		add(s.ByOrigin, orDefault(r.Origin, "(unattributed)"), in, out, measured, successful)
+		add(s.ByPurpose, Purpose(r), in, out, measured, successful)
+		if r.RunID != "" {
+			add(s.ByRun, r.RunID, in, out, measured, successful)
+		}
 	}
-	if s.Calls > 0 {
+	if s.AttemptsMeasured > 0 {
 		inRate := rate(getenv(EnvInputRate), DefaultInputUSDPerMTok)
 		outRate := rate(getenv(EnvOutputRate), DefaultOutputUSDPerMTok)
 		usd := float64(s.InputTokens)*inRate/1e6 + float64(s.OutputTokens)*outRate/1e6
@@ -244,6 +371,37 @@ func Aggregate(recs []Record, f Filter, getenv func(string) string) Summary {
 		}
 	}
 	return s
+}
+
+// Purposes name what a Jev call was used for.
+const (
+	PurposeSDLC       = "SDLC"
+	PurposeCompaction = "compaction"
+	PurposeSecurity   = "security checks"
+	PurposeMCP        = "MCP"
+	PurposeCLI        = "CLI"
+	PurposeOther      = "other"
+)
+
+// Purpose classifies a call by its run, then its question set, then its
+// origin: an SDLC run's routing calls count as SDLC whichever surface made
+// them, and a compaction hook's calls as compaction.
+func Purpose(r Record) string {
+	q := r.QuestionSetID
+	switch {
+	case r.RunID != "" || strings.HasPrefix(q, "sdlc.") || strings.HasPrefix(q, "graph."):
+		return PurposeSDLC
+	case strings.HasPrefix(q, "compaction."):
+		return PurposeCompaction
+	case strings.HasPrefix(q, "security."):
+		return PurposeSecurity
+	case r.Origin == "mcp":
+		return PurposeMCP
+	case r.Origin == "cli" || strings.HasPrefix(q, "manual."):
+		return PurposeCLI
+	default:
+		return PurposeOther
+	}
 }
 
 func orDefault(v, d string) string {

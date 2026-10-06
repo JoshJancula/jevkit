@@ -12,9 +12,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/redact"
-	"github.com/OWNER/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/registry"
 )
 
 // JSON-RPC error codes the tools return.
@@ -69,7 +69,7 @@ func (s *Server) curatedTool(name, setID, blurb string) (*sdk.Tool, error) {
 	}
 	return &sdk.Tool{
 		Name: name,
-		Description: fmt.Sprintf("%s via the versioned %s question set. Returns the typed answer plus the registry policy decision (act/gather/fallback) and the registry version.",
+		Description: fmt.Sprintf("%s\n\nBacked by the versioned %s question set. Returns the typed answer, the registry policy decision (act/gather/fallback) and guidance: what the decision lets you rely on and, for gather, what evidence to add before asking again. Decision support only; jevkit never acts on the answer.",
 			blurb, setID),
 		InputSchema: map[string]any{
 			"type":                 "object",
@@ -83,7 +83,7 @@ func (s *Server) curatedTool(name, setID, blurb string) (*sdk.Tool, error) {
 func (s *Server) askTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name: "jev_ask",
-		Description: `Send an unregistered, unversioned SystemOne request: a state value plus one or more independently-answered named questions. Prefer the curated tools (jev_classify_request, jev_classify_failure, jev_rank_relevance) for auditable, versioned decisions; jev_ask escapes the registry only, not the data policy. The same redaction (JSON-aware for structured input) and request-size limits apply, every call is marked unregistered, and a privacy-safe local audit line is recorded (timestamp, caller, question ids/types, byte counts and redaction rule counts, never payload text). Arbitrary answers are returned as data only; jevkit never turns a jev_ask answer into an automatic tool action.
+		Description: `Send an unregistered, unversioned SystemOne request: a state value plus one or more independently-answered named questions. Use it for a quick second opinion on a decision no curated tool covers: write the closed set of options with a one-line rubric each, put the facts in state, and read the probabilities. Prefer jev_developer_assess and the curated tools when one fits: they are versioned and return an act/gather/fallback decision with guidance. jev_ask escapes the registry only, not the data policy. The same redaction (JSON-aware for structured input) and request-size limits apply, every call is marked unregistered, and when auditing is enabled a privacy-safe local audit line is recorded (timestamp, caller, question ids/types, byte counts and redaction rule counts, never payload text); the result's audited field says whether it was. Arbitrary answers are returned as data only; jevkit never turns a jev_ask answer into an automatic tool action.
 
 state and each question's instructions accept a plain string, or literal JSON (an object or array) for structured context. Each question is {type: "noul"|"choice"|"score", instructions, criteria}: criteria is required for choice (1-255 entries) and score (2-10 ordered levels, low to high), optional for noul ("true"/"false" entries); each criteria value may itself be a string, object, array or null.
 
@@ -206,15 +206,20 @@ func (s *Server) handleCurated(ctx context.Context, tool, setID string, req *sdk
 		version = s.cfg.Decider.Registry.RegistryVersion
 	}
 	s.logf("tool=%s questionSetId=%s decision=%s", tool, setID, dec.Decision)
+	guide := guidance(set, dec, nil)
+	out := map[string]any{
+		"answer":          answersJSON(resp.Answers),
+		"decision":        compact(dec),
+		"guidance":        guide,
+		"questionSetId":   setID,
+		"registryVersion": version,
+	}
+	if r := ranked(resp.Answers[set.Policy.PrimaryQuestion]); wantOptions && r != nil {
+		out["ranked"] = r
+	}
 	return &sdk.CallToolResult{
-		Content: []sdk.Content{&sdk.TextContent{Text: fmt.Sprintf("questionSetId=%s decision=%s reason=%s confidence=%v",
-			setID, dec.Decision, dec.Reason, dec.Confidence)}},
-		StructuredContent: map[string]any{
-			"answer":          answersJSON(resp.Answers),
-			"decision":        dec,
-			"questionSetId":   setID,
-			"registryVersion": version,
-		},
+		Content:           []sdk.Content{&sdk.TextContent{Text: summary("questionSetId", setID, set, resp.Answers, dec, guide)}},
+		StructuredContent: out,
 	}, nil
 }
 
@@ -483,13 +488,13 @@ func (s *Server) handleAsk(ctx context.Context, req *sdk.CallToolRequest) (*sdk.
 	}
 	s.logf("tool=%s answered unregistered=true", tool)
 	return &sdk.CallToolResult{
-		Content: []sdk.Content{&sdk.TextContent{Text: "jev_ask unregistered answer returned (prefer curated tools for auditable, versioned decisions)"}},
+		Content: []sdk.Content{&sdk.TextContent{Text: "jev_ask unregistered answer returned. No act/gather threshold applies: read each confidence yourself and treat anything under 0.6 as no signal."}},
 		StructuredContent: map[string]any{
 			"answer":       fullAnswersJSON(resp.Answers),
 			"model":        resp.Model,
 			"usage":        map[string]any{"input_tokens": resp.Usage.InputTokens, "output_tokens": resp.Usage.OutputTokens},
 			"unversioned":  true,
-			"unaudited":    true,
+			"audited":      s.cfg.AuditDir != "",
 			"unregistered": true,
 		},
 	}, nil

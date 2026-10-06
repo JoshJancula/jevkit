@@ -6,16 +6,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/compact"
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/compact"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 // Claude adapter name used by installed runtime integrations.
 const ClaudeName = "claude"
 
 // Managed hook command token used as an idempotency marker inside
-// .claude/settings.json. Installer matching is substring-based on this token
+// Claude settings files. Installer matching is substring-based on this token
 // so a binary-path change still replaces the prior entry instead of duplicating.
 // Full command is `<binary> _runtime dispatch --protocol 1 claude post-tool`.
 const ClaudeHookMarker = "_runtime dispatch --protocol 1 claude post-tool"
@@ -76,6 +76,9 @@ func (c *Claude) Passthrough(event Event) []byte {
 }
 
 func (c *Claude) HandlePreTool(ctx context.Context, req Request) (Response, error) {
+	if response, ok := latched(c.StateDir, ClaudeName, req.Raw); ok {
+		return response, nil
+	}
 	var payload struct {
 		HookEventName string `json:"hook_event_name"`
 		ToolName      string `json:"tool_name"`
@@ -102,15 +105,43 @@ func (c *Claude) HandleStop(ctx context.Context, req Request) (Response, error) 
 // is off. Everything else fails open with `{}`.
 func (c *Claude) HandlePostTool(ctx context.Context, req Request) (Response, error) {
 	passthrough := Response{Body: c.Passthrough(EventPostTool)}
-	if !c.compactEnabled() {
-		return passthrough, nil
-	}
-
 	var payload claudePostPayload
 	if err := json.Unmarshal(req.Raw, &payload); err != nil {
 		return passthrough, nil
 	}
-	if !strings.EqualFold(payload.HookEventName, "PostToolUse") || payload.ToolName != "Bash" {
+	if !strings.EqualFold(payload.HookEventName, "PostToolUse") {
+		return passthrough, nil
+	}
+	if c.Security != nil && c.Security.Injection.Mode != "off" {
+		body := claudeResponseText(payload.ToolResponseRaw)
+		if body != "" {
+			key, workspace := hookSession(req.Raw, ClaudeName)
+			pointer, err := storeRawResult(c.StateDir, ClaudeName, body)
+			if err == nil {
+				input := payload.ToolInput.Command
+				if input == "" {
+					input = string(payload.ToolInputRaw)
+				}
+				if rec, halt := scanToolOutput(ctx, c.Security, c.SecurityDecider, ClaudeName, payload.ToolName, input, body, workspace, key, pointer); halt {
+					extra := map[string]any{}
+					if payload.ToolName == "Bash" {
+						if updated, e := marshalClaudeUpdatedOutput(reviewNotice(rec.ID), "", payload.ToolResponse); e == nil {
+							var fields map[string]any
+							_ = json.Unmarshal(updated, &fields)
+							for k, v := range fields {
+								extra[k] = v
+							}
+						}
+					}
+					if strings.HasPrefix(payload.ToolName, "mcp__") {
+						extra["hookSpecificOutput"] = map[string]any{"hookEventName": "PostToolUse", "updatedMCPToolOutput": reviewNotice(rec.ID)}
+					}
+					return Response{Body: stopBody(rec.ID, extra), Deny: true, Outcome: OutcomeHalt}, nil
+				}
+			}
+		}
+	}
+	if !c.compactEnabled() || payload.ToolName != "Bash" {
 		return passthrough, nil
 	}
 	if payload.ToolResponse == nil {
@@ -154,7 +185,44 @@ type claudePostPayload struct {
 	ToolInput     struct {
 		Command string `json:"command"`
 	} `json:"tool_input"`
-	ToolResponse *claudeToolResponse `json:"tool_response"`
+	ToolResponse    *claudeToolResponse `json:"tool_response"`
+	ToolResponseRaw json.RawMessage     `json:"-"`
+	ToolInputRaw    json.RawMessage     `json:"-"`
+}
+
+func (p *claudePostPayload) UnmarshalJSON(raw []byte) error {
+	type alias claudePostPayload
+	var out alias
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return err
+	}
+	var v struct {
+		ToolResponse json.RawMessage `json:"tool_response"`
+		ToolInput    json.RawMessage `json:"tool_input"`
+	}
+	_ = json.Unmarshal(raw, &v)
+	*p = claudePostPayload(out)
+	p.ToolResponseRaw = v.ToolResponse
+	p.ToolInputRaw = v.ToolInput
+	return nil
+}
+
+func claudeResponseText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var v struct {
+		Stdout string `json:"stdout"`
+		Stderr string `json:"stderr"`
+	}
+	if json.Unmarshal(raw, &v) == nil && (v.Stdout != "" || v.Stderr != "") {
+		return joinToolStreams(v.Stdout, v.Stderr)
+	}
+	return string(raw)
 }
 
 type claudeToolResponse struct {

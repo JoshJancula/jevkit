@@ -3,17 +3,20 @@ package worker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/OWNER/jevkit/internal/sdlc/adaptive"
-	"github.com/OWNER/jevkit/internal/sdlc/enrollment"
+	"github.com/JoshJancula/jevkit/internal/sdlc/adaptive"
+	"github.com/JoshJancula/jevkit/internal/sdlc/enrollment"
 )
 
 func requireUnixShellFixture(t *testing.T) {
@@ -41,6 +44,31 @@ func TestCommandUsesEnrolledRuntimeAndReadOnlyMode(t *testing.T) {
 	}
 }
 
+func TestCodexCommandBypassesHookTrustWhenHooksEnabled(t *testing.T) {
+	req := Request{Agent: enrollment.Agent{Via: enrollment.Runtime, Runtime: "codex", Model: "m"}, Assignment: adaptive.Assignment{Role: "implementer"}, JevkitHooks: true}
+	for _, session := range []string{"", "session-1"} {
+		req.SessionID = session
+		_, args, err := command(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(args) < 2 || args[0] != "exec" || args[1] != "--dangerously-bypass-hook-trust" {
+			t.Fatalf("Codex hook trust flag missing for session %q: %v", session, args)
+		}
+		if session != "" && (len(args) < 3 || args[2] != "resume") {
+			t.Fatalf("Codex resume command malformed: %v", args)
+		}
+	}
+	req.JevkitHooks = false
+	_, args, err := command(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(args, "--dangerously-bypass-hook-trust") {
+		t.Fatalf("Codex hook trust flag present with hooks disabled: %v", args)
+	}
+}
+
 func TestCursorStreamResultKeepsSessionAndMeasuredUsage(t *testing.T) {
 	raw := []byte("{\"type\":\"system\",\"session_id\":\"cursor-session\"}\n" +
 		"{\"type\":\"tool_call\",\"subtype\":\"started\",\"tool_call\":{\"readToolCall\":{}}}\n" +
@@ -61,6 +89,16 @@ func TestLargeReviewDiffUsesSavedPatchWithoutOversizedPrompt(t *testing.T) {
 	if len(prompt) > 70*1024 || !strings.Contains(prompt, "/saved/patch.diff") || !strings.Contains(prompt, "sha256") {
 		t.Fatalf("review prompt is too large or lost patch reference: %d bytes", len(prompt))
 	}
+	layout := buildPrompt(req)
+	if layout.StablePrefixBytes <= 0 || layout.StablePrefixFingerprint == "" {
+		t.Fatalf("stable prefix telemetry missing: %+v", layout)
+	}
+	if strings.Index(layout.Prompt, layout.StablePrefix) != 0 {
+		t.Fatalf("stable prefix is not at the front of the prompt")
+	}
+	if strings.Contains(layout.StablePrefix, "Task:") || strings.Contains(layout.StablePrefix, "Change report:") {
+		t.Fatalf("stable prefix must not include variable task/diff details: %q", layout.StablePrefix)
+	}
 }
 
 func TestPlannerPromptUsesBareOutcomeExample(t *testing.T) {
@@ -69,6 +107,120 @@ func TestPlannerPromptUsesBareOutcomeExample(t *testing.T) {
 	if !strings.Contains(prompt, `{"outcome":"planned","content":"..."}`) || !strings.Contains(prompt, "Never include the role name in the outcome value") || strings.Contains(prompt, "Valid outcomes: planner: planned") {
 		t.Fatalf("ambiguous planner prompt: %q", prompt)
 	}
+	if !strings.Contains(prompt, "nextSteps") || !strings.Contains(prompt, "acceptanceCriteria") || !strings.Contains(prompt, "Task-specific planner contract") {
+		t.Fatalf("planner prompt missing structured contract: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Do not invent default checks") || !strings.Contains(prompt, "Do not run any proposed command during planning") {
+		t.Fatalf("planner prompt missing planning safety rules: %q", prompt)
+	}
+}
+
+func TestPlannerPlannedRequiresStructuredHandoff(t *testing.T) {
+	requireUnixShellFixture(t)
+	dir := gitFixture(t)
+	bin := filepath.Join(dir, "fake-claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '{\"outcome\":\"planned\",\"content\":\"Plan only\"}'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req := Request{Agent: enrollment.Agent{ID: "planner", Via: enrollment.Runtime, Runtime: "claude", Model: "model", Binary: bin}, Assignment: adaptive.Assignment{InvocationID: "inv", AgentID: "planner", Runtime: "claude", Role: "planner"}, WorkDir: dir}
+	_, err := (CLIExecutor{}).Execute(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "nextSteps") {
+		t.Fatalf("expected structured handoff rejection, got %v", err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '"+plannedReplyJSON("Plan")+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := (CLIExecutor{}).Execute(context.Background(), req)
+	if err != nil || reply.Outcome != "planned" || reply.Subtasks == nil || reply.Subtasks.Mode != "single" {
+		t.Fatalf("structured planned reply: %+v %v", reply, err)
+	}
+}
+
+func plannedReplyJSON(content string) string {
+	return `{"outcome":"planned","content":"` + content + `","nextSteps":["implement the change"],"acceptanceCriteria":["tests pass"],"checks":[]}`
+}
+
+func TestCLIExecutorInstallsOptedInHooksAndSetsCompactionOnlyForAgent(t *testing.T) {
+	requireUnixShellFixture(t)
+	dir := gitFixture(t)
+	envFile := filepath.Join(t.TempDir(), "compact-env")
+	bin := filepath.Join(dir, "fake-claude")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s,%%s,%%s' \"$JEVKIT_COMPACT\" \"$JEVKIT_SDLC_HOOKS\" \"$DISABLE_PROMPT_CACHING\" > %q\necho '%s'\n", envFile, plannedReplyJSON("Plan"))
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	req := Request{
+		Agent:      enrollment.Agent{ID: "planner", Via: enrollment.Runtime, Runtime: "claude", Model: "model", Binary: bin},
+		Assignment: adaptive.Assignment{InvocationID: "inv", AgentID: "planner", Runtime: "claude", Role: "planner"},
+		WorkDir:    dir, JevkitHooks: true, JevkitBinary: "/opt/jevkit", JevkitCompaction: &enabled, PromptCache: &enabled,
+	}
+	if _, err := (CLIExecutor{}).Execute(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(envFile)
+	if err != nil || string(got) != "1,1,0" {
+		t.Fatalf("agent compaction environment = %q, %v", got, err)
+	}
+	hooks, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.local.json"))
+	if err != nil || !strings.Contains(string(hooks), "/opt/jevkit") {
+		t.Fatalf("project hooks were not installed: %q, %v", hooks, err)
+	}
+	enabled = false
+	t.Setenv("JEVKIT_COMPACT", "1")
+	if _, err := (CLIExecutor{}).Execute(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(envFile)
+	if err != nil || string(got) != "0,1,1" {
+		t.Fatalf("disabled compaction environment = %q, %v", got, err)
+	}
+	req.JevkitHooks = false
+	if _, err := (CLIExecutor{}).Execute(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(envFile)
+	if err != nil || string(got) != "0,0,1" {
+		t.Fatalf("disabled hook environment = %q, %v", got, err)
+	}
+}
+
+func TestCLIExecutorInstallsMCPWithoutHooks(t *testing.T) {
+	requireUnixShellFixture(t)
+	dir := gitFixture(t)
+	bin := filepath.Join(dir, "fake-claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '"+plannedReplyJSON("Plan")+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req := Request{
+		Agent:      enrollment.Agent{ID: "planner", Via: enrollment.Runtime, Runtime: "claude", Model: "model", Binary: bin},
+		Assignment: adaptive.Assignment{InvocationID: "inv", AgentID: "planner", Runtime: "claude", Role: "planner"},
+		WorkDir:    dir, JevkitMCP: true, JevkitBinary: "/opt/jevkit",
+	}
+	if _, err := (CLIExecutor{}).Execute(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	mcp, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil || !strings.Contains(string(mcp), "/opt/jevkit") || !strings.Contains(string(mcp), "mcp") {
+		t.Fatalf("project MCP was not installed: %q, %v", mcp, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.local.json")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected hook install: %v", err)
+	}
+	if !strings.Contains(makePrompt(req), "jev_ask") {
+		t.Fatal("MCP-enabled agent prompt does not explain jev_ask")
+	}
+}
+
+func gitFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	return dir
 }
 
 func TestClaudeNamedAgentIsPassedToCLI(t *testing.T) {
@@ -149,7 +301,7 @@ func TestClaudeEnvelopeCapturesSessionAndUsage(t *testing.T) {
 		}
 	}
 	bin := filepath.Join(dir, "fake-claude")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '{\"result\":\"{\\\"outcome\\\":\\\"planned\\\",\\\"content\\\":\\\"Plan\\\"}\",\"session_id\":\"explicit-session\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5}}'\n"), 0o700); err != nil {
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '{\"result\":\"{\\\"outcome\\\":\\\"planned\\\",\\\"content\\\":\\\"Plan\\\",\\\"nextSteps\\\":[\\\"implement\\\"],\\\"acceptanceCriteria\\\":[\\\"done\\\"],\\\"checks\\\":[]}\",\"session_id\":\"explicit-session\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5}}'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	req := Request{Agent: enrollment.Agent{ID: "claude-builder", Via: enrollment.Runtime, Runtime: "claude", Model: "model", Binary: bin}, Assignment: adaptive.Assignment{InvocationID: "inv", AgentID: "claude-builder", Runtime: "claude", Role: "planner"}, WorkDir: dir, CaptureSession: true}
@@ -157,7 +309,7 @@ func TestClaudeEnvelopeCapturesSessionAndUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reply.Outcome != "planned" || reply.SessionID != "explicit-session" || reply.InputTokens == nil || *reply.InputTokens != 12 || reply.OutputTokens == nil || *reply.OutputTokens != 5 {
+	if reply.Outcome != "planned" || reply.SessionID != "explicit-session" || reply.InputTokens == nil || *reply.InputTokens != 12 || reply.OutputTokens == nil || *reply.OutputTokens != 5 || reply.ToolCalls != nil {
 		t.Fatalf("reply: %+v", reply)
 	}
 }
@@ -288,7 +440,7 @@ func TestCursorScopedPlannerOutcomeIsAccepted(t *testing.T) {
 	bin := filepath.Join(dir, "fake-cursor")
 	script := `#!/bin/sh
 echo '{"type":"system","session_id":"session-1"}'
-echo '{"type":"result","result":"{\"outcome\":\"planner: planned\",\"content\":\"Plan\"}"}'
+echo '{"type":"result","result":"{\"outcome\":\"planner: planned\",\"content\":\"Plan\",\"nextSteps\":[\"implement\"],\"acceptanceCriteria\":[\"done\"],\"checks\":[]}"}'
 `
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -313,7 +465,7 @@ func TestClaudeStreamFeedsLiveActivityAndParsesResult(t *testing.T) {
 	bin := filepath.Join(dir, "fake-claude")
 	script := `#!/bin/sh
 echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}'
-echo '{"type":"result","result":"{\"outcome\":\"planned\",\"content\":\"Plan\"}","session_id":"session-1","usage":{"input_tokens":4,"output_tokens":5}}'
+echo '{"type":"result","result":"{\"outcome\":\"planned\",\"content\":\"Plan\",\"nextSteps\":[\"implement\"],\"acceptanceCriteria\":[\"done\"],\"checks\":[]}","session_id":"session-1","usage":{"input_tokens":4,"output_tokens":5}}'
 `
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -321,8 +473,76 @@ echo '{"type":"result","result":"{\"outcome\":\"planned\",\"content\":\"Plan\"}"
 	var lines []string
 	req := Request{Agent: enrollment.Agent{ID: "planner", Via: enrollment.Runtime, Runtime: "claude", Model: "opus", Binary: bin}, Assignment: adaptive.Assignment{InvocationID: "inv", AgentID: "planner", Runtime: "claude", Role: "planner"}, WorkDir: dir, LogDir: t.TempDir(), CaptureSession: true, LiveOutput: func(_, line string) { lines = append(lines, line) }}
 	reply, err := (CLIExecutor{}).Execute(context.Background(), req)
-	if err != nil || reply.Outcome != "planned" || reply.SessionID != "session-1" || len(lines) != 2 {
+	if err != nil || reply.Outcome != "planned" || reply.SessionID != "session-1" || len(lines) != 2 || reply.ToolCalls == nil || *reply.ToolCalls != 1 {
 		t.Fatalf("stream reply %+v, lines %d, err %v", reply, len(lines), err)
+	}
+}
+
+func TestClaudeSavedLogStreamsBeforePlannerCompletes(t *testing.T) {
+	requireUnixShellFixture(t)
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "initial"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git: %v %s", err, out)
+		}
+	}
+	release := filepath.Join(t.TempDir(), "release")
+	t.Setenv("JEVKIT_TEST_RELEASE_FILE", release)
+	bin := filepath.Join(dir, "fake-claude")
+	script := `#!/bin/sh
+case " $* " in *" --output-format stream-json "*) ;; *) exit 73 ;; esac
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Checking the plan"},{"type":"tool_use","name":"Read","input":{"file_path":"plan.md"}}]}}'
+while [ ! -f "$JEVKIT_TEST_RELEASE_FILE" ]; do sleep 0.02; done
+echo '{"type":"result","result":"{\"outcome\":\"planned\",\"content\":\"Plan\",\"nextSteps\":[\"implement\"],\"acceptanceCriteria\":[\"done\"],\"checks\":[]}","session_id":"session-1"}'
+`
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logs := t.TempDir()
+	req := Request{Agent: enrollment.Agent{ID: "planner", Via: enrollment.Runtime, Runtime: "claude", Model: "opus", Binary: bin}, Assignment: adaptive.Assignment{InvocationID: "inv", AgentID: "planner", Runtime: "claude", Role: "planner"}, WorkDir: dir, LogDir: logs, CaptureSession: true}
+	type result struct {
+		reply Reply
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		reply, err := (CLIExecutor{}).Execute(context.Background(), req)
+		done <- result{reply, err}
+	}()
+	defer func() { _ = os.WriteFile(release, nil, 0o600) }()
+	var saved LogLine
+	deadline := time.After(3 * time.Second)
+	for saved.Text == "" {
+		select {
+		case outcome := <-done:
+			t.Fatalf("planner exited before tool activity was saved: %+v", outcome)
+		case <-deadline:
+			t.Fatal("planner tool activity was not saved before completion")
+		default:
+		}
+		data, _ := os.ReadFile(filepath.Join(logs, "inv.lines.jsonl"))
+		if line, _, ok := strings.Cut(string(data), "\n"); ok {
+			_ = json.Unmarshal([]byte(line), &saved)
+		}
+		if saved.Text == "" {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if !strings.Contains(saved.Text, `"tool_use"`) || saved.Activity == nil || saved.Activity.Kind != "claude/assistant" {
+		t.Fatalf("saved activity: %+v", saved)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case outcome := <-done:
+		if outcome.err != nil || outcome.reply.Outcome != "planned" || outcome.reply.SessionID != "session-1" {
+			t.Fatalf("planner result: %+v", outcome)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("planner did not finish after release")
 	}
 }
 
@@ -339,7 +559,7 @@ func TestAntigravityCapturesConversationAndUsage(t *testing.T) {
 	bin := filepath.Join(dir, "fake-agy")
 	script := `#!/bin/sh
 echo '{"event":"init","conversation_id":"agy-123"}'
-echo '{"event":"result","result":{"conversation_id":"agy-123","status":"SUCCESS","response":"{\"outcome\":\"planned\",\"content\":\"Plan\"}","usage":{"input_tokens":30,"output_tokens":7}}}'
+echo '{"event":"result","result":{"conversation_id":"agy-123","status":"SUCCESS","response":"{\"outcome\":\"planned\",\"content\":\"Plan\",\"nextSteps\":[\"implement\"],\"acceptanceCriteria\":[\"done\"],\"checks\":[]}","usage":{"input_tokens":30,"output_tokens":7}}}'
 `
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -376,7 +596,7 @@ func TestClaudeCompactUsesCLIStreamWithoutSDK(t *testing.T) {
 	script := fmt.Sprintf(`#!/bin/sh
 cat > '%s'
 echo '{"type":"system","subtype":"compact_boundary"}'
-echo '{"type":"result","subtype":"success","session_id":"claude-123","result":"{\"outcome\":\"planned\",\"content\":\"Plan\"}","usage":{"input_tokens":12,"output_tokens":4}}'
+echo '{"type":"result","subtype":"success","session_id":"claude-123","result":"{\"outcome\":\"planned\",\"content\":\"Plan\",\"nextSteps\":[\"implement\"],\"acceptanceCriteria\":[\"done\"],\"checks\":[]}","usage":{"input_tokens":12,"output_tokens":4}}'
 `, inputPath)
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)

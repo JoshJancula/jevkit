@@ -72,13 +72,54 @@ func (s *workspaceSnapshot) output(ctx context.Context, args ...string) ([]byte,
 }
 
 func (s *workspaceSnapshot) capture(ctx context.Context) (string, error) {
-	// A fresh private index ensures ignore changes and deletions are reflected.
-	_ = os.Remove(s.index)
+	// Deliberately does not reset s.index before staging. `git add -A` always
+	// walks the whole working tree and stages every deletion, modification,
+	// and new untracked file regardless of what the index already holds, so
+	// dropping and rebuilding the index here bought no extra correctness for
+	// those cases — only extra cost: on the second capture() call of an
+	// invocation (the "after" snapshot), an index still populated from the
+	// first ("before") call lets Git skip re-hashing file contents for paths
+	// whose size and mtime match what it already recorded, so the cost of the
+	// second capture scales with what the invocation actually changed rather
+	// than with the whole worktree again. A brand new workspaceSnapshot
+	// always starts from a fresh temp dir with no index file (see
+	// newWorkspaceSnapshot), so the first capture() of any invocation is
+	// unaffected and still stages from a clean slate.
+	//
+	// `git add -A` does not, however, drop paths that are already cached when
+	// they later match a new exclude rule. Without an explicit purge, a
+	// mid-invocation .gitignore change would leave the previously staged path
+	// in the private index and the before/after trees would disagree with a
+	// fresh-index capture. dropIgnoredFromIndex restores that exactness while
+	// keeping the hash cache for every path that is still eligible.
 	if _, err := s.output(ctx, "add", "-A", "--"); err != nil {
+		return "", err
+	}
+	if err := s.dropIgnoredFromIndex(ctx); err != nil {
 		return "", err
 	}
 	out, err := s.output(ctx, "write-tree")
 	return strings.TrimSpace(string(out)), err
+}
+
+// dropIgnoredFromIndex removes cached paths that now match exclude rules so a
+// reused private index stays equivalent to staging into a fresh one.
+func (s *workspaceSnapshot) dropIgnoredFromIndex(ctx context.Context) error {
+	raw, err := s.output(ctx, "ls-files", "-ci", "--exclude-standard", "-z")
+	if err != nil {
+		return err
+	}
+	if len(bytes.Trim(raw, "\x00")) == 0 {
+		return nil
+	}
+	cmd := s.command(ctx, "update-index", "--force-remove", "-z", "--stdin")
+	cmd.Stdin = bytes.NewReader(raw)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("worker: git update-index --force-remove: %w: %s", err, truncate(stderr.String(), 300))
+	}
+	return nil
 }
 
 const maxChangeReport = 60 * 1024

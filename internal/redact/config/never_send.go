@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/globmatch"
+	"github.com/JoshJancula/jevkit/internal/globmatch"
 )
 
 // builtinNeverSend is the embedded layer: sources whose output is never sent.

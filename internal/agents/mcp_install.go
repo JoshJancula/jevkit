@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	jevmcp "github.com/OWNER/jevkit/internal/mcp"
+	jevmcp "github.com/JoshJancula/jevkit/internal/mcp"
 )
 
 const (

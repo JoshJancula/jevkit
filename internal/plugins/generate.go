@@ -150,6 +150,7 @@ func hostSpecs(host string) ([]fileSpec, error) {
 			fileSpec{"claude/marketplace.json", ".claude-plugin/marketplace.json", 0o644, true},
 			fileSpec{"claude/hooks.json", "hooks/hooks.json", 0o644, true},
 			fileSpec{"claude/mcp.json", ".mcp.json", 0o644, true},
+			fileSpec{"claude/skills/jev-decisions/SKILL.md", "skills/jev-decisions/SKILL.md", 0o644, true},
 			fileSpec{"claude/host-manifest.json", "host-manifest.json", 0o644, true},
 		), nil
 	case "cursor":
@@ -264,7 +265,7 @@ func FindRepoRoot(start string) (string, error) {
 	for {
 		gomod := filepath.Join(dir, "go.mod")
 		if b, err := os.ReadFile(gomod); err == nil {
-			if bytes.Contains(b, []byte("module github.com/OWNER/jevkit")) {
+			if bytes.Contains(b, []byte("module github.com/JoshJancula/jevkit")) {
 				return dir, nil
 			}
 		}

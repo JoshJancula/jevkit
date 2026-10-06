@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 func TestApplyJSONPreservesValidJSON(t *testing.T) {

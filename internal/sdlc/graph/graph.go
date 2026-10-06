@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 // Node is one compiled, frozen workflow node. Every route target it carries

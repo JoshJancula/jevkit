@@ -2,7 +2,7 @@
   "author": {
     "name": "jevkit maintainers"
   },
-  "description": "Jev compaction hooks and MCP tools for Claude Code.",
+  "description": "Jev compaction hooks, MCP decision tools, and a skill that tells Claude Code when to use them.",
   "name": "jevkit",
   "version": "dev"
 }

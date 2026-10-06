@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OWNER/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/jev"
 )
 
 // Asker is the slice of the Jev client the compactor uses.

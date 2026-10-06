@@ -20,7 +20,7 @@ builds:
 
 archives:
   - id: default
-    builds: [jevkit]
+    ids: [jevkit]
     formats:
       - tar.gz
     format_overrides:
@@ -37,30 +37,16 @@ sboms:
 signs:
   - cmd: cosign
     artifacts: checksum
+    signature: "${artifact}.sigstore.json"
     output: true
-    args: ["sign-blob", "--yes", "--output-signature", "${signature}", "${artifact}"]
+    args: ["sign-blob", "--bundle=${signature}", "${artifact}", "--yes"]
 
 release:
   github:
     owner: JoshJancula
     name: jevkit
   prerelease: auto
+  # Release Please may have created the release already. Use the reviewed
+  # CHANGELOG.md entry even when its PR-body notes differ.
+  mode: replace
   name_template: "{{ .ProjectName }} {{ .Version }}"
-
-# Publishing integrations are intentionally disabled for local/snapshot
-# releases. Future release automation should enable them only when its required
-# secrets are present, keeping contributors from accidentally publishing.
-brews:
-  - name: jevkit
-    repository:
-      owner: JoshJancula
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    skip_upload: "{{ if not .Env.HOMEBREW_TAP_GITHUB_TOKEN }}true{{ end }}"
-
-scoops:
-  - repository:
-      owner: JoshJancula
-      name: scoop-bucket
-      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
-    skip_upload: "{{ if not .Env.SCOOP_BUCKET_GITHUB_TOKEN }}true{{ end }}"

@@ -21,8 +21,8 @@ import (
 	"golang.org/x/text/message"
 	"gopkg.in/yaml.v3"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/redact"
 )
 
 //go:embed schema.json

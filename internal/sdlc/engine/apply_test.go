@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/sdlc/compile"
-	"github.com/OWNER/jevkit/internal/sdlc/graph"
-	"github.com/OWNER/jevkit/internal/sdlc/spec"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/sdlc/compile"
+	"github.com/JoshJancula/jevkit/internal/sdlc/graph"
+	"github.com/JoshJancula/jevkit/internal/sdlc/spec"
 )
 
 func buildGraph(t *testing.T, y string) *graph.Graph {

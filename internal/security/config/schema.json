@@ -7,6 +7,14 @@
     "version": {"const": 1},
     "killswitch": {"type": "array", "items": {"type": "string"}},
     "jev_scoring": {"type": "boolean"},
+    "injection": {"type":"object","additionalProperties":false,"properties":{
+      "mode":{"enum":["off","shadow","enforce"]},
+      "scan":{"enum":["suspicious","all"]},
+      "max_bytes":{"type":"integer","minimum":1},
+      "tools":{"type":"array","items":{"type":"string"}},
+      "heuristic_halt":{"type":"boolean"},
+      "halt_on":{"enum":["act","escalate"]}
+    }},
     "mode": {"enum": ["enforce", "shadow"]},
     "sandbox": {"type": "object", "additionalProperties": false, "properties": {
       "allow_read": {"type": "array", "items": {"type": "string"}}

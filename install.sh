@@ -42,6 +42,20 @@ release_version() {
   curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1
 }
 
+# installed_version prints the version of an existing jevkit binary, if any.
+installed_version() {
+  [ -x "$1" ] || return 0
+  "$1" version 2>/dev/null | awk '{print $2; exit}' | sed 's/^v//' || true
+}
+
+install_message() {
+  previous=$1 version=$2 path=$3
+  case "$previous" in [0-9]*) ;; *) previous= ;; esac
+  if [ -z "$previous" ]; then printf '%s\n' "jevkit v$version installed to $path"
+  elif [ "$previous" = "$version" ]; then printf '%s\n' "jevkit v$version reinstalled to $path"
+  else printf '%s\n' "jevkit upgraded from v$previous to v$version ($path)"; fi
+}
+
 main() {
   command -v curl >/dev/null 2>&1 || fail "curl is required"
   os=$(detect_os) arch=$(detect_arch)
@@ -55,18 +69,23 @@ main() {
   curl -fL "$base/checksums.txt" -o "$tmp/checksums.txt"
   verify_checksum "$tmp/$archive" "$tmp/checksums.txt"
   if command -v cosign >/dev/null 2>&1; then
-    curl -fsSL "$base/checksums.txt.sig" -o "$tmp/checksums.txt.sig" || fail "cosign signature download failed"
-    cosign verify-blob --signature "$tmp/checksums.txt.sig" "$tmp/checksums.txt" >/dev/null || fail "cosign verification failed"
+    curl -fsSL "$base/checksums.txt.sigstore.json" -o "$tmp/checksums.txt.sigstore.json" || fail "cosign bundle download failed"
+    cosign verify-blob \
+      --bundle "$tmp/checksums.txt.sigstore.json" \
+      --certificate-identity "https://github.com/$REPO/.github/workflows/release.yml@refs/tags/v$version" \
+      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      "$tmp/checksums.txt" >/dev/null || fail "cosign verification failed"
   fi
   tar -xzf "$tmp/$archive" -C "$tmp"
   bin=$(find "$tmp" -type f -name jevkit -perm -u+x | head -n 1)
   [ -n "$bin" ] || fail "release archive did not contain executable"
   dest="${JEVKIT_INSTALL_DIR:-$HOME/.local/bin}"
   mkdir -p "$dest"
+  previous=$(installed_version "$dest/jevkit")
   install -m 0755 "$bin" "$dest/jevkit"
-  printf '%s\n' "installed $dest/jevkit"
-  case ":$PATH:" in *":$dest:"*) ;; *) printf '%s\n' "warning: $dest is not on PATH" >&2;; esac
-  printf '%s\n' "next: jevkit key set && jevkit install <agent>"
+  install_message "$previous" "$version" "$dest/jevkit"
+  case ":$PATH:" in *":$dest:"*) ;; *) printf '%s\n' "warning: $dest is not on your PATH; add: export PATH=\"$dest:\$PATH\"" >&2;; esac
+  printf '%s\n' "Get started: jevkit key set && jevkit install <agent>"
 }
 
 [ "${JEVKIT_INSTALL_SOURCE_ONLY:-}" = 1 ] || main "$@"

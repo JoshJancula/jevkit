@@ -1,0 +1,1 @@
+{"type":"result","subtype":"success","session_id":"claude-cache-1","result":"{\"outcome\":\"planned\",\"content\":\"Plan\"}","total_cost_usd":0.042,"usage":{"input_tokens":51,"output_tokens":20,"cache_read_input_tokens":147615,"cache_creation_input_tokens":12190}}

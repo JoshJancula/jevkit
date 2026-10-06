@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/filelock"
+	"github.com/JoshJancula/jevkit/internal/filelock"
 )
 
 // Entry is one events.jsonl line.

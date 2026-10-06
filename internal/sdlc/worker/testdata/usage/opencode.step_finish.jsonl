@@ -1,0 +1,2 @@
+{"type":"step_finish","part":{"tokens":{"input":671,"output":8,"reasoning":0,"cache":{"read":21415,"write":100}},"cost":0.001}}
+{"type":"step_finish","part":{"tokens":{"input":40,"output":2,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0.0005}}

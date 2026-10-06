@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OWNER/jevkit/internal/jev"
-	"github.com/OWNER/jevkit/internal/registry"
-	"github.com/OWNER/jevkit/internal/security/config"
+	"github.com/JoshJancula/jevkit/internal/jev"
+	"github.com/JoshJancula/jevkit/internal/registry"
+	"github.com/JoshJancula/jevkit/internal/security/config"
 )
 
 type fakeAsker struct {
@@ -80,5 +80,17 @@ func TestJevRiskDeniesOnlyHighConfidence(t *testing.T) {
 	decision, err = Evaluate(context.Background(), cfg, Request{Command: "npm install suspicious-package"}, decider)
 	if err != nil || decision.Deny {
 		t.Fatalf("low confidence=%+v err=%v", decision, err)
+	}
+}
+
+func TestReviewCommandKillswitchEvenInShadowAndYolo(t *testing.T) {
+	cfg, _ := config.Builtin(config.LoadOptions{})
+	cfg.Mode = "shadow"
+	cfg.Yolo = true
+	for _, command := range []string{"jevkit security review abc", "jevkit security reviews"} {
+		v := CheckLocal(cfg, Request{Command: command})
+		if !v.Deny {
+			t.Fatalf("%q was not blocked: %+v", command, v)
+		}
 	}
 }

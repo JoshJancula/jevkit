@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/OWNER/jevkit/internal/filelock"
-	"github.com/OWNER/jevkit/internal/redact"
+	"github.com/JoshJancula/jevkit/internal/filelock"
+	"github.com/JoshJancula/jevkit/internal/redact"
 )
 
 // AuditQuestion is one question's privacy-safe shape in an audit entry: its

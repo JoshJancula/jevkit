@@ -1,144 +1,195 @@
-# Adaptive SDLC runs
+# SDLC agent workflows
 
-Jevkit routes SDLC work only to agents explicitly enrolled in the user's roster. A discovered native definition or installed CLI is inventory, not permission to use it.
+Jevkit can route a coding task through planning, implementation, verification, and assessment. It uses only agents you enroll in your personal roster. Finding an installed agent or a project suggestion does not enroll it.
 
-## The everyday CLI path
+- [Set up once](#set-up-once)
+- [Run a task](#run-a-task)
+- [Live run view](#live-run-view)
+- [Saved runs, storage, and logs](#saved-runs-storage-and-logs)
+- [Enrollment details](#enrollment-details)
+- [Project policy](#project-policy)
+- [Planner checks and supervisor verification](#planner-checks-and-supervisor-verification)
+- [Fan-out and sequential work](#fan-out-and-sequential-work)
+- [Sessions and runtime integration](#sessions-and-runtime-integration)
+- [Recovery and progress](#recovery-and-progress)
+- [Custom workflows](#custom-workflows)
+- [Host integrations](#host-integrations)
+- [Recovery design priorities](#recovery-design-priorities)
 
-An SDLC run moves through planning, implementation, and assessment. Jevkit
-chooses an eligible enrolled agent for each step. You do not need to author a
-workflow file for the built-in `feature`, `bugfix`, `review`, or `release` task
-kinds.
+## Set up once
 
-By default, `sdlc run` saves the planner's output as `plan.md`, displays the
-plan in an interactive terminal, and asks you to approve it or request changes
-before implementation. Use the arrow keys and Enter to choose an action. Choosing
-**Request changes** opens a text box; type the feedback and press Enter to send
-it, or Escape to return to the menu. A change request returns to the planner
-with the prior plan and your feedback; the revised plan appears for another review. You can
-leave the run paused and return later. When input or output is redirected,
-Jevkit pauses and prints the plan path; review it, then approve that exact
-revision with `jevkit sdlc resume RUN_ID --approve-plan`. To use the previous
-fully autonomous behavior, add `--auto` to `sdlc run`.
+From a Git project directory, add a CLI agent with a model supported by that CLI. One agent can cover the three roles needed by the default `lean` policy:
 
-If you already have a complete plan, pass `--plan-file path/to/plan.md` to a
-built-in `sdlc run` command. The run stores the original as `plan.md` and waits
-for the same approval before implementation. `--task-file` reads a task statement and still runs a
-planner; use `--plan-file` for a prepared plan. You can combine `--plan-file`
-with `--task` for a short objective.
-
-| Command | What it does | When to use it |
-| --- | --- | --- |
-| `sdlc agents discover` | Optional inventory of definitions and installed CLI apps | Find reusable bindings |
-| `sdlc agents add` | Adds one binding and its allowed roles to your personal roster | Authorize an agent for SDLC work |
-| `sdlc agents` | Shows your roster, including inactive examples | Check agent setup |
-| `sdlc doctor --policy lean` | Checks policy, reach, and quorum | Before a run, or to diagnose setup |
-| `sdlc run feature --task "..."` | Shows the plan and asks for approval or changes in a terminal | Normal path |
-| `sdlc run bugfix --task "..." --auto` | Runs through planning, implementation, and assessment without plan approval | Autonomous path |
-| `sdlc resume RUN_ID --approve-plan` | Approves the saved plan revision and continues | After reviewing `plan.md` |
-| `sdlc resume RUN_ID` | Continues an active run to completion or pause | After approval or `run --step` |
-| `sdlc resume RUN_ID --retry-failed` | Retries agents whose invocation failed | After you fix the error that paused the run |
-| `sdlc resume RUN_ID --step` | Executes one question or agent action | Inspect progress between steps |
-| `sdlc watch RUN_ID` | Attaches a read-only run-tree view | Watch a running task in another terminal |
-| `sdlc logs RUN_ID --follow` | Streams saved agent output, including child runs | Inspect a CLI invocation |
-| `sdlc usage [RUN_ID]` | Shows runtime usage and linked Jev calls for one run tree or all saved runs | Audit usage |
-| `sdlc create NAME` | Writes an optional custom workflow YAML | Author project-specific questions and routes |
-
-**You do not need to create a workflow or call another command before `run`.**
-It checks setup, starts the task, and executes it through planning. Use
-`run --step` to execute one action, then `resume RUN_ID` to continue that
-active run. The terminal prompts for plan approval during normal `run` and
-`resume` commands; `--step` stops after one action. A pending
-specialist or delegation decision from an older run can be retried with
-`resume` after its cause is addressed. A hard policy limit stops the run.
-Omit `feature` to let Jevkit choose among built-ins and valid project workflows.
-Name a workflow to bypass selection. An invalid project workflow reports its file name.
-Use `--silent` on `run` or `resume` for only the run ID and final status; `--step`
-reports the completed step. Errors still go to stderr.
-
-## Set up agents
-
-There is one team list: your personal `sdlc/roster.yaml`. Jevkit can assign
-work only to enabled agents in that file. The commands do three different
-things:
-
-| Command | Plain meaning | Does it let an agent work? |
-| --- | --- | --- |
-| `jevkit sdlc agents discover` | Look at possible agents and installed CLI apps | No |
-| `jevkit sdlc agents add ...` | Put one agent in your roster | Yes, if its binding works |
-| `jevkit sdlc agents` | Show your roster | Shows which entries are still inactive |
-
-You do **not** need to run `discover` first. You can add your own agent
-directly, or edit the roster. A discovered agent is only a suggestion until
-you add it. Adding copies its settings once; later edits to the suggestion
-do not update your roster.
-Jevkit does not configure an agent's MCP tools or skills.
-
-The default `lean` run needs one planner, one implementer, and one assessor.
-There are no required agent names. One reachable CLI agent can fill all three
-roles, so a single roster entry is enough for the default policy. Replace
-`YOUR_MODEL` with a model supported by your installed CLI:
-
-```sh
-jevkit sdlc agents add codex --model YOUR_MODEL --rubric "API endpoint changes" --role all --role-rubric planner="Plan endpoint contracts" --role-rubric assessor="Review API behavior"
-jevkit sdlc agents
+```bash
+jevkit sdlc agents add codex --model YOUR_MODEL --rubric "General coding work" --role all
 jevkit sdlc doctor --policy lean
-jevkit sdlc run feature --task "Add rate limiting"
-# Choose approve or request changes when the plan appears.
+jevkit sdlc agents c                   # per-agent tool configuration and runtime support
 ```
 
-Run from the Git project directory. If you launch from its parent, a
-`--task-file` or `--plan-file` path inside the project also identifies the repository; Jevkit
-saves that project path so `resume` uses the same workspace.
+`jevkit sdlc agents` shows your roster. `jevkit sdlc agents discover` is optional inventory; it does not grant permission to use an agent. You can enroll separate planners, implementers, and assessors later.
 
-`agents` creates a personal roster with four inactive examples if needed, so
-its displayed file link opens a real file. These are YAML entries with
-`disabled: true`; they cannot receive work. Choose each CLI's model and set
-`disabled: false` to enroll an example, or use `add` to create another agent.
-`add` also creates the file if needed.
-`agents` shows which CLI apps are on your PATH; `doctor --policy lean` checks
-whether the enrolled agent can actually perform each role under project policy.
-For a discovered named definition, use `jevkit sdlc agents add ID --role ROLE`;
-Jevkit copies its binding and rubric. Add more independently bound
-assessors for `collaborative` (two) or `assured` (three) policies.
+Use `jevkit sdlc agents c` or `jevkit sdlc agents caps` for the roster path, supported
+tool settings, and copyable per-agent YAML examples. Focus on one runtime with
+`jevkit sdlc agents c -r claude`; add `--details` for CLI versions, hooks, and
+execution diagnostics. The full `agents capabilities` command remains available.
 
-Native subagents and `host-self` need to be added too. Use `jevkit sdlc agents add host-self --role planner` for a host that exposes itself, or add a discovered native ID with `--role planner`. The CLI driver cannot invoke either; `sdlc doctor --driver host --host-native NAME --host-self` is a diagnostic for the capabilities a host integration would expose. A host's own permission controls still apply. Jevkit never treats a discovered native definition as proof that the host can enforce read-only execution, write scopes, or isolation.
+Inspect or configure project integration defaults with `jevkit sdlc i` or
+`jevkit sdlc int`. For example:
 
-`discover` shows two kinds of possibilities. **Named suggestions** come from
-native host agent files or the optional project suggestions file; they have
-an ID, binding, and rubric. Add
-one with `jevkit sdlc agents add ID --role ROLE`. **CLI apps on PATH**
-(`codex`, `claude`, `cursor-agent`, `opencode`) only mean that the executable is
-installed. Jevkit cannot infer which models or named agents that app makes
-available. Choose a model supported by your CLI and add it with
-`jevkit sdlc agents add APP --model MODEL --rubric "..." --role ROLE`.
-Use `--runtime APP` when you want a custom agent ID, for example `jevkit sdlc agents add security-reviewer --runtime codex --model MODEL --rubric "Audit authentication and secrets" --role security --read-only`.
+```sh
+jevkit sdlc i --hooks on --mcp on --compaction on
+```
 
-There is **one personal roster**: `sdlc/roster.yaml` in your Jevkit config
-directory. `jevkit sdlc agents` creates a starter file with planner,
-implementer, assessor, and multi-role entries using Claude, Codex, and OpenCode as
-examples. Each starts with `disabled: true` and `model: YOUR_MODEL`. Set the
-runtime and model for each entry, then change
-`disabled` to `false` to enroll it. `agents add` can add other agents to the
-same file. `jevkit sdlc doctor --policy lean` checks whether all three roles
-can run. You may edit that YAML directly.
-`discover` only prints what it finds; it never writes a roster.
+## Run a task
 
-The three roles are minimum coverage, not a three-agent limit. You can enroll
-many specialists under the same role, and one agent may have several roles.
-At each planning, implementation, or assessment step, Jevkit filters the
-roster to agents allowed for that role by your project policy and available
-through the current driver. If several remain, Jev chooses an agent using
-the task context and each candidate's `roleRubrics` entry, falling back to `rubric`. Use `rubric` as the agent's
-short “when to choose me” description, such as “Review database migrations
-and query performance.” `sdlc agents` displays it. There is no separate
-“pick a role” question: the current SDLC step determines the role. For an
-assured run, multiple assessor entries must have independent bindings to
-satisfy its quorum.
+```bash
+jevkit sdlc run feature --task "Add rate limiting"
+```
 
-Projects may also have `.jevkit/sdlc/agents.yaml`. Think of it as a sheet of
-suggestions for `discover`. Its agents do **not** appear in your team list
-from `jevkit sdlc agents` until you add them, and they cannot work before
-then. Keep `.jevkit/sdlc/` for project policy and custom workflows.
+Built-in task kinds are `feature`, `bugfix`, `review`, and `release`. The planner may write `plan.md`, `checks.json`, and `subtasks.json`. The run pauses for plan approval before implementation. If the command has no interactive terminal, it prints the plan path; review the artifacts, then run `jevkit sdlc resume RUN_ID --approve-plan`. Use `--auto` only when you want to skip plan approval.
+
+Planner-proposed argv checks still need an explicit authorization step (`jevkit sdlc resume RUN_ID --authorize-checks`). `--auto` does not authorize commands. After implementation, Jevkit runs those authorized checks as a supervisor-owned verification gate before assessors run. Passing, failing, timed-out, and stale (invalidated) receipts live under the run's artifacts; a failure returns a bounded summary to the implementer for repair, then reassessment.
+
+If you already have a complete plan, pass `--plan-file path/to/plan.md`. Use `--task-file` for a task statement that still needs planning.
+
+`run` checks setup, saves the task, prints the run ID, and performs the work:
+it chooses eligible enrolled agents, launches their CLI runtimes, and saves
+the plan, change report, or assessment. For custom stage workflows, it also asks
+the authored Jev questions. CLI execution requires a Git repository to
+capture the actual workspace diff.
+
+`sdlc run` checks enrollment, project limits, driver reach, and assessor quorum before starting a task. A requested profile is never downgraded. Use `jevkit sdlc doctor --policy NAME` to diagnose setup problems.
+
+On macOS, `run` and `resume` hold a `caffeinate -i -s` assertion while agents execute, so idle sleep does not stall a long run. The display can still sleep, and the assertion ends when Jevkit exits. Set `JEVKIT_NO_CAFFEINATE=1` to disable it.
+
+## Live run view
+
+In a terminal, `run` and `resume` display the live run view. It follows the
+newest agent, shows elapsed working time and saved runtime activity, and lets
+you read a navigation guide that opens with the view. Press `?` to hide or
+show the guide at any time. The footer keeps the main controls visible.
+The view expands the active agent invocation and returns to the run overview
+when that invocation completes. Use the up/down arrows to browse activity;
+Page Up/Down jumps five entries. `j`/`k` (in
+either case) scroll the selected message text.
+Press `n` to switch to the next agent and `a` to show every agent. Press `l`
+to show or hide logs, `t` to switch to the latest tool result, and `d` to
+expand decision details. The mouse selects text for copying. Press `p` to
+pause screen updates while selecting text, and press `p` again to resume.
+The frozen view labels itself and shows the resume key. Press `Ctrl-C` to stop
+an active run and return to the shell; the active agent process is cancelled.
+
+The live TUI uses the terminal's alternate screen so refreshes do not fill
+shell scrollback. Codex file
+change events show project-relative paths and change kinds. The pane opens on
+the latest activity and keeps the run
+status, pause cause, and recovery keys visible in narrow terminals.
+Claude planner tool requests and results appear as they stream into the saved
+invocation log, while the planner is still running.
+Tool output preserves code indentation and is bounded in the live pane; use
+`sdlc logs RUN_ID` for the full saved stream. If a run pauses, the view shows
+the cause and a `NEXT` line saying what a retry does for that pause (for
+example, send the implementer back with the verification failures). Press `r`
+to retry, or `g` to type guidance for the next agent and then retry. `f`, `s`,
+and `c` retry in a new, the same saved, or a compacted agent session. Press `q`
+to leave it paused. Runs redirected to a pipe keep plain output; `--silent` keeps its
+short status output. `sdlc watch RUN_ID` offers the same saved view without
+driving or resuming the run.
+
+When `run` or `resume` stops, Jevkit prints a summary after the live view
+closes. It shows the saved state and pause cause, recent completed actions,
+agent runtime and linked Jev usage totals, a next action, and the logs command.
+For an `answer` run, the summary also prints the saved agent answer in shell
+scrollback, with redaction and terminal control filtering. Long answers are
+shortened for display; the saved response artifact keeps the full text.
+After an interactive review answers, Jevkit asks whether it suggested changes
+and whether to start a bugfix SDLC. If accepted, the new run receives the
+saved review as `review.md`, verifies the findings during planning, and still
+requires plan approval before implementation. Declining leaves the review
+complete without starting another run.
+Unknown token and tool-call counts stay explicit. The summary shows runtime
+invocations and tool calls separately; Jev requests have no tool-call count.
+The same summary appears with plain output
+when stdout is redirected. A paused run includes a recovery command when the
+saved state allows it.
+
+## Saved runs, storage, and logs
+
+The state root is `$JEVKIT_STATE_DIR`, else `$XDG_STATE_HOME/jevkit`, else
+`~/.local/state/jevkit` (Windows: `%LOCALAPPDATA%\jevkit`). SDLC runs live at
+`<state>/sdlc/runs/<run-id>/` (`run.json`, `artifacts/`, `logs/`, nodes, events).
+The shared usage log is `<state>/usage.jsonl`. Project workflow and policy YAML
+stay under `.jevkit/sdlc/` in the workdir. Config (`JEVKIT_CONFIG_DIR` /
+`JEVKIT_CONFIG_HOME`) is a separate tree from state.
+
+Informational quotas pause further invocations; they never auto-delete:
+
+| Bound | Default | Env override |
+| --- | --- | --- |
+| Total saved SDLC state | 5 GiB | `JEVKIT_SDLC_STORAGE_QUOTA_BYTES` |
+| One run tree (root + children) | 256 MiB | `JEVKIT_SDLC_RUN_TREE_QUOTA_BYTES` |
+| Per-stream log tail | 1 MiB | `JEVKIT_SDLC_LOG_TAIL_BYTES` |
+
+Read-only inventory: `sdlc runs` lists each task, status, and size against the
+total quota. Start with `sdlc show RUN_ID` to see a short timeline of completed
+actions across the run and its children, commands for the related invocation
+logs, full artifact paths, log availability (including pruned/truncated), and
+the next action. The timeline shows the latest 12 events; use
+`sdlc logs RUN_ID --stream decisions` for the full decision history. Preview
+then apply: `sdlc delete RUN_ID [--apply]` removes a finished tree and
+attributable usage rows; `sdlc prune --older-than … [--status done|paused]
+[--apply]` deletes inactive trees; `sdlc prune --logs-only … --apply` strips
+diagnostic streams (and verification log bodies) while keeping plans, receipts,
+status, and usage, marking invocations with a `.pruned` sibling. External
+runtime session stores are out of reach.
+
+Agent stdout and stderr are saved as private, bounded 1 MiB tails per stream
+(default `MaxLogTail`; override with `JEVKIT_SDLC_LOG_TAIL_BYTES`). The combined
+`lines.jsonl` stream uses the same bound. When a stream rolls over, Jevkit
+prepends `[earlier output truncated: N bytes omitted]` to the retained raw tail
+and records the omitted byte count in a sibling `.lines.jsonl.truncated` marker;
+`sdlc show` and `sdlc logs` surface that count. Truncation drops earlier bytes
+from disk—it is not merely unread.
+
+`sdlc logs RUN_ID` includes children; filter by `--agent`, `--runtime`,
+`--invocation`, or `--stream stdout|stderr|decisions`. Decision events replay
+from the run ledger, including after a restart. Display is redacted by default.
+`--raw` shows the locally saved original. `--follow` and `watch` only read
+the ledger and never control the worker process.
+
+| Command | Use it to |
+| --- | --- |
+| `jevkit sdlc runs` | List saved runs, sizes, and quota use |
+| `jevkit sdlc show RUN_ID` | Inspect one run's status, artifacts, and log availability |
+| `jevkit sdlc logs RUN_ID` | Read agent output (redacted by default; `--raw` for saved original) |
+| `jevkit sdlc delete RUN_ID` | Preview deleting a run tree; add `--apply` to delete |
+| `jevkit sdlc prune --older-than 720h` | Preview pruning inactive runs; add `--apply` to delete |
+| `jevkit sdlc prune --logs-only --older-than 168h --apply` | Drop diagnostic streams only; keep plans, receipts, status, usage |
+| `jevkit sdlc watch RUN_ID` | Watch a saved run without controlling it |
+| `jevkit sdlc resume RUN_ID` | Continue a paused run |
+| `jevkit sdlc resume RUN_ID --step` | Run one action at a time |
+| `jevkit sdlc usage RUN_ID` | See runtime tokens, tool calls, and linked Jev calls |
+
+`jevkit usage` separates Jev calls from agent runtime invocations and breaks
+agent time, tokens, and cost down by model, role, and SDLC run. Use
+`--source all|jev|runtime` and `--format json` for a version 2 report. JSON
+runtime totals list input, output, cache-read, and cache-creation tokens
+separately when providers emit them; the text report's input adds cached input
+so runtimes compare. Jev cost is estimated
+from configured rates; runtime cost appears only when a runtime reports it.
+Unknown token and tool-call counts stay unknown. Older runtime ledgers remain readable; Jev
+calls made before recording was enabled cannot be reconstructed. See the short
+[usage guide](USAGE.md).
+
+## Enrollment details
+
+The personal `sdlc/roster.yaml` authorizes agents. `sdlc agents discover` only lists suggestions and installed CLI apps; it never enrolls them. Native subagents and `host-self` also require enrollment and a host driver. The default `lean` policy needs a planner, implementer, and assessor; one enrolled CLI binding may fill all three roles.
+
+The first personal roster includes disabled examples with tool settings filled
+in: `shell`, `web`, and `delegate` for Claude/Codex, and `tools: auto` for
+OpenCode. The mapping values start at `true`, which preserves runtime settings
+and approval requirements; change a value to `false` to disable that family.
+Cursor, Antigravity, and native agent entries use `tools: auto`.
 
 ### Writing project agent suggestions
 
@@ -146,24 +197,10 @@ You only need this optional file to share suggestions with other people on
 this project. To set up your own working agents, edit the personal roster
 shown by `jevkit sdlc agents`, or use `jevkit sdlc agents add`.
 
-This starter suggests nothing until you uncomment an example:
-
-```yaml
-version: 1
-agents:
-  # Remove the leading "# " from each of the six lines below to use this example.
-#   - id: my-reviewer
-#     via: runtime
-#     runtime: opencode
-#     model: YOUR_MODEL
-#     rubric: Review database migrations and query performance.
-```
-
-Each `- id:` starts a new agent. Keep the spaces at the start of the lines;
-use spaces, not tabs. Choose a unique name, choose your CLI (`claude`,
-`codex`, `cursor`, or `opencode`), replace `YOUR_MODEL`, and describe when
-to choose the agent in `rubric`. Copy the whole block to suggest another
-agent. The uncommented example looks like this:
+The generated starter suggests nothing until you uncomment an example. Each
+`- id:` starts a suggestion with a unique name, CLI runtime, model, and rubric
+that describes when to choose it. Use spaces for YAML indentation and replace
+`YOUR_MODEL` with a model supported by the CLI:
 
 ```yaml
 version: 1
@@ -198,6 +235,128 @@ agents:
 ```
 
 ## Project policy
+
+### Tool allowances for SDLC agents
+
+Tool configuration follows the invocation's agent selection. An entry with
+`agent: security-reviewer`, for example, launches Claude with
+`--agent security-reviewer`; Claude owns that definition's tool allowances.
+Jevkit does not generate tool restrictions, role-derived permission modes, or
+permission-bypass flags for named Claude, OpenCode, or Antigravity agents.
+Host-native subagents likewise keep their host configuration.
+
+For a runtime/model entry without `agent`, you can narrow built-in tools in
+the personal roster with an optional `tools` block:
+
+```yaml
+version: 1
+agents:
+  - id: focused-builder
+    via: runtime
+    runtime: codex
+    model: YOUR_MODEL
+    roles: [implementer]
+    rubric: Implement the approved plan using local project context.
+    tools:
+      shell: true
+      web: false
+      delegate: false
+```
+
+Use `tools: auto` to explicitly inherit the runtime's existing tool settings
+and approval rules. Omitting `tools` has the same behavior. `auto` works for
+every runtime and for native agents, where the selected native definition owns
+the settings. It does not infer permissions from the SDLC role or bypass
+runtime denials. `tools: all` is not supported.
+
+These controls currently support **Codex and Claude**. `false` disables the
+specified built-in tool family; `true` or an omitted field keeps the runtime's
+existing behavior and approval rules. `true` does not bypass approvals or
+override a runtime's own denial. Omit the entire block to keep existing
+behavior. Empty blocks, unknown fields, restrictions on unsupported runtimes,
+and restriction mappings combined with a native agent selection are rejected
+when loading the roster.
+Optional project suggestions in `agents.yaml` can carry the same block; it
+is copied when the suggestion is enrolled.
+
+| Field | Codex | Claude |
+| --- | --- | --- |
+| `shell` | Default shell tool (`features.shell_tool`) | `Bash`, `PowerShell` |
+| `web` | Built-in web search (`web_search`) | `WebSearch`, `WebFetch` |
+| `delegate` | Built-in collaboration tools (`features.multi_agent`) | `Agent`, legacy `Task` |
+
+These settings control those built-in tools. They do not filter MCP tools,
+disable shell network access, or prevent shell commands from launching
+another program. File write boundaries remain governed by the existing role
+and agent settings. A CLI invocation selecting a named agent cannot satisfy
+a requirement for Jevkit-enforced read-only execution: use a runtime/model entry for that
+requirement, or let the native definition own permissions under a role that
+does not require Jevkit enforcement.
+
+Settings are passed only to the individual CLI invocation. `sdlc agents`
+shows configured restrictions and native ownership; `sdlc agents capabilities`
+shows how to configure each entry, with a compact runtime support table.
+Use `jevkit sdlc agents c` as a shortcut. Sessions are reused only for the
+same binding, role, and tool settings. Changes after an assignment was saved
+pause that assignment; retry to select using the current settings.
+
+Runtime controls: [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference),
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
+
+### Additional runtime arguments
+
+CLI entries (`via: runtime`) can set `runtimeArgs` to a string of additional
+options. This works for Codex, Claude, Cursor, OpenCode, and Antigravity,
+including entries selecting a named native agent:
+
+```yaml
+version: 1
+agents:
+  - id: autonomous-builder
+    via: runtime
+    runtime: claude
+    model: YOUR_MODEL
+    roles: [implementer]
+    rubric: Implement approved changes.
+    tools: auto
+    runtimeArgs: '--dangerously-skip-permissions --effort high'
+```
+
+Jevkit splits the string on whitespace, respecting single quotes, double
+quotes, and backslash escapes. Each resulting word is passed directly as a CLI
+argument after generated defaults and before the task prompt. There is no shell
+execution, variable expansion, command substitution, or glob expansion. For
+example, `--append-system-prompt "Use local project context"` passes the quoted
+text as one argument. Unclosed quotes and unfinished escapes are rejected.
+
+Explicit permission options replace the adapter's default permission mode;
+for example, Claude's `--dangerously-skip-permissions` is passed without an
+additional role-derived `--permission-mode plan`. These are user-selected
+options, so native agents receive them too. Empty or omitted `runtimeArgs`
+preserves existing behavior. Runtime-specific options are validated by the CLI.
+
+Jevkit reserves options for model and agent selection, prompt transport, output
+format, working directory, and session routing. Use `model` and `agent` in the
+roster for those bindings. Permission overrides cannot be combined with an
+explicit `readOnly` requirement, and competing tool flags cannot override a
+`tools` restriction mapping. Jevkit's Codex tool configuration overrides are
+applied after user arguments. These checks cover known CLI controls; custom
+configuration files and extensions remain governed by the runtime.
+
+Project suggestions can carry `runtimeArgs`; enrollment copies them into the
+personal roster. You can also set them when adding an entry:
+
+```sh
+jevkit sdlc agents add autonomous-builder --runtime claude --model MODEL --role implementer --rubric 'Implement approved changes' --runtime-args='--dangerously-skip-permissions --effort high'
+```
+
+`sdlc agents` displays the configured string. Changing it prevents reuse of an
+existing session and pauses assignments reserved with the previous value.
+Additional arguments do not create independent quorum bindings. They apply to
+task invocations and Claude's in-session compaction, rather than the separate
+Codex app-server maintenance command.
+
+### Role and run policy
 
 Create `.jevkit/sdlc/policy.yaml` to narrow the default policy. The default permits all three roles to use enrolled host-self, native, or CLI agents, but grants no enrollment. The default profile is `lean`, the concurrency limit is 3, and the assignment limit is 20.
 
@@ -243,31 +402,152 @@ roles:
     write: true
 ```
 
-Each role can set `via`, `runtimes`, `write`, `readOnly`, `isolated`, and `writeScopes`. Set `write: false` to require enforced read-only execution. A scoped or restricted assignment is eligible only when its host or runtime adapter reports that it can enforce the restriction. Codex, Claude, Cursor, and Antigravity CLI adapters use read-only modes; OpenCode does not. None claims isolation or scoped-write enforcement. The project may set `quorums` by profile. `lean` defaults to one assessor, `collaborative` to two, and `assured` to three. Agents with different IDs but the same binding count once toward quorum.
+Each role can set `via`, `runtimes`, `write`, `readOnly`, `isolated`, and `writeScopes`. Set `write: false` to require enforced read-only execution. A scoped or restricted assignment is eligible only when its host or runtime adapter reports that it can enforce the restriction. For runtime/model entries without a native agent selection, Codex enforces an OS sandbox mode; Claude and Cursor use prompting modes; OpenCode has no read-only flag and fails closed for read-only roles; Antigravity writable invocations pass `--dangerously-skip-permissions` (surfaced by `jevkit sdlc agents capabilities`). Named native agents own their permission configuration and receive no such overrides. None claims isolation or scoped-write enforcement beyond worktree isolation for fan-out. The project may set `quorums` by profile. `lean` defaults to one assessor, `collaborative` to two, and `assured` to three. Agents with different IDs but the same binding count once toward quorum, even with different tool settings.
 
-`adaptiveBuiltinDelegation` is `off` by default. Set it to `opt-in` to allow
-`run` or `start --delegate-builtins=true`, or `on` to enable automatic
-built-in delegation by default. `--delegate-builtins=false` always disables it.
+`adaptiveBuiltinDelegation` is `off` by default. `--delegate-builtins` enables
+built-in delegation for a single `run` or `start`, including when the project
+policy sets it to `off`. Set `adaptiveBuiltinDelegation: on` to enable it by
+default. `opt-in` remains valid for existing policy files and, like `off`,
+leaves delegation disabled unless the flag is passed. `--delegate-builtins=false`
+disables it for a single run. The
+`--policy` flag independently selects the review profile, so `collaborative`
+and built-in delegation can be used together.
 The choice is stored in the run ledger for resume. Authored `spawn` stages
 retain their explicit targets.
 
-Runs have hard loop and time limits. By default, a run allows at most 3 implementation revisions and 20 total agent assignments across its tree. Each CLI invocation has a 30-minute deadline, and the root run expires 6 hours after creation. A run can create at most eight children across three child levels. Custom stage workflows also have `maxSteps` (20 by default) to bound question and work transitions. Set `maxRevisions`, `maxAssignments`, `maxInvocationSeconds`, and `maxRunSeconds` in project policy to tighten or widen those limits. Hitting a limit pauses the run. `maxEstimatedCostUsd` is optional and applies when workers report an estimate.
+Runs start with 20 assignments, 3 implementation revisions, and 6 hours of
+**active work** across the entire run tree. Each invocation has a separate
+30-minute timeout. Child creation is limited to eight children; the three-level
+nesting limit is structural. Authored workflows default to 20 transitions.
+Project policy snapshots these defaults when a run is created. Editing policy
+changes new runs; an existing run requires an explicit extension.
 
-Agent stdout and stderr are saved as private, bounded 1 MiB tails per stream.
-`sdlc logs RUN_ID` includes children; filter by `--agent`, `--runtime`,
-`--invocation`, or `--stream stdout|stderr|decisions`. Decision events replay
-from the run ledger, including after a restart. Display is redacted by default.
-`--raw` shows the locally saved original. `--follow` and `watch` only read
-the ledger and never control the worker process.
+Budget exhaustion is an operator checkpoint. Jevkit stops admitting work,
+shows `draining` while admitted assignments finish, and saves their artifacts,
+results, review findings, sessions, and measured usage. If that work satisfies
+all completion gates, the run can finish. Otherwise its next phase or authored
+transition is saved for continuation. A warning appears once at 80% of each
+finite allowance. The pause view shows usage, remaining allowance, outstanding
+work, saved-session availability, and the matching resume command.
+
+In the controlling terminal dashboard press **e: Extend and continue**. Interactive
+`resume` also offers editable amounts, resulting totals, and a final confirmation.
+Cancel or leave to keep the run paused. Suggested grants are 25% of the original
+allowance, rounded up to whole units, minutes, or cents, and increased when
+needed to cover recorded overage plus one unit. For scripts, grant explicitly:
+
+```sh
+jevkit sdlc resume RUN_ID --add-assignments 5 --add-revisions 1 --add-time 90m
+jevkit sdlc resume RUN_ID --add-cost-usd 2.50 --add-steps 5 --add-children 2
+```
+
+All supplied amounts must be positive and finite. Plain noninteractive resume
+prints the command without granting it. Extensions update only the selected
+root tree, preserve cumulative usage, and record before/after limits and the
+operator action in `budget.json`. A child-targeted grant identifies its root;
+`--add-steps` also extends the selected authored workflow's local allowance.
+An insufficient grant leaves the run paused. `watch`, `show`, and status are
+observational. `--auto`, agent results, and routing choices cannot extend limits.
+Enrollment, permissions, quorum, command authorization, and concurrency still apply.
+
+Active time is the union of worker, supervisor-check, and workflow-decision
+intervals, so overlapping workers count once. Operator waits, budget pauses,
+and periods without work do not count. Driver heartbeats checkpoint ownership;
+after a crash, offline time after the last checkpoint is excluded. Host-owned
+assignments count from dispatch through report or invocation expiry. Hosts must
+terminate their own processes. A run-time allowance does not shorten an admitted
+invocation's timeout. Retry an invocation timeout on the same run with:
+
+```sh
+jevkit sdlc resume RUN_ID --retry-failed --invocation-timeout 45m
+```
+
+The override applies to subsequent invocations in this tree. Optional
+`maxEstimatedCostUsd` controls admission using reported cost. Already admitted
+work can overshoot it; this is not a guaranteed billing ceiling. Unknown usage
+remains unknown. Legacy ledgers remain readable: continuation initializes the
+budget record from saved limits and usage. Historical active time without
+sufficient evidence is estimated as elapsed time capped at the prior allowance
+and labeled estimated. Ambiguous legacy checkpoints require an explicit
+`--retry-failed` approval within the same run.
+
+## Planner checks and supervisor verification
+
+A `planned` outcome may include `checks.json` (argv and manual checks) and
+`subtasks.json`. Plan approval (`resume --approve-plan`) locks plan, checks, and
+subtasks digests. Argv checks still require `resume --authorize-checks` (or an
+exact `--authorize-checks-digest`); `--auto` is not permission. After
+implementation, the supervisor runs authorized checks against the candidate
+worktree, writes `verification/receipts.json` (and a bounded failure summary on
+fail), and only then advances to assessment. Statuses include passed, failed,
+timed-out, skipped (no argv checks), and invalidated (stale vs current
+worktree). Hosts may report agent outcomes but must not forge supervisor
+verification receipts.
+
+A failed verification returns the run to the implementer, whose prompt includes
+the bounded failure summary and the path to the full check output. This repeats
+until the checks pass or the revision budget is spent. If every failed check
+failed because of the supervisor environment rather than the candidate (a
+command missing from PATH, exit 127, or a Go toolchain older than the module
+needs), the run pauses as `verification-environment-failed` without spending a
+revision. The cause names the binary the supervisor resolved. Fix the
+environment, then `resume --retry-failed` re-runs verification on the same
+candidate.
+
+## Fan-out and sequential work
+
+Approved fan-out graphs (`subtasks.json` mode `fan-out`) schedule independent
+implementers up to `maxConcurrent` and remaining assignment budget. Parallel
+writable work needs isolation (worktrees); when isolation is unavailable,
+Jevkit admits at most one writable subtask at a time (sequential). Dependent
+edges, shared writable paths without isolation, or a single ready slot also
+force sequential progress. Integration writes `integration/decision.json`;
+conflicts or failed joins can pause for repair before reassessment. Inspect
+`subtasks.json`, per-subtask patches under `artifacts/`, integration decisions,
+and `sdlc logs` / `sdlc show` for each child. Wall-clock savings from parallel
+admission do not imply lower total tokens or cost—each subtask still records
+its own measured usage.
+
+## Sessions and runtime integration
 
 `--session-strategy auto|fresh|resume|compact` is available on `run`, `start`,
 and `resume`; a resume override is saved in the run. Sessions are keyed by run,
-binding, and role. `auto` asks Jev when a prior session exists and records the
-choice and policy fallback. Codex manual compaction uses its app server
+binding, and role. `auto` prefers the compatible saved session; first use of a
+new role starts its own session. Returned session IDs are saved even when an
+invocation fails without token usage. If reuse fails or compatibility would
+require replacement, the run pauses. Approve rebuilding from saved artifacts
+with `resume RUN_ID --session-strategy fresh`; this creates a new conversation
+and is explicitly described as recovered artifact context. Use `compact` to
+request native compaction of a compatible session. Codex manual compaction uses its app server
 protocol. Claude manual compaction sends `/compact` ahead of the work prompt
 through the installed Claude CLI's stream JSON mode, as Ralph does. A
 failed native compaction pauses the run with the error. Other runtimes resolve
 `compact` to explicit resume and record that fallback.
+
+Each new interactive run asks whether to install project-scoped Jevkit hooks,
+enable tool-output compaction, and install the Jevkit MCP server for its SDLC
+CLI agents. MCP lets agents call `jev_ask` when a Jev judgment would help.
+It can be enabled without hooks. The MCP server resolves the Jev API key at
+runtime; its project config does not contain the key.
+The choice is saved with that run, so resume and child runs use the same
+settings. Select “keep this as my default” to save the choice privately for
+future runs in this project; otherwise the next run asks again. Hooks and
+MCP config are installed as each enrolled CLI agent starts, including
+agents running in a worktree. Tool-output compaction is separate from the
+`--session-strategy compact` option above. It is passed only to SDLC agent
+processes and requires hooks and a configured Jevkit API key; when Jevkit is
+unavailable, the hooks keep the original tool output. Noninteractive runs do
+not prompt and use these features off unless a default has been saved.
+Configure them with `jevkit sdlc i --hooks on --compaction on --mcp on`,
+or inspect the current choice with `jevkit sdlc i`. For MCP alone,
+use `jevkit sdlc i --mcp on`.
+Use `jevkit sdlc i --ask-every-run` to clear a saved default, or
+`--hooks off` or `--mcp off` to change an individual auto-install default.
+If hooks are declined for a run, previously installed Jevkit hooks pass
+through during that run. Project hook files remain installed; remove them with
+`jevkit uninstall AGENT --components hooks`.
+An existing project MCP registration remains available when MCP auto-install
+is off. Remove it with `jevkit uninstall AGENT --components mcp` if needed.
 
 Antigravity runs through the installed `agy` CLI. Jevkit passes the enrolled
 model string unchanged, captures its conversation ID and reported usage from
@@ -277,60 +557,19 @@ For CLI runtimes, Ctrl-C, SIGTERM, and invocation timeouts stop the runtime and 
 
 For native agents invoked through a host, Jevkit stops further routing and rejects late reports after the run deadline. The host must also enforce its own timeout on an agent invocation; Jevkit cannot kill a process owned by the host.
 
-## Run a task
-
-Use `run` for the ordinary path:
-
-```sh
-jevkit sdlc list
-jevkit sdlc doctor --policy collaborative
-jevkit sdlc run feature --task "Add rate limiting" --policy collaborative
-```
-
-`run` checks setup, saves the task, prints the run ID, and performs the work:
-it chooses eligible enrolled agents, launches their CLI runtimes, and saves
-the plan, change report, or assessment. For custom stage workflows, it also asks
-the authored Jev questions. CLI execution requires a Git repository to
-capture the actual workspace diff.
-
-In a terminal, `run` and `resume` display the live run view. It follows the
-newest agent, shows elapsed working time and saved runtime activity, and lets
-you read a navigation guide that opens with the view. Press `?` to hide or
-show the guide at any time. The footer keeps the main controls visible.
-Use the up/down arrows, `j`/`k`, or mouse wheel over the agent pane to browse activity;
-Page Up/Down jumps five entries. `J` and `K` scroll the selected message text.
-Press `n` to switch to the next agent and `a` to show every agent. Press `l`
-to show or hide logs, `t` to switch to the latest tool result, and `d` to
-expand decision details.
-
-The live TUI uses the terminal's alternate screen so wheel
-scrolling does not expose old dashboard frames in shell scrollback. Codex file
-change events show project-relative paths and change kinds. The pane opens on
-the latest activity and keeps the run
-status, pause cause, and recovery keys visible in narrow terminals.
-Tool output preserves code indentation and is bounded in the live pane; use
-`sdlc logs RUN_ID` for the full saved stream. If a run pauses, the view shows
-the cause and offers explicit retry choices: `r` for automatic session choice,
-`f` for fresh, `s` for resume, and `c` for compact. Press `q` to leave it
-paused. Runs redirected to a pipe keep plain output; `--silent` keeps its
-short status output. `sdlc watch RUN_ID` offers the same saved view without
-driving or resuming the run.
-
-When `run` or `resume` stops, Jevkit prints a summary after the live view
-closes. It shows the saved state and pause cause, recent completed actions,
-agent runtime and linked Jev usage totals, a next action, and the logs command.
-Unknown token counts stay explicit. The same summary appears with plain output
-when stdout is redirected. A paused run includes a recovery command when the
-saved state allows it.
+## Recovery and progress
 
 To inspect progress between steps, start with `sdlc run feature --task "..." --step`.
 The output includes a run ID. Use `sdlc resume RUN_ID --step` for one more
 action, or `sdlc resume RUN_ID` to continue until completion or pause.
 After fixing the error that paused a run on an agent failure, run
-`sdlc resume RUN_ID --retry-failed`. It clears only the failed-agent exclusions,
+`sdlc resume RUN_ID --retry-failed`. It clears failed-agent exclusions and resets the consecutive no-progress count,
 keeps saved artifacts and successful assessments, and resumes the paused stage.
 Run limits still apply. The flag is rejected unless the run paused after an
-agent failure or a review that needs reassessment.
+agent failure, a verification environment failure, or a review that needs
+reassessment. `sdlc resume RUN_ID --guidance "..."` saves instructions for the
+next agent prompt and, on a retryable pause, also retries. The guidance is
+cleared after an agent completes with it.
 
 If files change during assessment, the run saves the review and a bounded list
 of observed paths without claiming which process edited them. A
@@ -341,30 +580,178 @@ Recovery checks the saved invocation, reviewer binding, and `patch.diff`
 digest before reusing an interrupted review. If the digest changed, the run
 pauses and requires a new assessment.
 
-`jevkit usage` separates Jev calls from agent runtime invocations. Use
-`--source all|jev|runtime` and `--format json` for a version 2 report. Jev
-cost is estimated from configured rates; runtime cost appears only when a
-runtime reports it. Unknown token counts stay unknown. Older runtime ledgers
-remain readable; Jev calls made before recording was enabled cannot be
-reconstructed.
+An SDLC worker that triggers a prompt-injection review pauses its run with outcome `injection-review-required`. `sdlc status` and `sdlc watch` show the review ID in the pending reason. Run `jevkit security review ID` from a terminal; `jevkit sdlc resume RUN_ID` refuses to continue until the review is resolved.
 
-`sdlc run` checks enrollment, project limits, driver reach, and assessor quorum before starting a task. A requested profile is never downgraded. Built-in task kinds `feature`, `bugfix`, `review`, and `release` use the adaptive loop. Custom stage workflows route the same enrolled roles through questions and work stages.
+### Repair progress
 
-## Optional project workflows
+- A decisive assessor or specialist rejection persists its invocation,
+  candidate revision, role, and bounded findings in `run.json`. The full
+  supplied review remains in its invocation response artifact. Both Jev's
+  implementer selection and the implementer's prompt receive this evidence.
+  Late parallel reviews cannot replace the accepted rejection. New candidates
+  invalidate the feedback along with prior assessments and check receipts.
+- An implementer returning `answer`, `no-change`, or the same candidate
+  revision cannot finish an existing candidate that still needs verification
+  or review. The first such result keeps implementation active and requests a
+  different approach grounded in the saved findings. A second attempt without
+  a new candidate pauses as `implementer-failed`, with the cause saved.
+  These attempts consume assignments, but do not consume new revisions.
+  An initial answer/no-change with no existing candidate remains valid.
+- `resume --retry-failed` resets the consecutive no-progress count while
+  retaining the repair findings. A new candidate also resets that count and
+  goes through supervisor verification and independent assessment.
+- Review admission accounts separately for reserved work and remaining
+  assignments. Exhausted time, cost, or assignment budgets produce a recorded
+  failure instead of an empty drive loop. Already charged review reservations
+  can still execute when no additional assignment slots remain.
 
-A **custom workflow** is a project YAML file that defines stage questions,
-answer choices, routes, fallback decisions, and standard SDLC work roles. A
-choice can route to a `spawn` stage that runs a built-in task kind such as
-`bugfix` or another project workflow. It
-differs from the built-in task kinds by letting the project author its own
-decisions. It does not enroll workers. See the [custom workflow guide](SDLC-WORKFLOWS.md)
-for a worked YAML example and the stage rules.
+These rules do not authorize extra commands, expand agent enrollment, waive
+review independence, or raise budgets. Jev chooses within the existing policy;
+supervisor receipts remain authoritative for check outcomes.
 
-`jevkit sdlc create custom-review` writes a starter at
-`.jevkit/sdlc/custom-review.yaml`. Edit its stages, then run
-`jevkit sdlc validate custom-review` and `jevkit sdlc explain custom-review`.
-Run it with `jevkit sdlc run custom-review --task "..."`. The starter asks a scope question,
-then plans, implements, and assesses. `create` rejects built-in task names.
+## Custom workflows
+
+A custom workflow is a project YAML file that asks **your questions** and
+routes the answers to standard SDLC work. Use one when the built-in `feature`,
+`bugfix`, `review`, and `release` flows do not capture a project decision. You
+do not need a custom workflow to start using SDLC.
+
+The YAML controls the question wording, named choices, fallback, work
+objectives, and routes. A choice can also start another SDLC workflow. The
+file does **not** enroll an agent or grant permissions.
+At each work stage, Jevkit selects from enrolled agents allowed by project
+policy and reachable by the current driver.
+
+### Create and run one
+
+```sh
+jevkit sdlc create custom-review
+jevkit sdlc explain custom-review
+jevkit sdlc validate custom-review
+jevkit sdlc doctor --policy lean
+jevkit sdlc run custom-review --task "Add a rate limit"
+```
+
+`create` writes `.jevkit/sdlc/custom-review.yaml`. `run` checks the roster and
+policy, saves the run, then asks the questions and executes eligible enrolled
+agents until the workflow finishes or pauses. A workflow with implementation
+shows its plan for approval or change requests in an interactive terminal. A
+redirected run pauses instead; use `sdlc resume RUN_ID --approve-plan` after
+reviewing `plan.md`, or pass `--auto` to run autonomously. You can edit the YAML directly
+before running it; each run keeps a snapshot of the workflow it started with.
+Use `run custom-review --task "..." --step` to execute only the first stage,
+then `resume RUN_ID --step` to advance the active run one stage at a time.
+
+### Stage YAML
+
+```yaml
+version: 1
+name: custom-review
+description: Clarify scope before planning and implementation.
+entry: scope
+maxSteps: 20
+stages:
+  - id: scope
+    question:
+      prompt: Is there enough information to begin this task?
+      options:
+        ready: The goal and constraints are clear.
+        unclear: A requirement needs clarification.
+      routes: {ready: plan, unclear: needs-context}
+      fallback: needs-context
+      minConfidence: 0.85
+
+  - id: plan
+    work:
+      role: planner
+      objective: Plan the change and its acceptance checks.
+      routes: {planned: implement, answer: done, no-change: done}
+
+  - id: implement
+    work:
+      role: implementer
+      objective: Implement the plan in the repository.
+      focus: Apply the API rate limit without changing existing error responses.
+      routes: {changed: assess, answer: done, no-change: done}
+
+  - id: assess
+    work:
+      role: assessor
+      objective: Assess the exact diff against the plan.
+      routes: {approved: done, changes-required: implement}
+
+  - id: needs-context
+    finish: paused
+  - id: done
+    finish: succeeded
+```
+
+Jev receives the task, the question prompt, and the choice descriptions. If
+available, the saved plan and diff are included as bounded context. Jevkit
+redacts that material before sending it. An unavailable Jev service, an
+unknown choice, or an answer below `minConfidence` takes `fallback`. The
+fallback is a named stage, not another agent.
+
+A `work` stage names one standard role. `planner` can report `planned`,
+`answer`, or `no-change`; `implementer` can report `changed`, `answer`, or
+`no-change`; `assessor` can report `approved` or `changes-required`. The YAML
+must route every normal outcome for that role. Invocation failures reroute to
+another eligible agent with the same role when the workspace is unchanged.
+Other worker failures and timeouts pause under the SDLC policy; they are not
+authored as success routes. Assessment uses the policy quorum and the exact
+diff revision.
+
+### Route a choice into another SDLC
+
+A question can route to a `spawn` stage. This example runs the built-in
+`bugfix` SDLC when Jev chooses `fix`:
+
+```yaml
+version: 1
+name: issue-triage
+description: Decide whether an issue needs a bug fix.
+entry: decide
+stages:
+  - id: decide
+    question:
+      prompt: Does this issue need a code fix?
+      options: {fix: Fix the bug, answer: Answer without a code change}
+      routes: {fix: run-bugfix, answer: done}
+      fallback: paused
+
+  - id: run-bugfix
+    spawn:
+      workflow: bugfix
+      objective: Resolve the reported issue.
+      routes: {succeeded: done, paused: paused, aborted: paused}
+
+  - id: paused
+    finish: paused
+  - id: done
+    finish: succeeded
+```
+
+`workflow` may name a built-in task kind or another project workflow. The
+child receives the parent task and the optional `objective`. It has its own
+run ID, while the parent waits at the `spawn` stage. A completed child takes
+the `succeeded` route; a paused child takes `paused`; an aborted child takes
+`aborted`. `resume PARENT_RUN_ID --step` advances one child action at a time.
+
+Children use the same policy and enrolled agents. Their assignments, revision
+count, estimated cost, and stage transitions count toward the parent's limits.
+Nesting stops after three child levels. `sdlc validate` checks that a named
+child exists, and `sdlc explain` shows the child and its return routes.
+
+Every transition, including child workflow transitions, counts against `maxSteps`. Project policy also bounds total
+agent assignments, implementation revisions, invocation time, run time, and
+optional estimated cost. `sdlc validate` checks stage IDs, routes, required
+outcomes, and reachability; `sdlc explain` prints the decisions as a readable
+chart. The CLI driver needs enrolled CLI agents for work stages. Native and
+host-self agents require a host integration; its low-level `sdlc next` and
+`sdlc report` calls serve work stages, while `sdlc resume RUN_ID --step`
+handles question stages.
+
+`create` rejects built-in task names.
 
 `sdlc list` shows four task choices and any project YAML workflows. Its
 `ready`, `setup`, and `blocked` labels refer to the lean policy; run
@@ -410,3 +797,51 @@ Pre-existing workspace changes do not enter that report. Reports from later
 implementation invocations are appended for assessment. Host executors supply
 their own changed artifact. Tests use fake reach and executors as well as
 fake CLI binaries for the worker path.
+
+## Recovery design priorities
+
+The first recovery improvement is implemented. The remaining items are proposed.
+
+1. **Separate handoff avoidance from failed-agent exclusions (implemented).**
+   A handoff temporarily defers its binding for the current phase. A
+   non-handoff result releases those deferrals and resets the handoff count;
+   authentication and invocation failures remain excluded separately. A run
+   paused after repeated handoffs can use `resume --retry-failed` to restore
+   its prior phase and clear the handoff deferrals. A single-binding fallback
+   can still retry that binding when no alternate is eligible.
+2. **Give Jev a structured recovery decision.** Supply the current objective,
+   failed check IDs or review findings, approaches already attempted, eligible
+   capabilities, and remaining budgets. Offer only feasible actions such as
+   targeted repair, another enrolled binding, read-only research, or a concrete
+   escalation. Persist the selected action and its expected new evidence.
+   Reject a retry proposal that changes neither the approach nor its inputs.
+3. **Recognize repeated failure across different diffs.** The current guard
+   detects unchanged candidate reports, not semantically equivalent edits or
+   oscillation between revisions. Record candidate tree identities and
+   normalized failure signatures. Repeated signatures should prompt diagnosis
+   or a different eligible binding before consuming the revision budget.
+   A failing check can persist during legitimate incremental repair, so use
+   the history as decision evidence rather than declaring failure from one
+   repeated check name.
+4. **Recover interrupted work with ownership evidence.** Reconcile active
+   invocations against durable leases, process liveness, and workspace state.
+   A restarted driver should reattach to live work, recover a completed
+   artifact, or retry a confirmed dead invocation. Silence alone must not
+   launch a second writer into the same workspace.
+5. **Avoid repeatedly selecting failed assessors.** Record assessor failures
+   for the current candidate and prefer a distinct eligible binding on the
+   next attempt; release the avoidance when the candidate changes.
+
+### Validation targets
+
+Regression coverage should include missing review feedback, late reviewer
+responses, restart during repair, no-change after failed checks, exhausted
+budgets, and concurrency near the assignment limit. The current tests cover
+these cases using deterministic executors and saved run state.
+
+Future scenario tests should exercise transient runtime failure, a healthy
+alternate binding, handoff cycles across roles, repeating check failures,
+candidate oscillation, and interrupted processes. Track useful candidate
+changes per assignment, repeated failure signatures, avoidable pauses, and
+whether each pause names a recovery action. Validate the proposed Jev recovery
+decision against these scenarios before making it the default.
