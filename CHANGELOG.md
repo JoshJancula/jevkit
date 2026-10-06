@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/JoshJancula/jevkit/compare/v0.2.0...v0.2.1) (2026-10-06)
+
+
+### Fixed
+
+* **install:** accept release signatures made from main ([af1cecf](https://github.com/JoshJancula/jevkit/commit/af1cecf6639250ccb2b843df76a3b4082785005d))
+* **install:** accept release signatures made from main ([68a653e](https://github.com/JoshJancula/jevkit/commit/68a653e0a83f555c5c526fe85ec8b87dbf47e9d4))
+
 ## [0.2.0](https://github.com/JoshJancula/jevkit/compare/v0.1.0...v0.2.0) (2026-10-06)
 
 
