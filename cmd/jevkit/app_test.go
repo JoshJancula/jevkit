@@ -459,6 +459,11 @@ func TestDispatch(t *testing.T) {
 	if out != "jevkit test\n" {
 		t.Errorf("version = %q", out)
 	}
+	for _, flag := range []string{"--version", "-v"} {
+		if out, _ := mustRun(t, a, "", 0, flag); out != "jevkit test\n" {
+			t.Errorf("%s = %q", flag, out)
+		}
+	}
 	mustRun(t, a, "", 2)
 	mustRun(t, a, "", 2, "bogus")
 	mustRun(t, a, "", 2, "redact")
