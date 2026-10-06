@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/JoshJancula/jevkit/compare/v0.1.0...v0.2.0) (2026-10-06)
+
+
+### Added
+
+* prepare first GitHub release ([929a6b8](https://github.com/JoshJancula/jevkit/commit/929a6b8f50ceceddd4fb6946a11d44743dfd7f41))
+
 ## 0.1.0 (2026-09-30)
 
 ### Added
