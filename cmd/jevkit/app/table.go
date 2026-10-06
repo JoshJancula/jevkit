@@ -10,6 +10,12 @@ import (
 
 // writeTable renders a small table; callers decide whether cells have color.
 func WriteTable(w io.Writer, headers []string, rows [][]string) {
+	WriteTableAligned(w, headers, rows, nil)
+}
+
+// WriteTableAligned is WriteTable with the columns marked in right
+// right-aligned, so counts line up by place value.
+func WriteTableAligned(w io.Writer, headers []string, rows [][]string, right []bool) {
 	widths := make([]int, len(headers))
 	for i, header := range headers {
 		widths[i] = TextWidth(header)
@@ -39,7 +45,12 @@ func WriteTable(w io.Writer, headers []string, rows [][]string) {
 			if i < len(row) {
 				cell = row[i]
 			}
-			_, _ = fmt.Fprintf(w, " %s%s │", cell, strings.Repeat(" ", width-TextWidth(cell)))
+			pad := strings.Repeat(" ", width-TextWidth(cell))
+			if i < len(right) && right[i] {
+				_, _ = fmt.Fprintf(w, " %s%s │", pad, cell)
+			} else {
+				_, _ = fmt.Fprintf(w, " %s%s │", cell, pad)
+			}
 		}
 		_, _ = fmt.Fprintln(w)
 	}

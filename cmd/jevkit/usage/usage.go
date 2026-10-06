@@ -12,8 +12,9 @@ func (a *App) usageCmd() *cobra.Command {
 	var format string
 	var includeFixture bool
 	var source string
+	var runLimit int
 	c := &cobra.Command{
-		Use:   "usage [--format text|json] [--source all|jev|runtime] [--include-fixture]",
+		Use:   "usage [--format text|json] [--source all|jev|runtime] [--runs N] [--include-fixture]",
 		Short: "summarize Jev calls and agent runtime usage (reads local files only)",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
@@ -22,6 +23,9 @@ func (a *App) usageCmd() *cobra.Command {
 			}
 			if source != "all" && source != "jev" && source != "runtime" {
 				return app.Usagef("unknown --source %q (want all, jev or runtime)", source)
+			}
+			if runLimit < 0 {
+				return app.Usagef("--runs must be 0 (all) or more, got %d", runLimit)
 			}
 			recs, err := usage.ReadRecords(usage.Path(a.StateHome()))
 			if err != nil {
@@ -36,7 +40,9 @@ func (a *App) usageCmd() *cobra.Command {
 			if err != nil {
 				return app.Failf("read runtime usage: %v", err)
 			}
+			a.FillElapsedFromLogs(runs)
 			runtime := AggregateRuntime(runs)
+			runtime.AttachJev(sum.ByRun)
 			runtime.CacheDecisions = map[string]int{}
 			for _, run := range runs {
 				decisions, err := ledger.Open(a.SDLCRunsDir(), run.RunID).ReadDecisions()
@@ -49,7 +55,7 @@ func (a *App) usageCmd() *cobra.Command {
 					}
 				}
 			}
-			if err := renderUsageReport(a, format, source, sum, runtime, AggregateHooks(hookRecords)); err != nil {
+			if err := renderUsageReport(a, format, source, runLimit, sum, runtime, AggregateHooks(hookRecords)); err != nil {
 				return app.Failf("%v", err)
 			}
 			return nil
@@ -57,6 +63,7 @@ func (a *App) usageCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&format, "format", usage.FormatText, "output format: text or json")
 	c.Flags().StringVar(&source, "source", "all", "usage source: all, jev or runtime")
+	c.Flags().IntVar(&runLimit, "runs", 10, "SDLC runs to list, newest first; 0 lists all")
 	c.Flags().BoolVar(&includeFixture, "include-fixture", false, "count offline fixture-transport calls too")
 	return c
 }

@@ -170,11 +170,12 @@ the ledger and never control the worker process.
 | `jevkit sdlc resume RUN_ID --step` | Run one action at a time |
 | `jevkit sdlc usage RUN_ID` | See runtime tokens, tool calls, and linked Jev calls |
 
-`jevkit usage` separates Jev calls from agent runtime invocations and their
-tool calls. Use
-`--source all|jev|runtime` and `--format json` for a version 2 report. Runtime
-totals list input, output, cache-read, and cache-creation tokens separately when
-providers emit them; cache is never folded into input. Jev cost is estimated
+`jevkit usage` separates Jev calls from agent runtime invocations and breaks
+agent time, tokens, and cost down by model, role, and SDLC run. Use
+`--source all|jev|runtime` and `--format json` for a version 2 report. JSON
+runtime totals list input, output, cache-read, and cache-creation tokens
+separately when providers emit them; the text report's input adds cached input
+so runtimes compare. Jev cost is estimated
 from configured rates; runtime cost appears only when a runtime reports it.
 Unknown token and tool-call counts stay unknown. Older runtime ledgers remain readable; Jev
 calls made before recording was enabled cannot be reconstructed. See the short

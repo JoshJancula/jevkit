@@ -291,6 +291,8 @@ type Summary struct {
 	ByModel             map[string]*Tokens `json:"by_model"`
 	ByAgent             map[string]*Tokens `json:"by_agent"`
 	ByOrigin            map[string]*Tokens `json:"by_origin,omitempty"`
+	ByPurpose           map[string]*Tokens `json:"by_purpose,omitempty"`
+	ByRun               map[string]*Tokens `json:"by_run,omitempty"`
 	Cost                *Cost              `json:"cost"`
 }
 
@@ -304,6 +306,7 @@ func Aggregate(recs []Record, f Filter, getenv func(string) string) Summary {
 	s := Summary{
 		Kind: "jev_usage", SchemaVersion: 2,
 		ByQuestionSet: map[string]*Tokens{}, ByModel: map[string]*Tokens{}, ByAgent: map[string]*Tokens{}, ByOrigin: map[string]*Tokens{},
+		ByPurpose: map[string]*Tokens{}, ByRun: map[string]*Tokens{},
 	}
 	add := func(m map[string]*Tokens, k string, in, out int, measured, successful bool) {
 		t := m[k]
@@ -354,6 +357,10 @@ func Aggregate(recs []Record, f Filter, getenv func(string) string) Summary {
 		add(s.ByModel, orDefault(r.Model, "(unresolved)"), in, out, measured, successful)
 		add(s.ByAgent, orDefault(r.Agent, "(none)"), in, out, measured, successful)
 		add(s.ByOrigin, orDefault(r.Origin, "(unattributed)"), in, out, measured, successful)
+		add(s.ByPurpose, Purpose(r), in, out, measured, successful)
+		if r.RunID != "" {
+			add(s.ByRun, r.RunID, in, out, measured, successful)
+		}
 	}
 	if s.AttemptsMeasured > 0 {
 		inRate := rate(getenv(EnvInputRate), DefaultInputUSDPerMTok)
@@ -364,6 +371,37 @@ func Aggregate(recs []Record, f Filter, getenv func(string) string) Summary {
 		}
 	}
 	return s
+}
+
+// Purposes name what a Jev call was used for.
+const (
+	PurposeSDLC       = "SDLC"
+	PurposeCompaction = "compaction"
+	PurposeSecurity   = "security checks"
+	PurposeMCP        = "MCP"
+	PurposeCLI        = "CLI"
+	PurposeOther      = "other"
+)
+
+// Purpose classifies a call by its run, then its question set, then its
+// origin: an SDLC run's routing calls count as SDLC whichever surface made
+// them, and a compaction hook's calls as compaction.
+func Purpose(r Record) string {
+	q := r.QuestionSetID
+	switch {
+	case r.RunID != "" || strings.HasPrefix(q, "sdlc.") || strings.HasPrefix(q, "graph."):
+		return PurposeSDLC
+	case strings.HasPrefix(q, "compaction."):
+		return PurposeCompaction
+	case strings.HasPrefix(q, "security."):
+		return PurposeSecurity
+	case r.Origin == "mcp":
+		return PurposeMCP
+	case r.Origin == "cli" || strings.HasPrefix(q, "manual."):
+		return PurposeCLI
+	default:
+		return PurposeOther
+	}
 }
 
 func orDefault(v, d string) string {

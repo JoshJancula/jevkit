@@ -74,9 +74,10 @@ Claude Code and OpenCode compact only result shapes their native post-tool contr
 
 The wrapper is fail-open for compaction and does not recursively wrap an already-wrapped command. It stores the complete original before attempting compaction, then includes the retrieval path in any compacted result. Stored output is private to Jevkit state. The classifier uses at most two requests: one for output triage and, when needed, one for salient line selection. `JEVKIT_COMPACT_GENERIC=1` enables deterministic compaction without a Jev client.
 
-`jevkit usage --source jev` reports global Jev transport attempts by origin,
-including hook calls. Its separate hook-dispatch table counts hook executions,
-which may make no Jev request. For example, the standard Claude compaction hook
+`jevkit usage --source jev` reports global Jev calls and what they were used
+for, including compaction from hooks. `--format json` breaks transport attempts
+down by origin and separately counts hook executions, which may make no Jev
+request. For example, the standard Claude compaction hook
 only considers Bash results above the 8 KiB threshold; `Read` results do not
 match that compaction hook.
 

@@ -123,21 +123,24 @@ type Run struct {
 // Cache fields and provenance are omitempty so older run.json ledgers that
 // never recorded them stay readable and round-trip without inventing zeros.
 type InvocationUsage struct {
-	Invocation              string   `json:"invocation"`
-	Agent                   string   `json:"agent"`
-	Runtime                 string   `json:"runtime"`
-	Model                   string   `json:"model,omitempty"`
-	Role                    string   `json:"role"`
-	SessionID               string   `json:"sessionId,omitempty"`
-	InputTokens             *int64   `json:"inputTokens"`
-	OutputTokens            *int64   `json:"outputTokens"`
-	ToolCalls               *int64   `json:"toolCalls,omitempty"`
-	CacheReadTokens         *int64   `json:"cacheReadTokens,omitempty"`
-	CacheCreationTokens     *int64   `json:"cacheCreationTokens,omitempty"`
-	CostUSD                 *float64 `json:"costUsd,omitempty"`
-	UsageProvenance         string   `json:"usageProvenance,omitempty"`
-	StablePrefixBytes       int      `json:"stablePrefixBytes,omitempty"`
-	StablePrefixFingerprint string   `json:"stablePrefixFingerprint,omitempty"`
+	Invocation          string   `json:"invocation"`
+	Agent               string   `json:"agent"`
+	Runtime             string   `json:"runtime"`
+	Model               string   `json:"model,omitempty"`
+	Role                string   `json:"role"`
+	SessionID           string   `json:"sessionId,omitempty"`
+	InputTokens         *int64   `json:"inputTokens"`
+	OutputTokens        *int64   `json:"outputTokens"`
+	ToolCalls           *int64   `json:"toolCalls,omitempty"`
+	CacheReadTokens     *int64   `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens *int64   `json:"cacheCreationTokens,omitempty"`
+	CostUSD             *float64 `json:"costUsd,omitempty"`
+	// ElapsedMS is the invocation's wall-clock time; nil on records written
+	// before it was tracked.
+	ElapsedMS               *int64 `json:"elapsedMs,omitempty"`
+	UsageProvenance         string `json:"usageProvenance,omitempty"`
+	StablePrefixBytes       int    `json:"stablePrefixBytes,omitempty"`
+	StablePrefixFingerprint string `json:"stablePrefixFingerprint,omitempty"`
 }
 
 // SessionContext is content-free metadata for a stored runtime session ID.

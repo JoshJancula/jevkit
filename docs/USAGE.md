@@ -16,14 +16,17 @@ External agent session files (Claude, Codex, Cursor, OpenCode, Antigravity) stay
 ## Summarize usage
 
 ```bash
-jevkit usage                          # Jev + agent runtime totals
+jevkit usage                          # overview, then by model, role, and SDLC run
+jevkit usage --runs 0                 # list every SDLC run (default: latest 10)
 jevkit usage --source jev|runtime|all
 jevkit usage --format json
 jevkit sdlc usage                     # all saved run trees
 jevkit sdlc usage RUN_ID              # one run tree
 ```
 
-Runtime reports separate **input**, **output**, **cache-read**, and **cache-creation** tokens when a provider emits them, plus supplied cost when reported. Cache counters are never folded into input. Runtimes that omit a field show it as unknown rather than zero. Provenance labels (for example `claude.result`) name the stream event that supplied the counts.
+The text report opens with agent time across SDLC invocations and what Jev was used for: driving SDLC runs, compaction, security checks, MCP tools, or the CLI. Tables then break agent usage down by model, role, and SDLC run, with fan-out child runs counted in their parent and each run's Jev calls alongside. Totals for tokens, cost, tool calls, and hook dispatches are in `--format json`. Time is each invocation's wall-clock time. Invocations recorded before time was tracked are estimated from their logs, and are unreported once their logs are pruned.
+
+Runtimes report cached input differently: Codex counts it inside input, the others report it separately. The text report's **IN** column adds cached input for every runtime so they compare, and **CACHE HIT** is the share of that input served from cache. The JSON report keeps **input**, **output**, **cache-read**, and **cache-creation** tokens separate when a provider emits them, plus supplied cost when reported. Runtimes that omit a field show it as unknown rather than zero: `—` when no invocation reported it, `*` when only some did. Provenance labels (for example `claude.result`) name the stream event that supplied the counts.
 
 Prompt assembly keeps a stable prefix first so providers can reuse cache across turns. Jevkit reports prefix fingerprint and byte counts for layout telemetry; it does **not** store prompt contents as a local cache.
 

@@ -71,9 +71,12 @@ type Reply struct {
 	UsageProvenance         string                 `json:"usageProvenance,omitempty"`
 	StablePrefixBytes       int                    `json:"stablePrefixBytes,omitempty"`
 	StablePrefixFingerprint string                 `json:"stablePrefixFingerprint,omitempty"`
-	CompactCompleted        bool                   `json:"-"`
-	WorkspaceDrift          []string               `json:"-"`
-	DriftTruncated          bool                   `json:"-"`
+	// ElapsedMS is the invocation's wall-clock time, set by the caller that
+	// timed Execute.
+	ElapsedMS        int64    `json:"-"`
+	CompactCompleted bool     `json:"-"`
+	WorkspaceDrift   []string `json:"-"`
+	DriftTruncated   bool     `json:"-"`
 }
 
 // Usage provenance labels identify which runtime event supplied measured counts.

@@ -47,17 +47,20 @@ func TestUsageReportSeparatesJevAndRuntimeAndLinksRun(t *testing.T) {
 	if report.SchemaVersion != 2 || report.Sources.Jev == nil || report.Sources.Jev.Calls != 1 || report.Sources.Runtime == nil || report.Sources.Runtime.Totals.Invocations != 1 || report.Sources.Runtime.Totals.ToolCalls != 2 || report.Sources.Runtime.Totals.UnknownToolCalls != 0 || report.Sources.Runtime.Totals.UnknownOutput != 1 {
 		t.Fatalf("report: %+v", report)
 	}
+	if runs := report.Sources.Runtime.ByRun; len(runs) != 1 || runs[0].RunID != id || runs[0].JevCalls != 1 || report.Sources.Jev.ByPurpose["SDLC"].Calls != 1 {
+		t.Fatalf("Jev calls by run and purpose: %+v %+v", runs, report.Sources.Jev.ByPurpose)
+	}
 	code, output, errors = run(a, "", "usage", "--source", "jev")
-	if code != app.ExitOK || !strings.Contains(output, "transport attempts: 1") || strings.Contains(output, "Agent runtime usage") || !strings.Contains(output, "┌") || !strings.Contains(output, "NAME") || strings.Contains(output, "\x1b[") {
+	if code != app.ExitOK || !strings.Contains(output, "Jev calls    1 · ~$") || !strings.Contains(output, "Jev used for 1 SDLC\n") || strings.Contains(output, "attempts") || strings.Contains(output, "agent time") || strings.Contains(output, "┌") || strings.Contains(output, "\x1b[") {
 		t.Fatalf("source jev: %d %q %s", code, output, errors)
 	}
 	code, output, errors = run(a, "", "usage")
-	if code != app.ExitOK || !strings.Contains(output, "By question set") || !strings.Contains(output, "By runtime") || !strings.Contains(output, "INVOCATIONS") || !strings.Contains(output, "TOOL CALLS") || strings.Contains(output, "\x1b[") {
+	if code != app.ExitOK || !strings.Contains(output, "By model") || !strings.Contains(output, "By role") || !strings.Contains(output, "By SDLC run") || !strings.Contains(output, id) || !strings.Contains(output, "JEV CALLS") || strings.Contains(output, "tool calls") || strings.Contains(output, "\x1b[") {
 		t.Fatalf("plain usage tables: %d %q %s", code, output, errors)
 	}
 	a.Environ = append(a.Environ, "CLICOLOR_FORCE=1")
 	code, output, errors = run(a, "", "usage", "--source", "runtime")
-	if code != app.ExitOK || !strings.Contains(output, app.ANSICyan+"Agent runtime usage"+app.ANSIReset) || strings.Contains(output, "INPUT UNKNOWN") {
+	if code != app.ExitOK || !strings.Contains(output, app.ANSICyan+"Usage"+app.ANSIReset) || strings.Contains(output, "INPUT UNKNOWN") {
 		t.Fatalf("colored runtime tables: %d %q %s", code, output, errors)
 	}
 	code, output, errors = run(a, "", "sdlc", "usage", id)
@@ -78,7 +81,7 @@ func TestGlobalUsageSeparatesHookCallsFromDispatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, output, errors := run(a, "", "usage", "--source", "jev")
-	if code != app.ExitOK || !strings.Contains(output, "By origin") || !strings.Contains(output, "hook") || !strings.Contains(output, "Hook dispatches (separate from Jev calls)") || !strings.Contains(output, "transport attempts: 1") {
+	if code != app.ExitOK || !strings.Contains(output, "Jev used for 1 compaction\n") || strings.Contains(output, "hooks") {
 		t.Fatalf("usage: %d %q %s", code, output, errors)
 	}
 }
@@ -141,7 +144,7 @@ func TestAggregateRuntimeSeparatesCacheWithoutDoubleCounting(t *testing.T) {
 		t.Fatalf("cost accounting: %+v", sum.Totals)
 	}
 	code, output, errors := run(a, "", "usage", "--source", "runtime")
-	if code != app.ExitOK || !strings.Contains(output, "CACHE READ") || !strings.Contains(output, "cache: read") {
+	if code != app.ExitOK || !strings.Contains(output, "CACHE HIT") || !strings.Contains(output, "agent time   ") || !strings.Contains(output, "IN includes cached input") {
 		t.Fatalf("runtime usage text: %d %q %s", code, output, errors)
 	}
 	code, output, errors = run(a, "", "sdlc", "usage", id)

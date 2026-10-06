@@ -181,6 +181,9 @@ func (a *App) saveInvocationUsage(store *ledger.Store, assignment adaptive.Assig
 		if reply.CostReported || reply.CostUSD > 0 {
 			u.CostUSD = &reply.CostUSD
 		}
+		if reply.ElapsedMS > 0 {
+			u.ElapsedMS = &reply.ElapsedMS
+		}
 		found := false
 		for i := range r.Usage {
 			if r.Usage[i].Invocation == u.Invocation {

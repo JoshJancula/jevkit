@@ -11,6 +11,7 @@ import (
 const (
 	ANSIReset  = "\x1b[0m"
 	ANSIBold   = "\x1b[1m"
+	ANSIDim    = "\x1b[2m"
 	ANSICyan   = "\x1b[1;36m"
 	ANSIGreen  = "\x1b[32m"
 	ANSIRed    = "\x1b[31m"

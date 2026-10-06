@@ -459,7 +459,9 @@ func (a *App) runFanoutSubtask(ctx context.Context, runID string, store *ledger.
 	}
 	done := make(chan replyOrErr, 1)
 	go func() {
+		started := a.Clock()
 		reply, err := executor.Execute(invokeCtx, req)
+		reply.ElapsedMS = a.Clock().Sub(started).Milliseconds()
 		done <- replyOrErr{reply, err}
 	}()
 

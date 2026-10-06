@@ -340,3 +340,27 @@ func TestAggregateKeepsOldRecordsReadableWithoutCacheFields(t *testing.T) {
 		t.Fatalf("cost note must remain estimated, not a measured billing saving: %+v", s.Cost)
 	}
 }
+
+func TestPurposeClassifiesByRunThenQuestionSetThenOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		rec  Record
+		want string
+	}{
+		{Record{RunID: "run-1", QuestionSetID: "developer.done-check", Origin: "mcp"}, PurposeSDLC},
+		{Record{QuestionSetID: "sdlc.agent-selection"}, PurposeSDLC},
+		{Record{QuestionSetID: "graph.router-confidence"}, PurposeSDLC},
+		{Record{QuestionSetID: "compaction.line-relevance", Origin: "hook"}, PurposeCompaction},
+		{Record{QuestionSetID: "security.command-risk", Origin: "shell-wrapper"}, PurposeSecurity},
+		{Record{QuestionSetID: "developer.proceed-check", Origin: "mcp"}, PurposeMCP},
+		{Record{QuestionSetID: "manual.request"}, PurposeCLI},
+		{Record{QuestionSetID: "developer.change-risk"}, PurposeOther},
+	} {
+		if got := Purpose(tc.rec); got != tc.want {
+			t.Errorf("Purpose(%+v) = %q, want %q", tc.rec, got, tc.want)
+		}
+	}
+	s := Aggregate([]Record{{RunID: "run-1", QuestionSetID: "sdlc.route"}, {QuestionSetID: "compaction.triage.v2", Status: "http-500"}}, Filter{}, nil)
+	if s.ByPurpose[PurposeSDLC].Calls != 1 || s.ByPurpose[PurposeCompaction].Calls != 0 || s.ByPurpose[PurposeCompaction].Attempts != 1 || s.ByRun["run-1"].Calls != 1 {
+		t.Fatalf("purpose and run breakdowns: %+v %+v", s.ByPurpose, s.ByRun)
+	}
+}

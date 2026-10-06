@@ -70,11 +70,14 @@ func TestSaveInvocationUsagePersistsToolCalls(t *testing.T) {
 	}
 	tools := int64(0)
 	assignment := adaptive.Assignment{InvocationID: "inv", AgentID: "builder", Runtime: "codex", Role: "implementer"}
-	if err := a.saveInvocationUsage(store, assignment, "gpt", worker.Reply{ToolCalls: &tools}); err != nil {
+	if err := a.saveInvocationUsage(store, assignment, "gpt", worker.Reply{ToolCalls: &tools, ElapsedMS: 4200}); err != nil {
 		t.Fatal(err)
 	}
 	run, err := store.ReadRun()
 	if err != nil || len(run.Usage) != 1 || run.Usage[0].ToolCalls == nil || *run.Usage[0].ToolCalls != 0 {
 		t.Fatalf("saved tool calls: %+v, %v", run.Usage, err)
+	}
+	if run.Usage[0].ElapsedMS == nil || *run.Usage[0].ElapsedMS != 4200 {
+		t.Fatalf("saved elapsed time: %+v", run.Usage[0])
 	}
 }

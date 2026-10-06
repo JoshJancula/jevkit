@@ -361,7 +361,9 @@ func (a *App) sdlcExecuteAssignment(ctx context.Context, runID string, assignmen
 	defer stopActivity()
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	started := a.Clock()
 	reply, execErr := executor.Execute(stepCtx, req)
+	reply.ElapsedMS = a.Clock().Sub(started).Milliseconds()
 	if rec, ok := review.PendingRun(a.StateHome(), runID); ok {
 		return a.sdlcPauseInjectionReview(runID, rec.ID)
 	}
