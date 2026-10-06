@@ -29,11 +29,13 @@ sha256_file() {
   else fail "need sha256sum or shasum to verify the release"; fi
 }
 
+# verify_checksum uses its own variable names: POSIX sh has no local
+# variables, and assigning the caller's $archive here would change it.
 verify_checksum() {
-  archive=$1 checksums=$2
-  expected=$(awk -v name="$(basename "$archive")" '$2 == name || $2 == "*"name {print $1; exit}' "$checksums")
-  [ -n "$expected" ] || fail "checksum missing for $(basename "$archive")"
-  actual=$(sha256_file "$archive")
+  verify_file=$1 verify_sums=$2
+  expected=$(awk -v name="$(basename "$verify_file")" '$2 == name || $2 == "*"name {print $1; exit}' "$verify_sums")
+  [ -n "$expected" ] || fail "checksum missing for $(basename "$verify_file")"
+  actual=$(sha256_file "$verify_file")
   [ "$actual" = "$expected" ] || fail "checksum verification failed"
 }
 
