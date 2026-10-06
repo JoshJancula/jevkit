@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/JoshJancula/jevkit/compare/v0.1.0...v0.2.0) (2026-10-06)
+
+
+### Added
+
+* **cli:** support jevkit --version ([73f6b1b](https://github.com/JoshJancula/jevkit/commit/73f6b1bff38a82310b6ffdf4716c8f508607523e))
+
+
+### Fixed
+
+* **install:** keep the archive path when verifying its checksum ([c4fac09](https://github.com/JoshJancula/jevkit/commit/c4fac0911e765115b4277e8cbdd9991332ef18b5))
+
 ## 0.1.0 (2026-09-30)
 
 ### Added
