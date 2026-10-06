@@ -106,6 +106,7 @@ SDLC run commands can assign agents to work on your project.`,
 
   # Set up agents for an SDLC run.
   jevkit sdlc agents`,
+		Version:       a.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -116,6 +117,7 @@ SDLC run commands can assign agents to work on your project.`,
 	root.SetOut(a.Stdout)
 	root.SetErr(a.Stderr)
 	root.SetIn(a.Stdin)
+	root.SetVersionTemplate("jevkit {{.Version}}\n")
 	root.PersistentFlags().BoolVar(&a.Yolo, "yolo", a.Yolo, "lift path guard only; killswitch and Jev scoring still apply")
 	root.PersistentFlags().StringVar(&a.SecurityPolicy, "security-policy", a.SecurityPolicy, "select a named security policy (env: JEVKIT_SECURITY_POLICY)")
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
